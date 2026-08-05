@@ -142,21 +142,22 @@ ctx.imageSmoothingEnabled = false;
 const VIEW_W=768,VIEW_H=512;                 // Fixed canvas viewport in screen pixels.
 const W=1536,H=1024;                          // Larger world explored through camera pan/zoom.
 const BASE = {x:W/2,y:H/2,r:43};
+const BASE_ZONE=240;
 const BASE_SLOTS=3,HOUSE_SLOTS=2,HOUSE_COST={wood:8,stone:6},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
 const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3,WORKER_DOWNED_TIME=20;
-const BUILDING = {
-  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},radius:155},
-  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},radius:155},
-  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},radius:0},
-  house:{name:"house",resource:null,cost:HOUSE_COST,radius:0},
-  obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},radius:0},
-  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},radius:180},
-  pulseTower:{name:"pulse tower",resource:null,cost:{wood:8,stone:12},radius:145,cooldown:5},
-  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},radius:135,instant:true},
-  beacon:{name:"shock beacon",resource:null,cost:{wood:4,stone:8},radius:150,cooldown:8},
-  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},radius:0,instant:true,stack:true},
-  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},radius:65,instant:true,stack:true},
-  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},radius:22,instant:true,stack:true}
+const BUILDING_TYPES = {
+  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155},
+  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155},
+  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},serviceRadius:175},
+  house:{name:"house",resource:null,cost:HOUSE_COST},
+  obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12}},
+  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},effectRadius:180},
+  pulseTower:{name:"pulse tower",resource:null,cost:{wood:8,stone:12},effectRadius:145,cooldown:5},
+  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},effectRadius:135,instant:true},
+  beacon:{name:"shock beacon",resource:null,cost:{wood:4,stone:8},effectRadius:150,cooldown:8},
+  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},instant:true,stack:true},
+  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},effectRadius:65,instant:true,stack:true},
+  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},effectRadius:22,instant:true,stack:true}
 };
 const UPGRADES=[
   {id:"hardness",icon:"⛏",name:"click hardness",cost:{wood:5,stone:5},description:"placeholder: mine tougher resources with each click."},
@@ -177,21 +178,24 @@ const ENEMY_TYPES={
   healer:{name:"healer",hp:5,speed:38,damage:0,range:180,rate:0,size:1},
   brute:{name:"brute",hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35}
 };
-const ENEMY_POOL=["raider","raider","archer","healer","brute"],ENEMY_SPAWN={min:7,max:11};
+const ENEMY_POOL=["raider","raider","archer","healer","brute"],DAY_ENEMY_SPAWN={min:14,max:20},DAY_ENEMY_CAP=5;
+const DAY_DURATION=75,NIGHT_DURATION=45;
+const NIGHT_OVERLAY_ALPHA=.5,LIGHT_FADE_TIME=6;
 const KING={range:95,damage:2,rate:.85};
 const FOG_TS=32,FOG_W=W/FOG_TS,FOG_H=H/FOG_TS;
 const trees = [];
 const rocks = [];
 const diamonds = [];
-const drops = [];
+const resourceDrops = [];
 const buildings = [];
 const particles = [];
 const state = {
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[], fog:new Uint8Array(FOG_W*FOG_H),
-  baseHp:100,baseMax:100,gameOver:false,paused:false,enemyTimer:4,coinTimer:6,basePulse:0,baseSpawnTimer:WORKER_SPAWN_TIME,buildMode:null,capacity:5,nextDropId:1,toastTimer:0,collectCooldown:0,collecting:false,
+  baseHp:100,baseMax:100,gameOver:false,paused:false,dayEnemyTimer:DAY_ENEMY_SPAWN.min,coinTimer:6,basePulse:0,baseSpawnTimer:WORKER_SPAWN_TIME,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
+  clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
-  upgradeMenu:{building:null,selected:null,kind:null},carriedBuilding:null,buildStacks:{spikes:5,landmine:3,tar:3},
+  upgradeMenu:{building:null,selected:null,kind:null},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
   king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
 };
 
@@ -215,7 +219,7 @@ function seedWorld(){
   };
   // Fewer, richer nodes: each has 10× the old durability and therefore yields 10× as many drops.
   place(80,45,(x,y)=>trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:trees.length%3}));
-  place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0,variant:rocks.length%2}));
+  place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0}));
   place(5,110,(x,y)=>diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0}),
     (x,y)=>distance(x,y,BASE.x,BASE.y)>600);
   state.fog.fill(1);revealFog(BASE.x,BASE.y,9);
@@ -276,12 +280,12 @@ canvas.addEventListener("pointerdown",event=>{
   if(event.button===1){event.preventDefault();state.camera.panning=true;state.camera.lastX=event.clientX;state.camera.lastY=event.clientY;canvas.setPointerCapture(event.pointerId);return;}
   if(state.gameOver||state.paused)return;
   if(event.button===0)leftClick();
-  if(event.button===2){if(cancelBuildMode())return;if(pickUpBeaconAt(state.mouse.x,state.mouse.y))return;state.collecting=true;collectWood();state.collectCooldown=.08;}
+  if(event.button===2){if(cancelBuildMode())return;if(pickUpMovableAt(state.mouse.x,state.mouse.y))return;state.collecting=true;collectDrop();state.collectCooldown=.08;}
 });
 // Window-level release prevents collection or camera drag getting stuck outside the canvas.
 window.addEventListener("pointerup",event=>{if(event.button===2)releaseRightMouse();if(event.button===1)state.camera.panning=false;});
-window.addEventListener("pointercancel",()=>{state.collecting=false;state.camera.panning=false;cancelCarriedBuilding();});
-window.addEventListener("blur",()=>{state.collecting=false;state.camera.panning=false;state.keys.clear();cancelCarriedBuilding();});
+window.addEventListener("pointercancel",()=>{state.collecting=false;state.camera.panning=false;cancelHeldObject();});
+window.addEventListener("blur",()=>{state.collecting=false;state.camera.panning=false;state.keys.clear();cancelHeldObject();});
 window.addEventListener("keydown",event=>{
   if(event.code==="Escape"){event.preventDefault();if(!event.repeat)togglePause();return;}
   if(["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowLeft","ArrowDown","ArrowRight"].includes(event.code)){event.preventDefault();state.keys.add(event.code);}
@@ -333,71 +337,87 @@ function workerNodeAt(x,y){
   for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){const d=distance(x,y,node.x,node.y);if(resourceIsActive(node,kind)&&!isFogged(node.x,node.y)&&d<best){found={node,kind};best=d;}}
   return found;
 }
-function pickUpBeaconAt(x,y){
+function pickUpMovableAt(x,y){
   let worker=null,best=24;
   for(const candidate of state.workers){const d=distance(x,y,candidate.x,candidate.y);if(d<best){worker=candidate;best=d;}}
   if(worker){
+    if(worker.claimedBy)clearWorkerTask(worker.claimedBy);
     clearWorkerTask(worker);state.workers.splice(state.workers.indexOf(worker),1);
-    state.carriedBuilding={worker,originX:worker.x,originY:worker.y};state.collecting=false;toast(worker.downed?"downed worker lifted — carry to base":"worker lifted — release to assign");return true;
+    state.heldObject={kind:"worker",object:worker,originX:worker.x,originY:worker.y};state.collecting=false;toast(worker.downed?"downed worker lifted — carry to base or house":"worker lifted — release to assign");return true;
   }
   const building=buildings.find(item=>item.complete&&item.type==="beacon"&&beaconButtonHit(item,x,y));
   if(!building)return false;
-  state.carriedBuilding={building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;
+  state.heldObject={kind:"building",object:building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;
   toast("shock beacon picked up — release right to place");return true;
 }
-function cancelCarriedBuilding(){
-  if(!state.carriedBuilding)return;
-  const held=state.carriedBuilding,object=held.worker||held.building;object.x=held.originX;object.y=held.originY;
-  if(held.worker)state.workers.push(object);else buildings.push(object);state.carriedBuilding=null;
+function heldWorker(){return state.heldObject?.kind==="worker"?state.heldObject.object:null;}
+function heldBuilding(){return state.heldObject?.kind==="building"?state.heldObject.object:null;}
+function cancelHeldObject(){
+  if(!state.heldObject)return;
+  const held=state.heldObject,object=held.object;object.x=held.originX;object.y=held.originY;
+  if(held.kind==="worker")state.workers.push(object);else buildings.push(object);state.heldObject=null;
+}
+function reviveWorker(worker,anchor,offset){
+  worker.downed=false;worker.downedTimer=0;worker.hp=WORKER_HP;worker.job="guard";worker.jobTarget=null;worker.taskTarget=null;worker.returning=false;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.postX=anchor.x;worker.postY=anchor.y+offset;worker.x=worker.postX;worker.y=worker.postY;
+}
+// Assignment priority is resolved once so drop behavior and held-worker preview cannot drift.
+function workerAssignmentAt(worker,x,y){
+  if(x<20||y<20||x>W-20||y>H-20||isFogged(x,y))return null;
+  const near=predicate=>buildings.find(item=>predicate(item)&&distance(x,y,item.x,item.y)<42);
+  if(worker.downed){
+    const house=near(item=>item.complete&&item.type==="house"),anchor=distance(x,y,BASE.x,BASE.y)<=BASE.r+18?BASE:house;
+    return anchor?{result:"revived",anchor,postX:anchor.x,postY:anchor.y+(anchor===BASE?25:23),zoneX:anchor.x,zoneY:anchor.y+(anchor===BASE?25:23),zoneRadius:WORKER_LEASH}:null;
+  }
+  const blueprint=near(item=>!item.complete),node=workerNodeAt(x,y),staff=near(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")),stockpile=near(item=>item.complete&&item.type==="stockpile"),house=near(item=>item.complete&&item.type==="house");
+  if(blueprint)return {job:"build",target:blueprint,postX:blueprint.x,postY:blueprint.y+20,zoneX:blueprint.x,zoneY:blueprint.y,zoneRadius:WORKER_LEASH};
+  if(node)return {job:"harvest",target:node,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};
+  if(staff)return {job:"staff",target:staff,postX:staff.x,postY:staff.y+16,zoneX:staff.x,zoneY:staff.y,zoneRadius:BUILDING_TYPES[staff.type].serviceRadius};
+  if(stockpile)return {job:"haul",target:stockpile,postX:stockpile.x,postY:stockpile.y+18,zoneX:stockpile.x,zoneY:stockpile.y,zoneRadius:storageServiceRadius(stockpile)};
+  if(house)return {job:"guard",target:null,postX:house.x,postY:house.y+23,zoneX:house.x,zoneY:house.y+23,zoneRadius:WORKER_LEASH};
+  if(distance(x,y,BASE.x,BASE.y)<BASE.r+18)return {job:"haul",target:BASE,postX:BASE.x,postY:BASE.y+25,zoneX:BASE.x,zoneY:BASE.y,zoneRadius:BASE_ZONE};
+  return {job:"guard",target:null,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};
 }
 function assignWorker(worker,x,y){
-  if(x<20||y<20||x>W-20||y>H-20||isFogged(x,y))return null;
-  if(worker.downed){
-    if(distance(x,y,BASE.x,BASE.y)>BASE.r+18)return null;
-    worker.downed=false;worker.downedTimer=0;worker.hp=WORKER_HP;worker.job="guard";worker.jobTarget=null;worker.homeX=BASE.x;worker.homeY=BASE.y+25;worker.x=worker.homeX;worker.y=worker.homeY;return "revived";
-  }
-  const node=workerNodeAt(x,y),blueprint=buildings.find(item=>!item.complete&&distance(x,y,item.x,item.y)<42),staff=buildings.find(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")&&distance(x,y,item.x,item.y)<42),stockpile=buildings.find(item=>item.complete&&item.type==="stockpile"&&distance(x,y,item.x,item.y)<42),house=buildings.find(item=>item.complete&&item.type==="house"&&distance(x,y,item.x,item.y)<42);
-  clearWorkerTask(worker);worker.x=x;worker.y=y;worker.homeX=x;worker.homeY=y;worker.jobTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.returning=false;worker.starved=false;
-  if(blueprint){worker.job="build";worker.jobTarget=blueprint;worker.homeX=blueprint.x;worker.homeY=blueprint.y+20;}
-  else if(node){worker.job="harvest";worker.jobTarget=node;}
-  else if(staff){worker.job="staff";worker.jobTarget=staff;worker.homeX=staff.x;worker.homeY=staff.y+16;}
-  else if(stockpile){worker.job="haul";worker.jobTarget=stockpile;worker.homeX=stockpile.x;worker.homeY=stockpile.y+18;}
-  else if(house){worker.job="guard";worker.jobTarget=null;worker.homeX=house.x;worker.homeY=house.y+23;}
-  else if(distance(x,y,BASE.x,BASE.y)<BASE.r+18){worker.job="haul";worker.jobTarget=BASE;worker.homeX=BASE.x;worker.homeY=BASE.y+25;}
-  else worker.job="guard";
+  const assignment=workerAssignmentAt(worker,x,y);if(!assignment)return null;
+  if(assignment.result==="revived"){reviveWorker(worker,assignment.anchor,assignment.postY-assignment.anchor.y);return assignment.result;}
+  clearWorkerTask(worker);worker.x=x;worker.y=y;worker.postX=assignment.postX;worker.postY=assignment.postY;worker.job=assignment.job;worker.jobTarget=assignment.target;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.returning=false;worker.starved=false;
   if(worker.job!=="haul")for(const kind of RESOURCE_KINDS){while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,x+rand(-8,8),y+rand(-5,5));}}
   return worker.job;
 }
-function dropCarriedBuilding(){
-  const held=state.carriedBuilding;if(!held)return false;
-  if(held.worker){
-    const result=state.mouse.inside&&assignWorker(held.worker,state.mouse.x,state.mouse.y);
-    if(result){state.workers.push(held.worker);const assignment=held.worker.job==="haul"?"haul to "+(held.worker.jobTarget===BASE?"base":"stockpile"):result;toast(result==="revived"?"worker revived at full health":"worker assigned: "+assignment);}
-    else{held.worker.x=held.originX;held.worker.y=held.originY;state.workers.push(held.worker);toast(held.worker.downed?"downed worker must be dropped on the base":"invalid ground — worker returned");}
-    state.carriedBuilding=null;sound(result==="revived"?720:260,.06);syncHud();return true;
+function dropHeldObject(){
+  const held=state.heldObject;if(!held)return false;
+  if(held.kind==="worker"){
+    const worker=held.object,result=state.mouse.inside&&assignWorker(worker,state.mouse.x,state.mouse.y);
+    if(result){state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):result;toast(result==="revived"?"worker revived at full health":"worker assigned: "+assignment);}
+    else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast(worker.downed?"downed worker must be dropped on the base or a house":"invalid ground — worker returned");}
+    state.heldObject=null;sound(result==="revived"?720:260,.06);syncHud();return true;
   }
-  const building=held.building;
+  const building=held.object;
   if(state.mouse.inside&&canPlace(state.mouse.x,state.mouse.y)){building.x=state.mouse.x;building.y=state.mouse.y;toast("shock beacon placed");}
   else{building.x=held.originX;building.y=held.originY;toast("invalid ground — beacon returned");}
-  buildings.push(building);state.carriedBuilding=null;sound(260,.06);return true;
+  buildings.push(building);state.heldObject=null;sound(260,.06);return true;
 }
 function activateBeacon(building){
   if(building.ability.cooldown>0){toast("shock beacon recharging: "+building.ability.cooldown.toFixed(1)+"s");return;}
-  building.ability.cooldown=BUILDING.beacon.cooldown;building.ability.flash=.35;
+  building.ability.cooldown=BUILDING_TYPES.beacon.cooldown;building.ability.flash=.35;
   for(const enemy of [...state.enemies]){
-    if(distance(building.x,building.y,enemy.x,enemy.y)>BUILDING.beacon.radius)continue;
+    if(distance(building.x,building.y,enemy.x,enemy.y)>BUILDING_TYPES.beacon.effectRadius)continue;
     enemy.hp-=2;enemy.flash=.2;burst(enemy.x,enemy.y,"#70d8d1",7);if(enemy.hp<=0)killEnemy(enemy,false);
   }
   burst(building.x,building.y,"#70d8d1",24);toast("shock pulse fired");sound(105,.28);
 }
 function detonateBlast(building){
   for(const enemy of [...state.enemies]){
-    const d=distance(building.x,building.y,enemy.x,enemy.y);if(d>BUILDING.blast.radius)continue;
-    enemy.hp-=d<BUILDING.blast.radius*.5?5:3;enemy.flash=.2;
+    const d=distance(building.x,building.y,enemy.x,enemy.y),radius=BUILDING_TYPES.blast.effectRadius;if(d>radius)continue;
+    enemy.hp-=d<radius*.5?5:3;enemy.flash=.2;
     if(enemy.hp<=0)killEnemy(enemy,false);
   }
   for(let i=0;i<42;i++)particles.push({x:building.x,y:building.y,vx:rand(-180,180),vy:rand(-190,40),life:rand(.35,.9),col:i%2?"#e39a3f":"#b84b38"});
   buildings.splice(buildings.indexOf(building),1);toast("blast charge detonated");sound(70,.3);
+}
+function createBuilding(type,x,y){
+  const def=BUILDING_TYPES[type],cost=type==="house"?nextHouseCost():{...def.cost};
+  return {type,x,y,cost,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,tower:null,pulseTower:null,ability:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
 }
 
 function leftClick(){
@@ -412,9 +432,8 @@ function leftClick(){
   if(enemy){hitEnemy(enemy);return;}
   if(state.buildMode){
     if(canPlace(m.x,m.y)){
-      const type=state.buildMode,def=BUILDING[type];
-      const cost=type==="house"?nextHouseCost():{...def.cost};
-      buildings.push({type,x:m.x,y:m.y,cost,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,tower:null,pulseTower:null,ability:def.instant&&type==="beacon"?{cooldown:0,flash:0}:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1});
+      const type=state.buildMode,def=BUILDING_TYPES[type];
+      buildings.push(createBuilding(type,m.x,m.y));
       if(def.stack){state.buildStacks[type]--;state.buildMode=state.buildStacks[type]>0?type:null;}else state.buildMode=null;
       syncHud();
       sound(240,.06);
@@ -471,7 +490,7 @@ function hitResource(target,kind,automatic){
 }
 
 function spawnResource(kind,x,y,ttl=null){
-  drops.push({id:state.nextDropId++,kind,x,y,groundY:clamp(y+rand(10,22),35,H-20),vx:rand(-35,35),vy:rand(-75,-35),ground:false,target:null,t:0,spin:rand(0,6),ttl});
+  resourceDrops.push({kind,x,y,groundY:clamp(y+rand(10,22),35,H-20),vx:rand(-35,35),vy:rand(-75,-35),ground:false,target:null,t:0,spin:rand(0,6),ttl});
 }
 function spawnCoin(){
   for(let attempt=0;attempt<300;attempt++){
@@ -481,20 +500,20 @@ function spawnCoin(){
   }
 }
 
-function collectWood(silent=false){
-  // Reserve capacity for wood already flying to the cursor, preventing rapid collection from overfilling hands.
-  const incoming=drops.reduce((count,wood)=>count+(wood.target==="hand"),0);
+function collectDrop(silent=false){
+  // Reserve capacity for drops already flying to the cursor, preventing rapid collection from overfilling hands.
+  const incoming=resourceDrops.reduce((count,drop)=>count+(drop.target==="hand"),0);
   const carried=carriedTotal();
   if(carried+incoming>=state.capacity){if(!silent){toast("hands full — drop your resources");sound(110,.08);}return false;}
   const m=state.mouse;
   let nearest=null,best=45;
-  for(const wood of drops){
-    if(wood.target||isFogged(wood.x,wood.y))continue;
-    const d=distance(m.x,m.y,wood.x,wood.y);
-    if(d<best){best=d;nearest=wood;}
+  for(const drop of resourceDrops){
+    if(drop.target||isFogged(drop.x,drop.y))continue;
+    const d=distance(m.x,m.y,drop.x,drop.y);
+    if(d<best){best=d;nearest=drop;}
   }
   if(!nearest){if(!silent)toast("hold right click and drag over loose resources");return false;}
-  if(nearest.worker){const worker=nearest.worker;clearWorkerTask(worker);worker.returning=workerLoad(worker)>0;}
+  if(nearest.claimedBy){const worker=nearest.claimedBy;clearWorkerTask(worker);worker.returning=workerLoad(worker)>0;}
   nearest.target="hand";nearest.t=0;
   sound(650,.035);
   return true;
@@ -515,12 +534,12 @@ function hoverTarget(){
 function releaseRightMouse(){
   state.collecting=false;
   if(state.gameOver||state.paused)return;
-  if(dropCarriedBuilding())return;
+  if(dropHeldObject())return;
   // A quick press may release before pickup animations finish; commit those reserved drops first.
-  for(let i=drops.length-1;i>=0;i--){
-    const resource=drops[i];
+  for(let i=resourceDrops.length-1;i>=0;i--){
+    const resource=resourceDrops[i];
     if(resource.target!=="hand")continue;
-    state.carried[resource.kind]++;drops.splice(i,1);
+    state.carried[resource.kind]++;resourceDrops.splice(i,1);
   }
   if(carriedTotal()<=0)return;
   const target=hoverTarget();
@@ -605,13 +624,13 @@ function dropToBase(){
   state.basePulse=1;toast("stored "+total+" resources at base");sound(520,.08);syncHud();
 }
 
-function buildingCost(building){return building.cost||BUILDING[building.type].cost;}
+function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
 function completeBuilding(building){
   if(building.complete)return;
-  const def=BUILDING[building.type];building.complete=true;building.starved=false;
+  const def=BUILDING_TYPES[building.type];building.complete=true;building.starved=false;
   if(def.resource)state.capacity+=2;
   if(building.type==="tower")building.tower={cooldown:.5,flash:0};
-  if(building.type==="pulseTower")building.pulseTower={cooldown:BUILDING.pulseTower.cooldown,flash:0};
+  if(building.type==="pulseTower")building.pulseTower={cooldown:BUILDING_TYPES.pulseTower.cooldown,flash:0};
   if(building.type==="beacon")building.ability={cooldown:0,flash:0};
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
   burst(building.x,building.y-12,"#ead28d",18);
@@ -643,14 +662,14 @@ function canPlace(x,y){
   if(trees.some(t=>t.stump<=0&&distance(x,y,t.x,t.y)<55))return false;
   if(rocks.some(r=>r.depleted<=0&&distance(x,y,r.x,r.y)<48))return false;
   if(diamonds.some(d=>d.depleted<=0&&distance(x,y,d.x,d.y)<52))return false;
-  if(buildings.some(b=>distance(x,y,b.x,b.y)<(BUILDING[state.buildMode]?.stack&&BUILDING[b.type]?.stack?28:65)))return false;
+  if(buildings.some(b=>distance(x,y,b.x,b.y)<(BUILDING_TYPES[state.buildMode]?.stack&&BUILDING_TYPES[b.type]?.stack?28:65)))return false;
   return true;
 }
 
 document.querySelectorAll("button.build").forEach(button=>button.addEventListener("click",()=>{
   if(state.gameOver||state.paused)return;
   const kind=button.dataset.kind;
-  if(BUILDING[kind].stack&&state.buildStacks[kind]<=0){toast("no "+BUILDING[kind].name+" stacks remaining");return;}
+  if(BUILDING_TYPES[kind].stack&&state.buildStacks[kind]<=0){toast("no "+BUILDING_TYPES[kind].name+" stacks remaining");return;}
   state.buildMode=state.buildMode===kind?null:kind;
   syncHud();
   toast(state.buildMode?"click explored, clear ground to place the blueprint":"build cancelled");
@@ -658,11 +677,14 @@ document.querySelectorAll("button.build").forEach(button=>button.addEventListene
 function completeHouses(){return buildings.filter(building=>building.complete&&building.type==="house");}
 function nextHouseCost(){const count=completeHouses().length;return {wood:HOUSE_COST.wood+HOUSE_COST_ESCALATION.wood*count,stone:HOUSE_COST.stone+HOUSE_COST_ESCALATION.stone*count};}
 function workerSlots(){return BASE_SLOTS+HOUSE_SLOTS*completeHouses().length;}
-function sourceWorkerCount(source){const held=state.carriedBuilding?.worker;return state.workers.filter(worker=>worker.slotHome===source).length+(held?.slotHome===source?1:0);}
+function sourceWorkerCount(source){const held=heldWorker();return state.workers.filter(worker=>worker.spawnSource===source).length+(held?.spawnSource===source?1:0);}
+function createWorker(source){
+  const postX=source===BASE?BASE.x:source.x,postY=source===BASE?BASE.y+25:source.y+23;
+  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:source,job:"guard",jobTarget:null,taskTarget:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,downed:false,downedTimer:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false};
+}
 function spawnWorker(source){
-  const x=source===BASE?BASE.x:source.x,y=source===BASE?BASE.y+25:source.y+23;
-  state.workers.push({x:x+rand(-8,8),y,homeX:x,homeY:y,slotHome:source,job:"guard",jobTarget:null,taskTarget:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,downed:false,downedTimer:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false});
-  burst(x,y,"#ead28d",9);sound(720,.12);syncHud();
+  const worker=createWorker(source);state.workers.push(worker);
+  burst(worker.postX,worker.postY,"#ead28d",9);sound(720,.12);syncHud();
 }
 function updateWorkerSpawns(dt){
   for(const [source,slots] of [[BASE,BASE_SLOTS],...completeHouses().map(house=>[house,HOUSE_SLOTS])]){
@@ -674,13 +696,13 @@ function updateWorkerSpawns(dt){
 
 function resourceIsActive(node,kind){return kind==="wood"?node.stump<=0:node.depleted<=0;}
 function workerLoad(worker){return RESOURCE_KINDS.reduce((total,kind)=>total+worker.carried[kind],0);}
-function clearWorkerTask(worker){if(worker.taskTarget?.worker===worker)delete worker.taskTarget.worker;worker.taskTarget=null;}
-function dropIsReserved(resource){
-  const owner=resource.worker;if(owner&&(!state.workers.includes(owner)||owner.downed||owner.taskTarget!==resource)){delete resource.worker;return false;}return !!owner;
+function clearWorkerTask(worker){if(worker.taskTarget?.claimedBy===worker)delete worker.taskTarget.claimedBy;worker.taskTarget=null;}
+function targetIsClaimed(target){
+  const owner=target.claimedBy;if(owner&&(!state.workers.includes(owner)||owner.downed||owner.taskTarget!==target)){delete target.claimedBy;return false;}return !!owner;
 }
-function nearestWorkerNode(worker,kind,centerX=worker.homeX,centerY=worker.homeY,radius=WORKER_LEASH){
+function nearestWorkerNode(worker,kind,centerX=worker.postX,centerY=worker.postY,radius=WORKER_LEASH){
   const nodes=kind==="wood"?trees:kind==="stone"?rocks:diamonds;let choice=null,best=Infinity;
-  for(const node of nodes){const homeDistance=distance(worker.homeX,worker.homeY,node.x,node.y),scopeDistance=distance(centerX,centerY,node.x,node.y),d=distance(worker.x,worker.y,node.x,node.y);if(resourceIsActive(node,kind)&&!isFogged(node.x,node.y)&&homeDistance<=WORKER_LEASH&&scopeDistance<=radius&&d<best){choice=node;best=d;}}
+  for(const node of nodes){const scopeDistance=distance(centerX,centerY,node.x,node.y),d=distance(worker.x,worker.y,node.x,node.y);if(resourceIsActive(node,kind)&&!isFogged(node.x,node.y)&&scopeDistance<=radius&&d<best){choice=node;best=d;}}
   return choice;
 }
 function moveWorker(worker,x,y,dt,stop=12){
@@ -692,7 +714,7 @@ function downWorker(worker){
   if(worker.downed)return;
   clearWorkerTask(worker);worker.combatTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.downed=true;worker.downedTimer=WORKER_DOWNED_TIME;worker.hp=0;
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,worker.x+rand(-7,7),worker.y+rand(-5,5));}
-  burst(worker.x,worker.y,"#9d493d",9);toast("worker down — carry them to the base");syncHud();
+  burst(worker.x,worker.y,"#9d493d",9);toast("worker down — carry to base or house, or send a hauler");syncHud();
 }
 function workerAttack(worker,enemy){
   worker.combatTarget=enemy;if(worker.attackCooldown>0)return;
@@ -703,13 +725,13 @@ function depositWorkerLoad(worker){
   const storage=worker.jobTarget;
   for(const kind of RESOURCE_KINDS){const amount=worker.carried[kind];if(!amount)continue;if(storage===BASE)state.stored[kind]+=amount;else storage.storage[kind]+=amount;worker.carried[kind]=0;}
   if(storage===BASE){state.basePulse=1;syncHud();}else storage.pulse=1;
-  worker.returning=false;burst(worker.homeX,worker.homeY,"#e5ce91",5);
+  worker.returning=false;burst(worker.postX,worker.postY,"#e5ce91",5);
 }
-function storageReach(storage){return WORKER_LEASH;}
+function storageServiceRadius(storage){return storage===BASE?BASE_ZONE:BUILDING_TYPES[storage.type].serviceRadius;}
 function storageStock(storage){return storage===BASE?state.stored:storage.storage;}
 function nearestBuildStorage(building,worker){
   let choice=null,best=Infinity,covered=false;
-  for(const storage of [BASE,...buildings.filter(item=>item.complete&&item.type==="stockpile")]){const d=distance(storage.x,storage.y,building.x,building.y);if(d>storageReach(storage))continue;covered=true;const stock=storageStock(storage),available=["wood","stone"].some(kind=>stock[kind]>0&&buildNeed(building,kind,worker)>0);if(available&&d<best){choice=storage;best=d;}}
+  for(const storage of [BASE,...buildings.filter(item=>item.complete&&item.type==="stockpile")]){const d=distance(storage.x,storage.y,building.x,building.y);if(d>storageServiceRadius(storage))continue;covered=true;const stock=storageStock(storage),available=["wood","stone"].some(kind=>stock[kind]>0&&buildNeed(building,kind,worker)>0);if(available&&d<best){choice=storage;best=d;}}
   return {storage:choice,covered};
 }
 function buildNeed(building,kind,worker){
@@ -719,9 +741,9 @@ function buildNeed(building,kind,worker){
 function inheritBuiltJob(worker,building){
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,building.x+rand(-8,8),building.y+rand(-5,5));}
   clearWorkerTask(worker);worker.returning=false;worker.starved=false;
-  if(building.type==="lumber"||building.type==="quarry"){worker.job="staff";worker.jobTarget=building;worker.homeX=building.x;worker.homeY=building.y+16;}
-  else if(building.type==="stockpile"){worker.job="haul";worker.jobTarget=building;worker.homeX=building.x;worker.homeY=building.y+18;}
-  else{worker.job="guard";worker.jobTarget=null;worker.homeX=building.x;worker.homeY=building.y+(building.type==="house"?23:18);}
+  if(building.type==="lumber"||building.type==="quarry"){worker.job="staff";worker.jobTarget=building;worker.postX=building.x;worker.postY=building.y+16;}
+  else if(building.type==="stockpile"){worker.job="haul";worker.jobTarget=building;worker.postX=building.x;worker.postY=building.y+18;}
+  else{worker.job="guard";worker.jobTarget=null;worker.postX=building.x;worker.postY=building.y+(building.type==="house"?23:18);}
 }
 function updateBuilder(worker,dt){
   const building=worker.jobTarget;
@@ -732,20 +754,20 @@ function updateBuilder(worker,dt){
     const cost=buildingCost(building);for(const kind of ["wood","stone"]){const amount=Math.min(worker.carried[kind],cost[kind]-building.delivered[kind]);worker.carried[kind]-=amount;building.delivered[kind]+=amount;handoffParticles(building.x,building.y,kind,amount,worker.x,worker.y);}
     building.pulse=1;if(building.delivered.wood>=cost.wood&&building.delivered.stone>=cost.stone){completeBuilding(building);inheritBuiltJob(worker,building);}return;
   }
-  if(worker.taskTarget&&(!drops.includes(worker.taskTarget)||worker.taskTarget.target||worker.taskTarget.worker!==worker))worker.taskTarget=null;
+  if(worker.taskTarget&&(!resourceDrops.includes(worker.taskTarget)||worker.taskTarget.target||worker.taskTarget.claimedBy!==worker))clearWorkerTask(worker);
   if(worker.taskTarget){
-    worker.starved=false;const resource=worker.taskTarget;if(moveWorker(worker,resource.x,resource.y,dt,10)){const at=drops.indexOf(resource);if(at>=0){worker.carried[resource.kind]++;drops.splice(at,1);}delete resource.worker;worker.taskTarget=null;}return;
+    worker.starved=false;const resource=worker.taskTarget;if(moveWorker(worker,resource.x,resource.y,dt,10)){const at=resourceDrops.indexOf(resource);if(at>=0){worker.carried[resource.kind]++;resourceDrops.splice(at,1);}delete resource.claimedBy;worker.taskTarget=null;}return;
   }
   const source=nearestBuildStorage(building,worker),storage=source.storage;
-  if(!source.covered){worker.starved=true;moveWorker(worker,worker.homeX,worker.homeY,dt);return;}
+  if(!source.covered){worker.starved=true;moveWorker(worker,worker.postX,worker.postY,dt);return;}
   if(storage){
     worker.starved=false;if(!moveWorker(worker,storage.x,storage.y,dt,storage===BASE?BASE.r-4:18))return;
     const stock=storageStock(storage);let room=WORKER_CARRY;for(const kind of ["wood","stone"]){const amount=Math.min(room,stock[kind],buildNeed(building,kind,worker));stock[kind]-=amount;worker.carried[kind]+=amount;room-=amount;}if(storage===BASE)syncHud();else storage.pulse=1;return;
   }
   let nearest=null,best=Infinity;
-  for(const resource of drops){if(resource.target||dropIsReserved(resource)||!resource.ground||!["wood","stone"].includes(resource.kind)||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>WORKER_LEASH)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
-  if(nearest){worker.starved=false;worker.taskTarget=nearest;nearest.worker=worker;return;}
-  worker.starved=["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.homeX,worker.homeY,dt);
+  for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||!["wood","stone"].includes(resource.kind)||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>WORKER_LEASH)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
+  if(nearest){worker.starved=false;worker.taskTarget=nearest;nearest.claimedBy=worker;return;}
+  worker.starved=["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);
 }
 
 function updateKing(dt){
@@ -764,9 +786,9 @@ function updateKing(dt){
 function updatePulseTower(building,dt){
   const pulse=building.pulseTower;pulse.cooldown=Math.max(0,pulse.cooldown-dt);pulse.flash=Math.max(0,pulse.flash-dt);
   if(pulse.cooldown>0)return;
-  const targets=state.enemies.filter(enemy=>!isFogged(enemy.x,enemy.y)&&distance(building.x,building.y,enemy.x,enemy.y)<=BUILDING.pulseTower.radius);
+  const targets=state.enemies.filter(enemy=>!isFogged(enemy.x,enemy.y)&&distance(building.x,building.y,enemy.x,enemy.y)<=BUILDING_TYPES.pulseTower.effectRadius);
   if(!targets.length)return;
-  pulse.cooldown=BUILDING.pulseTower.cooldown;pulse.flash=.4;
+  pulse.cooldown=BUILDING_TYPES.pulseTower.cooldown;pulse.flash=.4;
   for(const enemy of targets){enemy.hp-=2;enemy.flash=.16;burst(enemy.x,enemy.y,"#b18be5",5);if(enemy.hp<=0)killEnemy(enemy,false);}
   sound(125,.22);
 }
@@ -778,7 +800,7 @@ function updateHazard(building,dt){
   if(building.type==="tar"){
     hazard.cooldown=.25;hazard.flash=.12;enemy.slow=Math.max(enemy.slow,2);
   }else if(building.type==="landmine"){
-    for(const target of [...state.enemies]){if(distance(building.x,building.y,target.x,target.y)>BUILDING.landmine.radius)continue;target.hp-=8;target.flash=.2;burst(target.x,target.y,"#e09b43",7);if(target.hp<=0)killEnemy(target,false);}
+    for(const target of [...state.enemies]){if(distance(building.x,building.y,target.x,target.y)>BUILDING_TYPES.landmine.effectRadius)continue;target.hp-=8;target.flash=.2;burst(target.x,target.y,"#e09b43",7);if(target.hp<=0)killEnemy(target,false);}
     for(let i=0;i<28;i++)particles.push({x:building.x,y:building.y,vx:rand(-140,140),vy:rand(-160,20),life:rand(.3,.7),col:i%2?"#d9893d":"#6e5540"});
     building.remove=true;sound(75,.25);
   }else{
@@ -788,7 +810,7 @@ function updateHazard(building,dt){
 function updateTower(building,dt){
   const tower=building.tower;tower.cooldown-=dt;tower.flash=Math.max(0,tower.flash-dt);
   if(tower.cooldown>0)return;
-  const range=BUILDING.tower.radius+(building.upgrades.towerRange?60:0);
+  const range=BUILDING_TYPES.tower.effectRadius+(building.upgrades.towerRange?60:0);
   let target=null,best=range;
   for(const enemy of state.enemies){
     if(isFogged(enemy.x,enemy.y))continue;
@@ -802,6 +824,46 @@ function updateTower(building,dt){
   if(target.hp<=0)killEnemy(target,false);
 }
 
+function updateGuard(worker,dt){
+  let target=null,best=Infinity;
+  for(const enemy of state.enemies){if(isFogged(enemy.x,enemy.y))continue;const postDistance=distance(worker.postX,worker.postY,enemy.x,enemy.y),d=distance(worker.x,worker.y,enemy.x,enemy.y);if(postDistance<=WORKER_LEASH&&d<best){best=d;target=enemy;}}
+  if(target){worker.combatTarget=target;if(moveWorker(worker,target.x,target.y,dt,WORKER_MELEE-2))workerAttack(worker,target);return;}
+  moveWorker(worker,worker.postX,worker.postY,dt);
+}
+function updateHauler(worker,dt){
+  const storage=worker.jobTarget,task=worker.taskTarget,body=task?.downed;
+  if(task&&((body?(!state.workers.includes(task)||!task.downed):(!resourceDrops.includes(task)||task.target))||task.claimedBy!==worker)){clearWorkerTask(worker);if(body)worker.returning=false;}
+  if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;
+  if(!worker.returning&&!worker.taskTarget){
+    let nearest=null,best=Infinity;
+    for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||isFogged(resource.x,resource.y)||distance(storage.x,storage.y,resource.x,resource.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
+    for(const candidate of state.workers){if(candidate===worker||!candidate.downed||targetIsClaimed(candidate)||isFogged(candidate.x,candidate.y)||distance(storage.x,storage.y,candidate.x,candidate.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,candidate.x,candidate.y);if(d<best){best=d;nearest=candidate;}}
+    if(nearest){worker.taskTarget=nearest;nearest.claimedBy=worker;}else if(workerLoad(worker)>0)worker.returning=true;
+  }
+  if(worker.returning){
+    const carriedBody=worker.taskTarget?.downed?worker.taskTarget:null,arrived=moveWorker(worker,worker.postX,worker.postY,dt,13);if(carriedBody){carriedBody.x=worker.x;carriedBody.y=worker.y+8;}
+    if(arrived){depositWorkerLoad(worker);if(carriedBody){reviveWorker(carriedBody,storage,storage===BASE?25:18);clearWorkerTask(worker);burst(carriedBody.x,carriedBody.y,"#73a04c",9);toast("hauler recovered a worker");syncHud();}}return;
+  }
+  if(worker.taskTarget){
+    const target=worker.taskTarget;if(moveWorker(worker,target.x,target.y,dt,10)){if(target.downed){worker.returning=true;target.x=worker.x;target.y=worker.y+8;}else{const at=resourceDrops.indexOf(target);if(at>=0){worker.carried[target.kind]++;resourceDrops.splice(at,1);}delete target.claimedBy;worker.taskTarget=null;if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;}}return;
+  }
+  moveWorker(worker,worker.postX,worker.postY,dt);
+}
+function updateGatherer(worker,dt){
+  let node=null,kind=null;
+  if(worker.job==="harvest"){
+    kind=worker.jobTarget?.kind;node=worker.jobTarget?.node;
+    if(!kind)return;
+    if(!node||!resourceIsActive(node,kind)){node=nearestWorkerNode(worker,kind);worker.jobTarget={node,kind};}
+  }else{
+    const building=worker.jobTarget;kind=BUILDING_TYPES[building?.type]?.resource;
+    if(!building||!buildings.includes(building)||!kind){worker.job="guard";worker.jobTarget=null;return;}
+    node=worker.taskTarget;
+    if(!node||!resourceIsActive(node,kind)){node=nearestWorkerNode(worker,kind,building.x,building.y,BUILDING_TYPES[building.type].serviceRadius);worker.taskTarget=node;}
+  }
+  if(!node){moveWorker(worker,worker.postX,worker.postY,dt);return;}
+  if(moveWorker(worker,node.x,node.y,dt,20)&&worker.hitCooldown<=0){worker.hitCooldown=WORKER_HIT_COOLDOWN;hitResource(node,kind,true);if(!resourceIsActive(node,kind)){if(worker.job==="harvest")worker.jobTarget={node:null,kind};else worker.taskTarget=null;}}
+}
 function updateWorker(worker,dt){
   worker.step+=dt;worker.hitCooldown-=dt;worker.attackCooldown-=dt;worker.combatTarget=null;
   if(worker.downed){worker.downedTimer-=dt;return;}
@@ -809,57 +871,50 @@ function updateWorker(worker,dt){
   for(const enemy of state.enemies){const d=distance(worker.x,worker.y,enemy.x,enemy.y);if(d<best){best=d;threat=enemy;}}
   if(threat){clearWorkerTask(worker);workerAttack(worker,threat);return;}
   const attacker=worker.retaliationTarget;
-  if(attacker&&state.enemies.includes(attacker)&&distance(worker.homeX,worker.homeY,attacker.x,attacker.y)<=WORKER_LEASH+WORKER_MELEE){
+  if(attacker&&state.enemies.includes(attacker)&&distance(worker.postX,worker.postY,attacker.x,attacker.y)<=WORKER_LEASH+WORKER_MELEE){
     clearWorkerTask(worker);worker.combatTarget=attacker;if(moveWorker(worker,attacker.x,attacker.y,dt,WORKER_MELEE))workerAttack(worker,attacker);return;
   }
   if(worker.retaliationTarget)worker.returnAfterCombat=true;
   worker.retaliationTarget=null;
-  if(worker.returnAfterCombat){clearWorkerTask(worker);if(moveWorker(worker,worker.homeX,worker.homeY,dt)){worker.returnAfterCombat=false;}return;}
-  if(worker.job==="build"){updateBuilder(worker,dt);return;}
-  if(worker.job==="guard"){
-    let target=null;best=Infinity;
-    for(const enemy of state.enemies){if(isFogged(enemy.x,enemy.y))continue;const homeDistance=distance(worker.homeX,worker.homeY,enemy.x,enemy.y),d=distance(worker.x,worker.y,enemy.x,enemy.y);if(homeDistance<=WORKER_LEASH&&d<best){best=d;target=enemy;}}
-    if(target){worker.combatTarget=target;if(moveWorker(worker,target.x,target.y,dt,WORKER_MELEE-2))workerAttack(worker,target);return;}
-    moveWorker(worker,worker.homeX,worker.homeY,dt);return;
-  }
-  if(worker.job==="haul"){
-    if(worker.taskTarget&&(!drops.includes(worker.taskTarget)||worker.taskTarget.target||worker.taskTarget.worker!==worker))worker.taskTarget=null;
-    if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;
-    if(!worker.returning&&!worker.taskTarget){
-      let nearest=null;best=Infinity;
-      for(const resource of drops){if(resource.target||dropIsReserved(resource)||!resource.ground||isFogged(resource.x,resource.y)||distance(worker.homeX,worker.homeY,resource.x,resource.y)>WORKER_LEASH)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
-      if(nearest){worker.taskTarget=nearest;nearest.worker=worker;}else if(workerLoad(worker)>0)worker.returning=true;
-    }
-    if(worker.returning){if(moveWorker(worker,worker.homeX,worker.homeY,dt,13))depositWorkerLoad(worker);return;}
-    if(worker.taskTarget){
-      const resource=worker.taskTarget;if(moveWorker(worker,resource.x,resource.y,dt,10)){const at=drops.indexOf(resource);if(at>=0){worker.carried[resource.kind]++;drops.splice(at,1);}delete resource.worker;worker.taskTarget=null;if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;}return;
-    }
-    moveWorker(worker,worker.homeX,worker.homeY,dt);return;
-  }
-  let node=null,kind=null;
-  if(worker.job==="harvest"){
-    kind=worker.jobTarget?.kind;node=worker.jobTarget?.node;
-    if(!kind)return;
-    if(!node||!resourceIsActive(node,kind)){node=nearestWorkerNode(worker,kind);worker.jobTarget={node,kind};}
-  }else if(worker.job==="staff"){
-    const building=worker.jobTarget;kind=BUILDING[building?.type]?.resource;
-    if(!building||!buildings.includes(building)||!kind){worker.job="guard";worker.jobTarget=null;return;}
-    node=worker.taskTarget;
-    if(!node||!resourceIsActive(node,kind)){node=nearestWorkerNode(worker,kind,building.x,building.y,BUILDING[building.type].radius);worker.taskTarget=node;}
-  }
-  if(!node){moveWorker(worker,worker.homeX,worker.homeY,dt);return;}
-  if(moveWorker(worker,node.x,node.y,dt,20)&&worker.hitCooldown<=0){worker.hitCooldown=WORKER_HIT_COOLDOWN;hitResource(node,kind,true);if(!resourceIsActive(node,kind)){if(worker.job==="harvest")worker.jobTarget={node:null,kind};else worker.taskTarget=null;}}
+  if(worker.returnAfterCombat){clearWorkerTask(worker);if(moveWorker(worker,worker.postX,worker.postY,dt)){worker.returnAfterCombat=false;}return;}
+  if(worker.job==="build")updateBuilder(worker,dt);
+  else if(worker.job==="guard")updateGuard(worker,dt);
+  else if(worker.job==="haul")updateHauler(worker,dt);
+  else if(worker.job==="harvest"||worker.job==="staff")updateGatherer(worker,dt);
+  else{clearWorkerTask(worker);worker.job="guard";worker.jobTarget=null;updateGuard(worker,dt);}
+}
+
+// Only this function changes phase identity and owns both phase-boundary side effects.
+function transitionPhase(){
+  const clock=state.clock;
+  if(clock.phase==="day"){clock.phase="night";clock.remaining=NIGHT_DURATION;}
+  else{clock.phase="day";clock.remaining=DAY_DURATION;clock.completedNights++;state.dayEnemyTimer=rand(DAY_ENEMY_SPAWN.min,DAY_ENEMY_SPAWN.max);}
+}
+function updateClock(dt){
+  const clock=state.clock;
+  clock.remaining-=dt;
+  while(clock.remaining<=0){const overflow=-clock.remaining;transitionPhase();clock.remaining-=overflow;}
+  const target=clock.phase==="night"?NIGHT_OVERLAY_ALPHA:0,step=dt*NIGHT_OVERLAY_ALPHA/LIGHT_FADE_TIME;
+  clock.light=target>clock.light?Math.min(target,clock.light+step):Math.max(target,clock.light-step);
+}
+
+function updateDaytimeEnemySpawns(dt){
+  if(state.clock.phase!=="day")return;
+  state.dayEnemyTimer-=dt;
+  if(state.dayEnemyTimer>0)return;
+  state.dayEnemyTimer=rand(DAY_ENEMY_SPAWN.min,DAY_ENEMY_SPAWN.max);
+  if(state.enemies.length<DAY_ENEMY_CAP)spawnEnemy();
 }
 
 function update(dt){
   if(state.gameOver||state.paused)return;
+  updateClock(dt);updateDaytimeEnemySpawns(dt);
   const keys=state.keys,camera=state.camera;
   let panX=(keys.has("KeyD")||keys.has("ArrowRight"))-(keys.has("KeyA")||keys.has("ArrowLeft"));
   let panY=(keys.has("KeyS")||keys.has("ArrowDown"))-(keys.has("KeyW")||keys.has("ArrowUp"));
   if(panX||panY){const length=Math.hypot(panX,panY),speed=430/camera.zoom;camera.x+=panX/length*speed*dt;camera.y+=panY/length*speed*dt;clampCamera();}
-  state.enemyTimer-=dt;state.coinTimer-=dt;
+  state.coinTimer-=dt;
   if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(14,22);}
-  if(state.enemyTimer<=0&&state.enemies.length<30){spawnEnemy();state.enemyTimer=rand(ENEMY_SPAWN.min,ENEMY_SPAWN.max);}
   for(const enemy of state.enemies){
     const def=ENEMY_TYPES[enemy.type];
     enemy.wob+=dt*7;enemy.flash=Math.max(0,enemy.flash-dt);enemy.shotFlash=Math.max(0,enemy.shotFlash-dt);enemy.healFlash=Math.max(0,enemy.healFlash-dt);enemy.slow=Math.max(0,(enemy.slow||0)-dt);enemy.attackCooldown-=dt;enemy.healCooldown-=dt;
@@ -886,7 +941,7 @@ function update(dt){
   state.collectCooldown-=dt;
   if(state.collecting&&state.mouse.inside&&state.collectCooldown<=0){
     // One pickup per short interval makes a drag vacuum nearby pieces without requiring repeated clicks.
-    collectWood(true);
+    collectDrop(true);
     state.collectCooldown=.08;
   }
   if(state.toastTimer<=0)document.getElementById("toast").classList.remove("on");
@@ -894,21 +949,21 @@ function update(dt){
   for(const tree of trees)tree.shake=Math.max(0,tree.shake-dt*7);
   for(const rock of rocks)rock.shake=Math.max(0,rock.shake-dt*7);
   for(const diamond of diamonds)diamond.shake=Math.max(0,diamond.shake-dt*7);
-  for(let i=drops.length-1;i>=0;i--){
-    const wood=drops[i];
-    if(wood.ttl!==null&&!wood.target&&!wood.worker){wood.ttl-=dt;if(wood.ttl<=0){drops.splice(i,1);continue;}}
-    wood.spin+=dt*4;
-    if(wood.target==="hand"){
-      wood.t+=dt*7;
-      const ease=1-Math.pow(1-clamp(wood.t,0,1),3);
-      wood.x+=(state.mouse.x-wood.x)*ease*.35;
-      wood.y+=(state.mouse.y-wood.y)*ease*.35;
-      if(wood.t>=1){drops.splice(i,1);state.carried[wood.kind]++;syncHud();}
+  for(let i=resourceDrops.length-1;i>=0;i--){
+    const drop=resourceDrops[i];
+    if(drop.ttl!==null&&!drop.target&&!drop.claimedBy){drop.ttl-=dt;if(drop.ttl<=0){resourceDrops.splice(i,1);continue;}}
+    drop.spin+=dt*4;
+    if(drop.target==="hand"){
+      drop.t+=dt*7;
+      const ease=1-Math.pow(1-clamp(drop.t,0,1),3);
+      drop.x+=(state.mouse.x-drop.x)*ease*.35;
+      drop.y+=(state.mouse.y-drop.y)*ease*.35;
+      if(drop.t>=1){resourceDrops.splice(i,1);state.carried[drop.kind]++;syncHud();}
       continue;
     }
-    wood.vy+=170*dt;
-    wood.x+=wood.vx*dt;wood.y+=wood.vy*dt;
-    if(wood.y>=wood.groundY){wood.y=wood.groundY;wood.vx*=.72;wood.vy*=-.22;if(Math.abs(wood.vy)<10){wood.vy=0;wood.vx=0;wood.ground=true;}}
+    drop.vy+=170*dt;
+    drop.x+=drop.vx*dt;drop.y+=drop.vy*dt;
+    if(drop.y>=drop.groundY){drop.y=drop.groundY;drop.vx*=.72;drop.vy*=-.22;if(Math.abs(drop.vy)<10){drop.vy=0;drop.vx=0;drop.ground=true;}}
   }
   updateWorkerSpawns(dt);
   for(const building of buildings){
@@ -919,11 +974,11 @@ function update(dt){
     if(building.complete&&building.hazard)updateHazard(building,dt);
   }
   for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove)buildings.splice(i,1);
-  if(state.carriedBuilding?.building?.ability){const ability=state.carriedBuilding.building.ability;ability.cooldown=Math.max(0,ability.cooldown-dt);ability.flash=Math.max(0,ability.flash-dt);}
+  const held=heldBuilding();if(held?.ability){const ability=held.ability;ability.cooldown=Math.max(0,ability.cooldown-dt);ability.flash=Math.max(0,ability.flash-dt);}
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>!worker.downed&&worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
   for(let i=state.workers.length-1;i>=0;i--)if(state.workers[i].downed&&state.workers[i].downedTimer<=0){const worker=state.workers[i];state.workers.splice(i,1);burst(worker.x,worker.y,"#55443b",8);toast("a downed worker was lost");syncHud();}
-  if(state.carriedBuilding?.worker?.downed){const worker=state.carriedBuilding.worker;worker.downedTimer-=dt;if(worker.downedTimer<=0){state.carriedBuilding=null;toast("a downed worker was lost");syncHud();}}
+  if(heldWorker()?.downed){const worker=heldWorker();worker.downedTimer-=dt;if(worker.downedTimer<=0){state.heldObject=null;toast("a downed worker was lost");syncHud();}}
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
   updatePrompt();
 }
@@ -948,7 +1003,7 @@ function syncHud(){
     document.getElementById(label).textContent="free · "+state.buildStacks[kind]+" stacks remaining";
     document.querySelector('button.build[data-kind="'+kind+'"]').classList.toggle("no",state.buildStacks[kind]<=0);
   }
-  const heldWorker=state.carriedBuilding?.worker,totalWorkers=state.workers.length+(heldWorker?1:0),guards=state.workers.filter(worker=>!worker.downed&&worker.job==="guard").length,downed=state.workers.filter(worker=>worker.downed).length+(heldWorker?.downed?1:0);
+  const held=heldWorker(),totalWorkers=state.workers.length+(held?1:0),guards=state.workers.filter(worker=>!worker.downed&&worker.job==="guard").length,downed=state.workers.filter(worker=>worker.downed).length+(held?.downed?1:0);
   document.getElementById("workerCount").textContent="workers "+totalWorkers+" / "+workerSlots()+" · idle/guard "+guards+" · downed "+downed;
   const houseCost=nextHouseCost();document.getElementById("houseCost").textContent="deliver "+houseCost.wood+" wood + "+houseCost.stone+" stone · adds "+HOUSE_SLOTS+" worker slots";
   canvas.classList.toggle("building",state.buildMode);
@@ -958,13 +1013,12 @@ function updatePrompt(){
   box.classList.toggle("on",!!target);
   if(target)label.textContent=target.kind==="base"?"deposit at base":target.kind==="stockpile"?"store in stockpile":target.kind==="upgrade"?"deposit toward upgrade":"deliver to blueprint";
 }
-let toastNonce=0;
 function toast(message){
-  const el=document.getElementById("toast");el.textContent=message;el.classList.add("on");state.toastTimer=2.2;toastNonce++;
+  const el=document.getElementById("toast");el.textContent=message;el.classList.add("on");state.toastTimer=2.2;
 }
 function endGame(){
   if(state.gameOver)return;
-  state.gameOver=true;state.collecting=false;state.camera.panning=false;state.keys.clear();cancelCarriedBuilding();closeUpgradeMenu();
+  state.gameOver=true;state.collecting=false;state.camera.panning=false;state.keys.clear();cancelHeldObject();closeUpgradeMenu();
   document.getElementById("gameOver").classList.remove("off");sound(65,.6);
 }
 document.getElementById("restart").addEventListener("click",()=>location.reload());
@@ -1040,8 +1094,12 @@ function drawEnemy(enemy){
   }
   if(enemy.hp<enemy.max){const width=22*s;rect(x-width/2,y-18*s,width,4,"#241f18");rect(x-width/2+1,y-17*s,(width-2)*enemy.hp/enemy.max,2,"#c65343");}
 }
+function drawZone(x,y,radius,color="#ead18d99"){
+  ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash([7,6]);ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+}
 function drawBase(){
   const p=state.basePulse*3;
+  if(state.mouse.inside&&distance(state.mouse.x,state.mouse.y,BASE.x,BASE.y)<BASE.r+16)drawZone(BASE.x,BASE.y,BASE_ZONE);
   ctx.fillStyle="#b99e6288";ctx.beginPath();ctx.ellipse(BASE.x,BASE.y+28,52+p,20+p*.3,0,0,Math.PI*2);ctx.fill();
   rect(BASE.x-35,BASE.y-20,70,55,"#b8afa0");rect(BASE.x-35,BASE.y-20,70,7,"#d5cdbf");
   rect(BASE.x-41,BASE.y-28,18,18,"#aaa093");rect(BASE.x+23,BASE.y-28,18,18,"#aaa093");
@@ -1059,11 +1117,12 @@ function drawKing(){
   if(king.swing>0){const angle=Math.atan2(king.targetY-y,king.targetX-x);ctx.strokeStyle="#f3e6bc";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x+Math.cos(angle)*7,y+Math.sin(angle)*7);ctx.lineTo(x+Math.cos(angle)*24,y+Math.sin(angle)*24);ctx.stroke();}
   else{rect(x+7,y-6,2,15,"#ded8c9");rect(x+5,y+6,6,2,"#77512f");}
 }
-function drawShed(building,ghost=false){
-  const x=building.x,y=building.y,p=building.pulse*2,def=BUILDING[building.type||state.buildMode||"lumber"];
-  if(building.complete&&def.radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,x,y)<48){
-    const shownRadius=def.radius+(building.type==="tower"&&building.upgrades.towerRange?60:0);
-    ctx.strokeStyle="#ead18d99";ctx.lineWidth=2;ctx.setLineDash([7,6]);ctx.beginPath();ctx.arc(x,y,shownRadius,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+function drawBuilding(building,ghost=false){
+  const x=building.x,y=building.y,p=building.pulse*2,def=BUILDING_TYPES[building.type||state.buildMode||"lumber"];
+  const radius=def.serviceRadius||def.effectRadius;
+  if(building.complete&&radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,x,y)<48){
+    const shownRadius=radius+(building.type==="tower"&&building.upgrades.towerRange?60:0);
+    drawZone(x,y,shownRadius);
   }
   if(!building.complete||ghost){
     ctx.globalAlpha=ghost?.55:1;ctx.strokeStyle=ghost&&canPlace(x,y)?"#f3e5b9":ghost?"#a94634":"#ead18d";ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.strokeRect(x-28-p,y-27-p,56+p*2,54+p*2);ctx.setLineDash([]);
@@ -1083,10 +1142,10 @@ function drawShed(building,ghost=false){
   }else if(building.type==="beacon"){
     rect(x-20,y+8,40,14,"#77736d");rect(x-15,y-5,30,14,"#9c9891");rect(x-6,y-26,12,23,"#4c5d61");rect(x-3,y-32,6,9,"#79d8d1");
     rect(x-13,y-18,7,5,"#79d8d1");rect(x+6,y-18,7,5,"#79d8d1");
-    if(building.ability.flash>0){ctx.strokeStyle="#79e6de";ctx.lineWidth=4;ctx.globalAlpha=building.ability.flash/.35;ctx.beginPath();ctx.arc(x,y,BUILDING.beacon.radius*(1-building.ability.flash/.35),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
+    if(building.ability.flash>0){ctx.strokeStyle="#79e6de";ctx.lineWidth=4;ctx.globalAlpha=building.ability.flash/.35;ctx.beginPath();ctx.arc(x,y,BUILDING_TYPES.beacon.effectRadius*(1-building.ability.flash/.35),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
     const hover=state.mouse.inside&&beaconButtonHit(building,state.mouse.x,state.mouse.y),ready=building.ability.cooldown<=0;
     if(hover){rect(x-12,y-48,24,22,"#292119");rect(x-9,y-45,18,16,ready?"#3e8b70":"#66635d");ctx.fillStyle="#f4e8c6";ctx.font="bold 12px monospace";ctx.textAlign="center";ctx.fillText("↯",x,y-33);}
-    const ratio=building.ability.cooldown/BUILDING.beacon.cooldown;rect(x-20,y+26,40,7,"#292119");rect(x-18,y+28,36*(1-ratio),3,ready?"#70d8d1":"#d19b49");
+    const ratio=building.ability.cooldown/BUILDING_TYPES.beacon.cooldown;rect(x-20,y+26,40,7,"#292119");rect(x-18,y+28,36*(1-ratio),3,ready?"#70d8d1":"#d19b49");
     ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(ready?"ready":building.ability.cooldown.toFixed(1)+"s",x,y+42);
   }else if(building.type==="blast"){
     rect(x-17,y-8,34,29,"#7b5031");rect(x-14,y-11,28,7,"#a9703f");rect(x-14,y+2,28,4,"#4a3829");rect(x-4,y-16,8,8,"#292119");
@@ -1111,8 +1170,8 @@ function drawShed(building,ghost=false){
     rect(x-22,y+8,44,15,"#6e6874");rect(x-17,y-7,34,17,"#8d8495");rect(x-12,y-19,24,13,"#aaa0b2");
     rect(x-5,y-31,10,13,"#624a86");rect(x-2,y-35,4,8,"#c09aed");rect(x-15,y-13,6,6,"#b18be5");rect(x+9,y-13,6,6,"#b18be5");
     const pulse=building.pulseTower;
-    if(pulse.flash>0){ctx.strokeStyle="#bc96ed";ctx.lineWidth=4;ctx.globalAlpha=pulse.flash/.4;ctx.beginPath();ctx.arc(x,y,BUILDING.pulseTower.radius*(1-pulse.flash/.4),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
-    const ratio=pulse.cooldown/BUILDING.pulseTower.cooldown;rect(x-21,y+27,42,7,"#292119");rect(x-19,y+29,38*(1-ratio),3,pulse.cooldown<=0?"#b18be5":"#d19b49");
+    if(pulse.flash>0){ctx.strokeStyle="#bc96ed";ctx.lineWidth=4;ctx.globalAlpha=pulse.flash/.4;ctx.beginPath();ctx.arc(x,y,BUILDING_TYPES.pulseTower.effectRadius*(1-pulse.flash/.4),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
+    const ratio=pulse.cooldown/BUILDING_TYPES.pulseTower.cooldown;rect(x-21,y+27,42,7,"#292119");rect(x-19,y+29,38*(1-ratio),3,pulse.cooldown<=0?"#b18be5":"#d19b49");
     ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(pulse.cooldown<=0?"ready":pulse.cooldown.toFixed(1)+"s",x,y+43);
   }else if(building.type==="tower"){
     rect(x-22,y+8,44,15,"#817b72");rect(x-18,y-8,36,18,"#aaa39a");rect(x-15,y-20,30,13,"#beb7ac");
@@ -1153,7 +1212,7 @@ function drawShed(building,ghost=false){
 }
 function workerToolKind(worker){
   if(worker.job==="harvest")return worker.jobTarget?.kind;
-  if(worker.job==="staff")return BUILDING[worker.jobTarget?.type]?.resource;
+  if(worker.job==="staff")return BUILDING_TYPES[worker.jobTarget?.type]?.resource;
   if(worker.job==="build")return "build";
   return null;
 }
@@ -1188,6 +1247,12 @@ function drawFog(){
     const n=(x*11+y*17)%19;rect(x*FOG_TS+5+n,y*FOG_TS+7+(n*3)%18,3,3,"#37344a");
   }
 }
+function drawClockHud(){
+  const clock=state.clock,label=clock.phase+" · "+Math.ceil(clock.remaining)+"s";
+  ctx.font="bold 11px monospace";ctx.textAlign="right";
+  const width=ctx.measureText(label).width+14;rect(VIEW_W-width-8,8,width,22,"#292119cc");
+  ctx.fillStyle=clock.phase==="night"?"#a9c8ee":"#f1dfb7";ctx.fillText(label,VIEW_W-15,23);
+}
 function drawCarryHud(){
   const total=carriedTotal(),x=VIEW_W-31,y=VIEW_H-31;
   ctx.textAlign="center";ctx.font="bold 11px monospace";ctx.fillStyle="#292119aa";ctx.fillText(total+"/"+state.capacity,x+1,y-13+1);
@@ -1202,6 +1267,23 @@ function drawHands(){
   const shown=Math.min(kinds.length,7);
   for(let i=0;i<shown;i++){const a=-Math.PI*.85+i/(Math.max(1,shown-1))*Math.PI*.7,r=19+(i%2)*5;ctx.save();ctx.translate(state.mouse.x+Math.cos(a)*r,state.mouse.y+Math.sin(a)*r);ctx.rotate(a+.6);if(kinds[i]==="wood"){rect(-6,-3,12,6,"#b67b43");rect(3,-3,3,6,"#e0a35d");}else if(kinds[i]==="dust"){rect(-5,-5,10,10,"#684e91");rect(-3,-7,7,9,"#b18be5");}else if(kinds[i]==="coin"){rect(-5,-6,10,11,"#e3b445");rect(-2,-5,4,7,"#ffe18a");}else if(kinds[i]==="diamond"){rect(-5,-6,10,11,"#79d9e8");rect(-2,-8,5,8,"#d0f9fb");}else{rect(-5,-5,10,10,"#888784");rect(-3,-6,7,7,"#bbb9b3");}ctx.restore();}
 }
+function drawInteractionPreviews(){
+  if(state.mouse.inside&&distance(state.mouse.x,state.mouse.y,BASE.x,BASE.y)<BASE.r+16)drawZone(BASE.x,BASE.y,BASE_ZONE);
+  for(const building of buildings){
+    const def=BUILDING_TYPES[building.type],radius=def.serviceRadius||def.effectRadius;
+    if(building.complete&&radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,building.x,building.y)<48)drawZone(building.x,building.y,radius+(building.type==="tower"&&building.upgrades.towerRange?60:0));
+  }
+  if(heldWorker()){drawZone(BASE.x,BASE.y,BASE_ZONE,"#d8c47c66");for(const storage of buildings)if(storage.complete&&storage.type==="stockpile")drawZone(storage.x,storage.y,storageServiceRadius(storage),"#d8c47c66");}
+  if(state.buildMode&&state.mouse.inside)drawBuilding({type:state.buildMode,x:state.mouse.x,y:state.mouse.y,complete:false,pulse:0},true);
+  if(!state.heldObject||!state.mouse.inside)return;
+  const worker=heldWorker();
+  if(worker){
+    drawWorker({...worker,x:state.mouse.x,y:state.mouse.y});
+    // Preview consumes the same assignment result that release will commit.
+    const assignment=workerAssignmentAt(worker,state.mouse.x,state.mouse.y);
+    if(assignment)drawZone(assignment.zoneX,assignment.zoneY,assignment.zoneRadius,"#f5df98");else drawZone(state.mouse.x,state.mouse.y,WORKER_LEASH,"#b84b3c");
+  }else{const held={...heldBuilding(),x:state.mouse.x,y:state.mouse.y};drawBuilding(held);ctx.strokeStyle=canPlace(state.mouse.x,state.mouse.y)?"#f5df98":"#b84b3c";ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.strokeRect(state.mouse.x-32,state.mouse.y-48,64,88);ctx.setLineDash([]);}
+}
 function draw(){
   const camera=state.camera;
   ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle="#1d1c29";ctx.fillRect(0,0,VIEW_W,VIEW_H);
@@ -1213,19 +1295,18 @@ function draw(){
   for(const rock of rocks)drawRock(rock);
   for(const diamond of diamonds)drawDiamondNode(diamond);
   for(const tree of sorted)drawTree(tree);
-  for(const resource of drops)drawResource(resource);
+  for(const resource of resourceDrops)drawResource(resource);
   for(const enemy of state.enemies)drawEnemy(enemy);
   drawBase();drawKing();
-  for(const building of buildings)drawShed(building);
+  for(const building of buildings)drawBuilding(building);
   for(const worker of state.workers)drawWorker(worker);
-  if(state.buildMode&&state.mouse.inside)drawShed({type:state.buildMode,x:state.mouse.x,y:state.mouse.y,complete:false,pulse:0},true);
-  if(state.carriedBuilding&&state.mouse.inside){
-    if(state.carriedBuilding.worker){const worker={...state.carriedBuilding.worker,x:state.mouse.x,y:state.mouse.y};drawWorker(worker);ctx.strokeStyle=isFogged(state.mouse.x,state.mouse.y)?"#b84b3c":"#f5df98";ctx.lineWidth=2;ctx.setLineDash([5,5]);ctx.beginPath();ctx.arc(state.mouse.x,state.mouse.y,WORKER_LEASH,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);}
-    else{const held={...state.carriedBuilding.building,x:state.mouse.x,y:state.mouse.y};drawShed(held);ctx.strokeStyle=canPlace(state.mouse.x,state.mouse.y)?"#f5df98":"#b84b3c";ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.strokeRect(state.mouse.x-32,state.mouse.y-48,64,88);ctx.setLineDash([]);}
-  }
-  drawParticles();drawFog();drawHands();
+  drawParticles();drawFog();
   ctx.restore();
-  drawCarryHud();
+  // Lighting is screen-space and precedes interaction/HUD layers so feedback stays readable at night.
+  if(state.clock.light>0){ctx.fillStyle="rgba(12,28,67,"+state.clock.light+")";ctx.fillRect(0,0,VIEW_W,VIEW_H);}
+  ctx.save();ctx.translate(VIEW_W/2,VIEW_H/2);ctx.scale(camera.zoom,camera.zoom);ctx.translate(-camera.x,-camera.y);
+  drawInteractionPreviews();drawHands();ctx.restore();
+  drawClockHud();drawCarryHud();
 }
 
 syncHud();

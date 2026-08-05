@@ -13,6 +13,38 @@ Use these tags to record why an idea matters:
 
 More tags can be added later.
 
+## Core Ideas
+
+### Cursor Attention Is the Real Resource
+
+Everything competes for one mouse: gathering, hauling, fighting, building, moving, and exploring. Automation should convert repetitive cursor labor into higher-level decisions rather than remove the player's involvement.
+
+**Target pressure curve:**
+
+> overload → automate → brief surplus → new pressure → overload
+
+The brief surplus matters: automation should let the player feel that they solved a problem before the game asks something new. Do not maintain constant overload.
+
+**Design promise:**
+
+> You start doing everything yourself. You end doing nothing by hand—and deciding everything.
+
+Use this as a filter for new systems: each should consume cursor attention, automate an existing demand, or create a more interesting demand.
+
+## Current Focus: Day and Night
+
+Prototype only:
+
+1. A two-minute day/night cycle.
+2. A light daytime enemy trickle.
+3. Directional enemy waves at night.
+
+Explicitly postponed:
+
+- Progression and unlock pacing.
+- Bosses and meta-progression.
+- Base repair. Later, manually delivered repair resources should compete with combat attention; the run still ends if base health reaches zero.
+
 ## Buildings
 
 - Buildings cost resources to construct; drag resources into their blueprints.
