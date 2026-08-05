@@ -1,0 +1,1111 @@
+<!-- Owns the complete Wooddrop gathering/building demo: UI, simulation, input, and canvas rendering. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>wooddrop</title>
+<style>
+  :root{
+    --ink:#292119; --paper:#f1dfb7; --paper2:#dbc28e; --red:#a94634;
+    --green:#657c35; --gold:#d29a39; --shadow:3px 3px 0 #17120d99;
+    --mono:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{display:grid;place-items:center;background:#172017;color:var(--ink);font:12px/1.35 var(--mono);text-transform:lowercase}
+  #game{width:min(1400px,100vw);padding:10px;display:grid;grid-template-columns:minmax(390px,460px) minmax(0,1fr);gap:8px}
+  .slab{background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow)}
+  aside{padding:8px;min-height:0;max-height:calc(100vh - 20px);overflow-y:auto}
+  h1{font-size:25px;line-height:1;margin:2px 0 5px;letter-spacing:-2px}
+  h1 span{color:var(--red)}
+  .sub{font-size:10px;opacity:.68;margin-bottom:14px}
+  h2{font-size:11px;border-bottom:1px solid #b99f6c;padding-bottom:3px;margin:11px 0 6px}
+  .resource{display:flex;justify-content:space-between;padding:3px 1px;font-weight:bold}
+  .resource b{font-variant-numeric:tabular-nums}
+  #carrybar{height:7px;border:1px solid var(--ink);background:#c4aa77;margin-top:3px}
+  #carryfill{height:100%;background:var(--green);width:0;transition:width .12s}
+  button{width:100%;font:inherit;text-transform:lowercase;text-align:left;color:var(--ink);cursor:pointer;background:#e6d09f;border:2px solid #b99f6c;padding:7px;margin:2px 0}
+  button:hover{border-color:var(--ink);background:#f7e8c5}
+  button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  button.no{opacity:.45}
+  .smallstatus{font-size:9px;opacity:.7;text-align:center;margin:2px 0 7px}
+  button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+  .cost{display:block;font-size:9px;opacity:.7;margin-top:2px}
+  #buildColumns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;align-items:start}
+  .build-category{padding:3px;background:#e7d09d;border:1px solid #b99f6c}
+  .build-category h3{font-size:10px;text-align:center;padding:3px 1px 5px;border-bottom:1px solid #b99f6c;margin-bottom:3px}
+  .build-category button{padding:5px;min-height:48px}
+  kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
+  #stage{position:relative;min-width:0}
+  canvas{width:100%;height:auto;display:block;background:#617738;border:2px solid var(--ink);box-shadow:var(--shadow);image-rendering:pixelated;cursor:default}
+  canvas.building{cursor:crosshair}
+  #toast{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s;pointer-events:none;white-space:nowrap}
+  #toast.on{opacity:1}
+  #prompt{position:absolute;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
+  #prompt.on{opacity:1}
+  #prompt kbd{margin-right:5px}
+  #upgradePanel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;width:300px;padding:9px;background:#242919;color:var(--paper);border:2px solid #d8c58f;box-shadow:5px 5px 0 #17120daa}
+  #upgradePanel.off{display:none}
+  #upgradePanel h3{text-align:center;font-size:14px;border-bottom:1px solid #8f9760;padding-bottom:5px;margin-bottom:7px}
+  #upgradeOptions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+  #upgradeOptions button{height:58px;text-align:center;padding:4px;background:#354027;color:var(--paper);border-color:#69754b;font-size:9px}
+  #upgradeOptions button.on{border-color:#78d7d4;background:#425339}
+  #upgradeOptions button.owned{opacity:.4}
+  #upgradeOptions b{display:block;font-size:17px;line-height:1.1}
+  #upgradeDetail{min-height:64px;margin-top:7px;padding:6px;border-top:1px solid #8f9760;border-bottom:1px solid #8f9760}
+  #upgradeDetail b{display:block;margin-bottom:3px}
+  #upgradeActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}
+  #upgradeActions button{text-align:center;margin:0}
+  #upgradeAccept{background:#557a35;color:#fff}#upgradeDecline{background:#8e2924;color:#fff}
+  #gameOver{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:#17120dcc}
+  #gameOver.off{display:none}
+  #gameOver .endcard{width:280px;padding:18px;text-align:center;background:var(--paper);border:2px solid var(--ink);box-shadow:5px 5px 0 #0008}
+  #gameOver h2{font-size:23px;border:0;margin:0 0 8px;color:var(--red)}
+  #pauseBadge{position:absolute;left:50%;top:48%;transform:translate(-50%,-50%);z-index:5;padding:9px 18px;background:#292119e8;color:var(--paper);border:2px solid var(--paper);font-size:17px;pointer-events:none}
+  #pauseBadge.off{display:none}
+  #gameOver p{margin-bottom:12px}
+  #restart{background:var(--ink);color:var(--paper);text-align:center;padding:9px}
+  @media(max-width:900px){#game{grid-template-columns:280px 1fr;padding:5px;gap:5px}#buildColumns{grid-template-columns:1fr}aside{padding:5px}h1{font-size:19px}}
+</style>
+</head>
+<body>
+<div id="game">
+  <aside class="slab">
+    <h1>wood<span>drop</span></h1>
+    <div class="sub">a tiny gathering demo</div>
+
+    <h2>base</h2>
+    <div class="resource"><span>♥ health</span><b id="baseHealth">100 / 100</b></div>
+    <div class="resource"><span>▰ wood</span><b id="storedWood">0</b></div>
+    <div class="resource"><span>◆ stone</span><b id="storedStone">0</b></div>
+    <div class="resource"><span>✦ dust</span><b id="storedDust">0</b></div>
+    <div class="resource"><span>● coin</span><b id="storedCoin">0</b></div>
+    <div class="resource"><span>♦ diamond</span><b id="storedDiamond">0</b></div>
+    <button id="recruit"><b>+ recruit collector</b><span class="cost">costs 6 wood + 3 stone from base</span></button>
+    <div class="smallstatus" id="collectorCount">collectors 0 / 4</div>
+
+    <h2>your hands</h2>
+    <div class="resource"><span>▰ wood</span><b id="carriedWood">0</b></div>
+    <div class="resource"><span>◆ stone</span><b id="carriedStone">0</b></div>
+    <div class="resource"><span>✦ dust</span><b id="carriedDust">0</b></div>
+    <div class="resource"><span>● coin</span><b id="carriedCoin">0</b></div>
+    <div class="resource"><span>♦ diamond</span><b id="carriedDiamond">0</b></div>
+    <div class="resource"><span>total</span><b id="carriedTotal">0 / 5</b></div>
+    <div id="carrybar"><div id="carryfill"></div></div>
+
+    <h2>build</h2>
+    <div id="buildColumns">
+      <section class="build-category">
+        <h3>buildings</h3>
+        <button class="build" data-kind="lumber"><b>+ lumber camp</b><span class="cost">deliver 8 wood + 2 stone</span></button>
+        <button class="build" data-kind="quarry"><b>+ quarry</b><span class="cost">deliver 4 wood + 8 stone</span></button>
+        <button class="build" data-kind="stockpile"><b>+ stockpile</b><span class="cost">deliver 2 wood · stores loose resources</span></button>
+        <button class="build" data-kind="obelisk"><b>+ obelisk</b><span class="cost">deliver 5 wood + 12 stone · upgrades</span></button>
+        <button class="build" data-kind="beacon"><b>+ shock beacon</b><span class="cost">deliver 4 wood + 8 stone · reusable pulse</span></button>
+      </section>
+      <section class="build-category">
+        <h3>towers</h3>
+        <button class="build" data-kind="tower"><b>+ basic tower</b><span class="cost">deliver 6 wood + 10 stone · attacks enemies</span></button>
+        <button class="build" data-kind="pulseTower"><b>+ pulse tower</b><span class="cost">deliver 8 wood + 12 stone · automatic area pulse</span></button>
+      </section>
+      <section class="build-category">
+        <h3>free deployables</h3>
+        <button class="build" data-kind="blast"><b>+ blast charge</b><span class="cost">free · click its hover button to detonate</span></button>
+        <button class="build" data-kind="spikes"><b>+ spike trap</b><span class="cost" id="spikeStack">free · 5 stacks remaining</span></button>
+        <button class="build" data-kind="landmine"><b>+ land mine</b><span class="cost" id="landmineStack">free · 3 stacks remaining</span></button>
+        <button class="build" data-kind="tar"><b>+ tar</b><span class="cost" id="tarStack">free · 3 stacks remaining</span></button>
+      </section>
+    </div>
+
+  </aside>
+  <main id="stage">
+    <canvas id="canvas" width="768" height="512"></canvas>
+    <div id="prompt"><kbd>release right</kbd><span></span></div>
+    <div id="toast"></div>
+    <div id="pauseBadge" class="off">paused · esc to resume</div>
+    <section id="upgradePanel" class="off">
+      <h3 id="upgradeTitle">upgrades</h3>
+      <div id="upgradeOptions"></div>
+      <div id="upgradeDetail">select an upgrade</div>
+      <div id="upgradeActions"><button id="upgradeAccept">accept</button><button id="upgradeDecline">decline</button></div>
+    </section>
+    <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
+  </main>
+</div>
+<script>
+"use strict";
+// Wooddrop's world is one explicit state object. Input mutates it; update advances it; draw only reads it.
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+const VIEW_W=768,VIEW_H=512;                 // Fixed canvas viewport in screen pixels.
+const W=1536,H=1024;                          // Larger world explored through camera pan/zoom.
+const BASE = {x:W/2,y:H/2,r:43};
+const BUILDING = {
+  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},radius:155},
+  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},radius:155},
+  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},radius:0},
+  obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},radius:0},
+  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},radius:180},
+  pulseTower:{name:"pulse tower",resource:null,cost:{wood:8,stone:12},radius:145,cooldown:5},
+  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},radius:135,instant:true},
+  beacon:{name:"shock beacon",resource:null,cost:{wood:4,stone:8},radius:150,cooldown:8},
+  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},radius:0,instant:true,stack:true},
+  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},radius:65,instant:true,stack:true},
+  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},radius:22,instant:true,stack:true}
+};
+const UPGRADES=[
+  {id:"hardness",icon:"⛏",name:"click hardness",cost:{wood:5,stone:5},description:"placeholder: mine tougher resources with each click."},
+  {id:"power",icon:"✊",name:"click power",cost:{wood:8,stone:4},description:"placeholder: increase the power of manual gathering."},
+  {id:"hands",icon:"☝",name:"hand size",cost:{wood:6,stone:6},description:"placeholder: increase your carrying capacity."},
+  {id:"magnet",icon:"⌁",name:"auto collect",cost:{wood:10,stone:8},description:"placeholder: pull nearby loose resources toward you."},
+  {id:"storage",icon:"▣",name:"building storage",cost:{wood:12,stone:5},description:"placeholder: increase stockpile storage and organization."},
+  {id:"fuel",icon:"▰",name:"worker fuel",cost:{wood:7,stone:10},description:"placeholder: let gathering workers operate faster."}
+];
+const TOWER_UPGRADES=[
+  {id:"towerRange",icon:"◎",name:"long sight",cost:{wood:5,stone:8},description:"increase this tower's attack radius."},
+  {id:"towerDamage",icon:"✦",name:"heavy shot",cost:{wood:8,stone:10},description:"increase this tower's damage from 1 to 2."},
+  {id:"towerSpeed",icon:"»",name:"quick loader",cost:{wood:10,stone:7},description:"make this tower fire twice as quickly."}
+];
+const COLLECTOR_COST = {wood:6,stone:3};
+const MAX_COLLECTORS = 4;
+const ENEMY_TYPES={
+  raider:{name:"raider",hp:5,speed:52,damage:2,range:40,rate:1,size:1},
+  archer:{name:"archer",hp:4,speed:42,damage:1,range:155,rate:1.8,size:1},
+  healer:{name:"healer",hp:5,speed:38,damage:0,range:180,rate:0,size:1},
+  brute:{name:"brute",hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35}
+};
+const ENEMY_POOL=["raider","raider","archer","healer","brute"],ENEMY_SPAWN={min:7,max:11};
+const KING={range:95,damage:2,rate:.85};
+const FOG_TS=32,FOG_W=W/FOG_TS,FOG_H=H/FOG_TS;
+const trees = [];
+const rocks = [];
+const diamonds = [];
+const drops = [];
+const buildings = [];
+const particles = [];
+const state = {
+  mouse:{x:W/2,y:H/2,inside:false},
+  carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, collectors:[], enemies:[], fog:new Uint8Array(FOG_W*FOG_H),
+  baseHp:100,baseMax:100,gameOver:false,paused:false,enemyTimer:4,coinTimer:6,basePulse:0, buildMode:null, capacity:5, nextDropId:1, toastTimer:0, collectCooldown:0, collecting:false,
+  camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
+  upgradeMenu:{building:null,selected:null,kind:null},carriedBuilding:null,buildStacks:{spikes:5,landmine:3,tar:3},
+  king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
+};
+
+const rand = (a,b) => a + Math.random()*(b-a);
+const distance = (a,b,c,d) => Math.hypot(a-c,b-d);
+const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+const RESOURCE_KINDS=["wood","stone","dust","coin","diamond"];
+const carriedTotal=()=>RESOURCE_KINDS.reduce((total,kind)=>total+state.carried[kind],0);
+
+// Full land map: dense resource patches surround one initial clearing, while fog controls expansion.
+function seedWorld(){
+  const occupied=[];
+  const place=(count,minGap,make,accept=()=>true)=>{
+    let tries=0;
+    while(count>0&&tries++<6000){
+      const x=rand(30,W-30),y=rand(35,H-25);
+      if(distance(x,y,BASE.x,BASE.y)<110||!accept(x,y))continue;
+      if(occupied.some(p=>distance(x,y,p.x,p.y)<minGap))continue;
+      occupied.push({x,y});make(x,y);count--;
+    }
+  };
+  // Fewer, richer nodes: each has 10× the old durability and therefore yields 10× as many drops.
+  place(80,45,(x,y)=>trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:trees.length%3}));
+  place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0,variant:rocks.length%2}));
+  place(5,110,(x,y)=>diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0}),
+    (x,y)=>distance(x,y,BASE.x,BASE.y)>600);
+  state.fog.fill(1);revealFog(BASE.x,BASE.y,9);
+}
+function fogIndex(x,y){return y*FOG_W+x;}
+function isFogged(x,y){return !!state.fog[fogIndex(clamp(Math.floor(x/FOG_TS),0,FOG_W-1),clamp(Math.floor(y/FOG_TS),0,FOG_H-1))];}
+function revealFog(x,y,radius){
+  const cx=Math.floor(x/FOG_TS),cy=Math.floor(y/FOG_TS),r=Math.ceil(radius);
+  for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+    const tx=cx+dx,ty=cy+dy;if(tx<0||ty<0||tx>=FOG_W||ty>=FOG_H||Math.hypot(dx,dy)>radius)continue;
+    state.fog[fogIndex(tx,ty)]=0;
+  }
+}
+seedWorld();
+
+// ── Data flow ──
+// Written by: pointer/keyboard handlers below.
+// Read by: update() for collection/drop delivery and draw() for hover feedback.
+// Format: canvas-space pixels; carried/stored are keyed counts for every RESOURCE_KINDS entry.
+// Lifetime: page load until refresh.
+function pointerPosition(event){
+  const r=canvas.getBoundingClientRect(),camera=state.camera;
+  const sx=(event.clientX-r.left)*VIEW_W/r.width,sy=(event.clientY-r.top)*VIEW_H/r.height;
+  // Screen pixels become world pixels through the inverse camera transform used by draw().
+  state.mouse.x=camera.x+(sx-VIEW_W/2)/camera.zoom;
+  state.mouse.y=camera.y+(sy-VIEW_H/2)/camera.zoom;
+  state.mouse.inside=true;
+}
+function clampCamera(){
+  const camera=state.camera,halfW=VIEW_W/(2*camera.zoom),halfH=VIEW_H/(2*camera.zoom);
+  camera.x=halfW>=W/2?W/2:clamp(camera.x,halfW,W-halfW);
+  camera.y=halfH>=H/2?H/2:clamp(camera.y,halfH,H-halfH);
+}
+canvas.addEventListener("wheel",event=>{
+  event.preventDefault();
+  const r=canvas.getBoundingClientRect(),camera=state.camera;
+  const sx=(event.clientX-r.left)*VIEW_W/r.width,sy=(event.clientY-r.top)*VIEW_H/r.height;
+  const worldX=camera.x+(sx-VIEW_W/2)/camera.zoom,worldY=camera.y+(sy-VIEW_H/2)/camera.zoom;
+  const next=clamp(camera.zoom*Math.exp(-event.deltaY*.0015),.2,5);
+  camera.x=worldX-(sx-VIEW_W/2)/next;camera.y=worldY-(sy-VIEW_H/2)/next;camera.zoom=next;
+  clampCamera();pointerPosition(event);
+},{passive:false});
+canvas.addEventListener("pointermove",event=>{
+  const camera=state.camera;
+  if(camera.panning){
+    const r=canvas.getBoundingClientRect();
+    camera.x-=(event.clientX-camera.lastX)*VIEW_W/r.width/camera.zoom;
+    camera.y-=(event.clientY-camera.lastY)*VIEW_H/r.height/camera.zoom;
+    camera.lastX=event.clientX;camera.lastY=event.clientY;clampCamera();
+  }
+  pointerPosition(event);
+});
+canvas.addEventListener("pointerleave",()=>state.mouse.inside=false);
+canvas.addEventListener("contextmenu",event=>event.preventDefault());
+canvas.addEventListener("auxclick",event=>event.preventDefault());
+canvas.addEventListener("pointerdown",event=>{
+  pointerPosition(event);
+  if(event.button===1){event.preventDefault();state.camera.panning=true;state.camera.lastX=event.clientX;state.camera.lastY=event.clientY;canvas.setPointerCapture(event.pointerId);return;}
+  if(state.gameOver||state.paused)return;
+  if(event.button===0)leftClick();
+  if(event.button===2){if(cancelBuildMode())return;if(pickUpBeaconAt(state.mouse.x,state.mouse.y))return;state.collecting=true;collectWood();state.collectCooldown=.08;}
+});
+// Window-level release prevents collection or camera drag getting stuck outside the canvas.
+window.addEventListener("pointerup",event=>{if(event.button===2)releaseRightMouse();if(event.button===1)state.camera.panning=false;});
+window.addEventListener("pointercancel",()=>{state.collecting=false;state.camera.panning=false;cancelCarriedBuilding();});
+window.addEventListener("blur",()=>{state.collecting=false;state.camera.panning=false;state.keys.clear();cancelCarriedBuilding();});
+window.addEventListener("keydown",event=>{
+  if(event.code==="Escape"){event.preventDefault();if(!event.repeat)togglePause();return;}
+  if(["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowLeft","ArrowDown","ArrowRight"].includes(event.code)){event.preventDefault();state.keys.add(event.code);}
+});
+window.addEventListener("keyup",event=>state.keys.delete(event.code));
+
+function togglePause(){
+  if(state.gameOver)return;
+  state.paused=!state.paused;state.collecting=false;state.camera.panning=false;state.keys.clear();
+  if(state.paused)closeUpgradeMenu();
+  document.getElementById("pauseBadge").classList.toggle("off",!state.paused);sound(state.paused?180:360,.06);
+}
+function cancelBuildMode(){
+  if(!state.buildMode)return false;
+  state.buildMode=null;syncHud();toast("building placement cancelled");return true;
+}
+function spawnEnemy(){
+  const side=(Math.random()*4)|0,type=ENEMY_POOL[(Math.random()*ENEMY_POOL.length)|0],def=ENEMY_TYPES[type];
+  let x,y;
+  if(side===0){x=8;y=rand(20,H-20);}else if(side===1){x=W-8;y=rand(20,H-20);}
+  else if(side===2){x=rand(20,W-20);y=8;}else{x=rand(20,W-20);y=H-8;}
+  state.enemies.push({type,x,y,hp:def.hp,max:def.hp,attackCooldown:0,healCooldown:rand(.5,2),wob:rand(0,6),flash:0,shotFlash:0,healFlash:0,slow:0});
+}
+function enemyAt(x,y){
+  let target=null,best=Infinity;
+  for(const enemy of state.enemies){
+    if(isFogged(enemy.x,enemy.y))continue;
+    const d=distance(x,y,enemy.x,enemy.y),hitRadius=24*ENEMY_TYPES[enemy.type].size;
+    if(d<hitRadius&&d<best){best=d;target=enemy;}
+  }
+  return target;
+}
+function killEnemy(enemy,announce=true){
+  const at=state.enemies.indexOf(enemy);if(at<0)return;
+  state.enemies.splice(at,1);
+  const droppedDust=Math.random()<.25;
+  if(droppedDust)spawnResource("dust",enemy.x+rand(-7,7),enemy.y);
+  burst(enemy.x,enemy.y,"#4b3b50",12);if(announce||droppedDust)toast(droppedDust?"enemy defeated — dust dropped":"enemy defeated");sound(150,.12);
+}
+function hitEnemy(enemy){
+  enemy.hp--;enemy.flash=.16;
+  burst(enemy.x,enemy.y,"#d25b49",5);sound(610,.045);
+  if(enemy.hp<=0)killEnemy(enemy);
+}
+function blastButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-34&&y<=building.y+34;}
+function beaconButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-42&&y<=building.y+34;}
+function pickUpBeaconAt(x,y){
+  const building=buildings.find(item=>item.complete&&item.type==="beacon"&&beaconButtonHit(item,x,y));
+  if(!building)return false;
+  state.carriedBuilding={building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;
+  toast("shock beacon picked up — release right to place");return true;
+}
+function cancelCarriedBuilding(){
+  if(!state.carriedBuilding)return;
+  const held=state.carriedBuilding;held.building.x=held.originX;held.building.y=held.originY;buildings.push(held.building);state.carriedBuilding=null;
+}
+function dropCarriedBuilding(){
+  const held=state.carriedBuilding;if(!held)return false;
+  const building=held.building;
+  if(state.mouse.inside&&canPlace(state.mouse.x,state.mouse.y)){building.x=state.mouse.x;building.y=state.mouse.y;toast("shock beacon placed");}
+  else{building.x=held.originX;building.y=held.originY;toast("invalid ground — beacon returned");}
+  buildings.push(building);state.carriedBuilding=null;sound(260,.06);return true;
+}
+function activateBeacon(building){
+  if(building.ability.cooldown>0){toast("shock beacon recharging: "+building.ability.cooldown.toFixed(1)+"s");return;}
+  building.ability.cooldown=BUILDING.beacon.cooldown;building.ability.flash=.35;
+  for(const enemy of [...state.enemies]){
+    if(distance(building.x,building.y,enemy.x,enemy.y)>BUILDING.beacon.radius)continue;
+    enemy.hp-=2;enemy.flash=.2;burst(enemy.x,enemy.y,"#70d8d1",7);if(enemy.hp<=0)killEnemy(enemy,false);
+  }
+  burst(building.x,building.y,"#70d8d1",24);toast("shock pulse fired");sound(105,.28);
+}
+function detonateBlast(building){
+  for(const enemy of [...state.enemies]){
+    const d=distance(building.x,building.y,enemy.x,enemy.y);if(d>BUILDING.blast.radius)continue;
+    enemy.hp-=d<BUILDING.blast.radius*.5?5:3;enemy.flash=.2;
+    if(enemy.hp<=0)killEnemy(enemy,false);
+  }
+  for(let i=0;i<42;i++)particles.push({x:building.x,y:building.y,vx:rand(-180,180),vy:rand(-190,40),life:rand(.35,.9),col:i%2?"#e39a3f":"#b84b38"});
+  buildings.splice(buildings.indexOf(building),1);toast("blast charge detonated");sound(70,.3);
+}
+
+function leftClick(){
+  if(state.gameOver||state.paused)return;
+  const m=state.mouse;
+  if(isFogged(m.x,m.y)){
+    revealFog(m.x,m.y,1.65);sound(230,.07);
+    toast(state.buildMode?"fog cleared — click again to place":"fog cleared");
+    return;
+  }
+  const enemy=enemyAt(m.x,m.y);
+  if(enemy){hitEnemy(enemy);return;}
+  if(state.buildMode){
+    if(canPlace(m.x,m.y)){
+      const type=state.buildMode,def=BUILDING[type];
+      buildings.push({type,x:m.x,y:m.y,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,tower:null,pulseTower:null,ability:def.instant&&type==="beacon"?{cooldown:0,flash:0}:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1,worker:null});
+      if(def.stack){state.buildStacks[type]--;state.buildMode=state.buildStacks[type]>0?type:null;}else state.buildMode=null;
+      syncHud();
+      sound(240,.06);
+      toast(def.stack?def.name+" placed — "+state.buildStacks[type]+" stacks remain":def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
+    }else toast("needs clear ground away from the base");
+    return;
+  }
+  const blast=buildings.find(building=>building.complete&&building.type==="blast"&&blastButtonHit(building,m.x,m.y));
+  if(blast){detonateBlast(blast);return;}
+  const beacon=buildings.find(building=>building.complete&&building.type==="beacon"&&beaconButtonHit(building,m.x,m.y));
+  if(beacon){activateBeacon(beacon);return;}
+  const obelisk=buildings.find(building=>building.complete&&building.type==="obelisk"&&upgradeButtonHit(building,m.x,m.y));
+  if(obelisk){openUpgradeMenu(obelisk,"obelisk");return;}
+  const tower=buildings.find(building=>building.complete&&building.type==="tower"&&upgradeButtonHit(building,m.x,m.y));
+  if(tower){openUpgradeMenu(tower,"tower");return;}
+  const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
+  if(pile){unloadStockpile(pile,m.x);return;}
+  let target=null,kind=null,best=34;
+  for(const tree of trees){
+    if(tree.stump>0||isFogged(tree.x,tree.y))continue;
+    const d=distance(m.x,m.y,tree.x,tree.y-10);
+    if(d<best){best=d;target=tree;kind="wood";}
+  }
+  for(const rock of rocks){
+    if(rock.depleted>0||isFogged(rock.x,rock.y))continue;
+    const d=distance(m.x,m.y,rock.x,rock.y);
+    if(d<best){best=d;target=rock;kind="stone";}
+  }
+  for(const diamond of diamonds){
+    if(diamond.depleted>0||isFogged(diamond.x,diamond.y))continue;
+    const d=distance(m.x,m.y,diamond.x,diamond.y);
+    if(d<best){best=d;target=diamond;kind="diamond";}
+  }
+  if(!target){toast("left click a tree, rock, or diamond deposit");return;}
+  hitResource(target,kind,false);
+}
+
+// Both player and building workers use the same harvesting path, so automation still creates collectible ground drops.
+function hitResource(target,kind,automatic){
+  target.hp--;
+  target.shake=1;
+  spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
+  burst(target.x,target.y-12,kind==="wood"?"#9fb351":kind==="diamond"?"#78d7e5":"#bbb7ae",5);
+  if(!automatic)sound(kind==="wood"?350+target.hp*25:kind==="diamond"?760:170+target.hp*15,.045);
+  if(target.hp<=0&&kind==="wood"){
+    target.stump=1;
+    burst(target.x,target.y-10,"#557036",13);
+    if(!automatic)toast("tree felled");
+  }else if(target.hp<=0){
+    target.depleted=1;
+    burst(target.x,target.y,kind==="diamond"?"#78d7e5":"#8b8985",11);
+    if(!automatic)toast(kind==="diamond"?"diamond deposit exhausted":"rock cleared");
+  }
+}
+
+function spawnResource(kind,x,y,ttl=null){
+  drops.push({id:state.nextDropId++,kind,x,y,groundY:clamp(y+rand(10,22),35,H-20),vx:rand(-35,35),vy:rand(-75,-35),ground:false,target:null,t:0,spin:rand(0,6),ttl});
+}
+function spawnCoin(){
+  for(let attempt=0;attempt<300;attempt++){
+    const x=rand(40,W-40),y=rand(40,H-40);
+    if(isFogged(x,y)||distance(x,y,BASE.x,BASE.y)<80)continue;
+    spawnResource("coin",x,y,8);toast("a gold coin appeared nearby");return;
+  }
+}
+
+function collectWood(silent=false){
+  // Reserve capacity for wood already flying to the cursor, preventing rapid collection from overfilling hands.
+  const incoming=drops.reduce((count,wood)=>count+(wood.target==="hand"),0);
+  const carried=carriedTotal();
+  if(carried+incoming>=state.capacity){if(!silent){toast("hands full — drop your resources");sound(110,.08);}return false;}
+  const m=state.mouse;
+  let nearest=null,best=45;
+  for(const wood of drops){
+    if(wood.target||wood.collector||isFogged(wood.x,wood.y))continue;
+    const d=distance(m.x,m.y,wood.x,wood.y);
+    if(d<best){best=d;nearest=wood;}
+  }
+  if(!nearest){if(!silent)toast("hold right click and drag over loose resources");return false;}
+  nearest.target="hand";
+  nearest.t=0;
+  sound(650,.035);
+  return true;
+}
+
+function hoverTarget(){
+  const m=state.mouse;
+  if(!m.inside)return null;
+  if(distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16)return {kind:"base",object:BASE};
+  for(const building of buildings){
+    if(!building.complete&&distance(m.x,m.y,building.x,building.y)<38)return {kind:"building",object:building};
+    if(building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<42)return {kind:"stockpile",object:building};
+    if(building.complete&&(building.type==="obelisk"||building.type==="tower")&&building.activeUpgrade&&upgradeButtonHit(building,m.x,m.y))return {kind:"upgrade",object:building};
+  }
+  return null;
+}
+
+function releaseRightMouse(){
+  state.collecting=false;
+  if(state.gameOver||state.paused)return;
+  if(dropCarriedBuilding())return;
+  // A quick press may release before pickup animations finish; commit those reserved drops first.
+  for(let i=drops.length-1;i>=0;i--){
+    const resource=drops[i];
+    if(resource.target!=="hand")continue;
+    state.carried[resource.kind]++;drops.splice(i,1);
+  }
+  if(carriedTotal()<=0)return;
+  const target=hoverTarget();
+  if(target&&target.kind==="base")dropToBase();
+  else if(target&&target.kind==="stockpile")dropToStockpile(target.object);
+  else if(target&&target.kind==="upgrade"){
+    dropToUpgrade(target.object);
+    if(carriedTotal())dropCarriedOnGround(true);
+  }else if(target&&target.kind==="building"){
+    dropToBuilding(target.object);
+    if(carriedTotal())dropCarriedOnGround(true);
+  }else dropCarriedOnGround();
+}
+
+function dropCarriedOnGround(silent=false){
+  for(const kind of RESOURCE_KINDS){const amount=state.carried[kind];state.carried[kind]=0;for(let i=0;i<amount;i++)spawnResource(kind,state.mouse.x+rand(-10,10),state.mouse.y+rand(-7,7));}
+  if(!silent){toast("resources dropped");sound(310,.06);}syncHud();
+}
+
+function dropToStockpile(building){
+  let total=0;
+  for(const kind of RESOURCE_KINDS){const amount=state.carried[kind];building.storage[kind]+=amount;state.carried[kind]=0;total+=amount;handoffParticles(building.x,building.y,kind,amount);}
+  building.pulse=1;toast("stockpiled "+total+" resources");sound(470,.07);syncHud();
+}
+function unloadStockpile(building,mouseX){
+  const slots=["wood","coin","dust","diamond","stone"],slot=clamp(Math.floor((mouseX-building.x+35)/14),0,4),preferred=slots[slot];
+  const kind=building.storage[preferred]>0?preferred:slots.find(item=>building.storage[item]>0)||null;
+  if(!kind){toast("stockpile is empty");return;}
+  building.storage[kind]--;
+  spawnResource(kind,building.x+rand(-18,18),building.y+28);
+  building.pulse=1;toast("pulled 1 "+kind+" from stockpile");sound(kind==="wood"?390:180,.05);
+}
+function upgradeList(kind){return kind==="tower"?TOWER_UPGRADES:UPGRADES;}
+function dropToUpgrade(building){
+  const job=building.activeUpgrade,upgrade=upgradeList(job.kind).find(item=>item.id===job.id);
+  let total=0;
+  for(const kind of ["wood","stone"]){
+    const amount=Math.min(upgrade.cost[kind]-job.delivered[kind],state.carried[kind]);
+    state.carried[kind]-=amount;job.delivered[kind]+=amount;total+=amount;
+    handoffParticles(building.x,building.y,kind,amount);
+  }
+  if(!total){toast("upgrade does not need those resources");return;}
+  building.pulse=1;
+  if(job.delivered.wood>=upgrade.cost.wood&&job.delivered.stone>=upgrade.cost.stone){
+    building.upgrades[job.id]=true;building.activeUpgrade=null;
+    burst(building.x,building.y-25,"#72d4cc",22);toast(upgrade.name+" complete");sound(820,.2);
+  }else toast("upgrade needs "+(upgrade.cost.wood-job.delivered.wood)+" wood + "+(upgrade.cost.stone-job.delivered.stone)+" stone");
+  syncHud();
+}
+
+function upgradeButtonHit(building,x,y){const top=building.type==="obelisk"?building.y-66:building.y-48;return x>=building.x-30&&x<=building.x+30&&y>=top&&y<=building.y+38;}
+function closeUpgradeMenu(){state.upgradeMenu.building=null;state.upgradeMenu.selected=null;state.upgradeMenu.kind=null;document.getElementById("upgradePanel").classList.add("off");}
+function openUpgradeMenu(building,kind){
+  if(building.activeUpgrade){toast("finish the active upgrade by depositing resources");return;}
+  const list=upgradeList(kind);
+  state.upgradeMenu.building=building;state.upgradeMenu.kind=kind;
+  state.upgradeMenu.selected=list.find(item=>!building.upgrades[item.id])?.id||null;
+  renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");
+}
+function renderUpgradeMenu(){
+  const menu=state.upgradeMenu,building=menu.building,list=upgradeList(menu.kind),options=document.getElementById("upgradeOptions"),detail=document.getElementById("upgradeDetail");
+  document.getElementById("upgradeTitle").textContent=menu.kind+" upgrades";options.replaceChildren();
+  for(const upgrade of list){
+    const button=document.createElement("button");button.classList.toggle("on",menu.selected===upgrade.id);button.classList.toggle("owned",!!building.upgrades[upgrade.id]);
+    button.innerHTML="<b>"+upgrade.icon+"</b>"+upgrade.name+(building.upgrades[upgrade.id]?" · done":"");
+    button.addEventListener("click",()=>{if(building.upgrades[upgrade.id])return;menu.selected=upgrade.id;renderUpgradeMenu();});options.appendChild(button);
+  }
+  const selected=list.find(item=>item.id===menu.selected);
+  detail.innerHTML=selected?"<b>"+selected.name+"</b>"+selected.description+"<br>cost: "+selected.cost.wood+" wood + "+selected.cost.stone+" stone":"all upgrades complete";
+}
+document.getElementById("upgradeDecline").addEventListener("click",closeUpgradeMenu);
+document.getElementById("upgradeAccept").addEventListener("click",()=>{
+  const menu=state.upgradeMenu,upgrade=upgradeList(menu.kind).find(item=>item.id===menu.selected);
+  if(!menu.building||!upgrade)return;
+  menu.building.activeUpgrade={id:upgrade.id,kind:menu.kind,delivered:{wood:0,stone:0}};
+  const destination=menu.kind;closeUpgradeMenu();toast("accepted "+upgrade.name+" — deposit resources at the "+destination);sound(590,.1);
+});
+
+function dropToBase(){
+  let total=0;
+  for(const kind of RESOURCE_KINDS){const amount=state.carried[kind];state.stored[kind]+=amount;state.carried[kind]=0;total+=amount;handoffParticles(BASE.x,BASE.y,kind,amount);}
+  state.basePulse=1;toast("stored "+total+" resources at base");sound(520,.08);syncHud();
+}
+
+function dropToBuilding(building){
+  const def=BUILDING[building.type],cost=def.cost;
+  let total=0;
+  for(const kind of ["wood","stone"]){
+    const amount=Math.min(cost[kind]-building.delivered[kind],state.carried[kind]);
+    state.carried[kind]-=amount;building.delivered[kind]+=amount;total+=amount;
+    handoffParticles(building.x,building.y,kind,amount);
+  }
+  if(!total){toast("this blueprint already has that resource");return;}
+  building.pulse=1;
+  sound(480,.08);
+  const complete=building.delivered.wood>=cost.wood&&building.delivered.stone>=cost.stone;
+  if(complete){
+    building.complete=true;
+    if(def.resource){
+      building.worker={x:building.x,y:building.y+16,target:null,kind:def.resource,hitCooldown:.5,step:0};
+      state.capacity+=2;
+    }
+    if(building.type==="tower")building.tower={cooldown:.5,flash:0};
+    if(building.type==="pulseTower")building.pulseTower={cooldown:BUILDING.pulseTower.cooldown,flash:0};
+    if(building.type==="beacon")building.ability={cooldown:0,flash:0};
+    burst(building.x,building.y-12,"#ead28d",18);
+    const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?"basic tower complete — it attacks nearby enemies":building.type==="pulseTower"?"pulse tower complete — automatic area attack ready":"shock beacon complete — hover and click to pulse";
+    toast(def.resource?def.name+" complete — "+def.resource+" worker active":readyMessage);
+    sound(760,.18);
+  }else toast("needs "+(cost.wood-building.delivered.wood)+" wood + "+(cost.stone-building.delivered.stone)+" stone");
+  syncHud();
+}
+
+function handoffParticles(x,y,kind,count){
+  const col=kind==="wood"?"#b67b43":kind==="stone"?"#aaa9a5":kind==="coin"?"#e3b445":kind==="diamond"?"#79d9e8":"#a783df";
+  for(let i=0;i<Math.min(count,10);i++)particles.push({x:state.mouse.x+rand(-9,9),y:state.mouse.y+rand(-9,9),tx:x,ty:y,life:.45+i*.035,max:.45+i*.035,col,kind,resource:true});
+}
+
+function canPlace(x,y){
+  if(x<45||y<45||x>W-45||y>H-45||isFogged(x,y))return false;
+  if(distance(x,y,BASE.x,BASE.y)<105)return false;
+  // Depleted nodes no longer reserve ground, letting harvesting open construction sites.
+  if(trees.some(t=>t.stump<=0&&distance(x,y,t.x,t.y)<55))return false;
+  if(rocks.some(r=>r.depleted<=0&&distance(x,y,r.x,r.y)<48))return false;
+  if(diamonds.some(d=>d.depleted<=0&&distance(x,y,d.x,d.y)<52))return false;
+  if(buildings.some(b=>distance(x,y,b.x,b.y)<(BUILDING[state.buildMode]?.stack&&BUILDING[b.type]?.stack?28:65)))return false;
+  return true;
+}
+
+document.querySelectorAll("button.build").forEach(button=>button.addEventListener("click",()=>{
+  if(state.gameOver||state.paused)return;
+  const kind=button.dataset.kind;
+  if(BUILDING[kind].stack&&state.buildStacks[kind]<=0){toast("no "+BUILDING[kind].name+" stacks remaining");return;}
+  state.buildMode=state.buildMode===kind?null:kind;
+  syncHud();
+  toast(state.buildMode?"click explored, clear ground to place the blueprint":"build cancelled");
+}));
+document.getElementById("recruit").addEventListener("click",()=>{
+  if(state.gameOver||state.paused)return;
+  if(state.collectors.length>=MAX_COLLECTORS){toast("collector limit reached");return;}
+  if(state.stored.wood<COLLECTOR_COST.wood||state.stored.stone<COLLECTOR_COST.stone){
+    toast("deposit 6 wood + 3 stone at base first");sound(110,.08);return;
+  }
+  state.stored.wood-=COLLECTOR_COST.wood;state.stored.stone-=COLLECTOR_COST.stone;
+  state.collectors.push({x:BASE.x+rand(-8,8),y:BASE.y+25,target:null,returning:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},step:0});
+  toast("collector recruited at the main base");sound(720,.12);syncHud();
+});
+
+function resourceIsActive(node,kind){return kind==="wood"?node.stump<=0:node.depleted<=0;}
+function chooseWorkerTarget(building){
+  const def=BUILDING[building.type],kind=def.resource,nodes=kind==="wood"?trees:rocks;
+  let choice=null,best=Infinity;
+  for(const node of nodes){
+    const d=distance(building.x,building.y,node.x,node.y);
+    if(resourceIsActive(node,kind)&&!isFogged(node.x,node.y)&&d<=def.radius&&d<best){choice={node,kind};best=d;}
+  }
+  return choice;
+}
+function updateCollector(collector,dt){
+  collector.step+=dt;
+  const load=RESOURCE_KINDS.reduce((total,kind)=>total+collector.carried[kind],0);
+  if(collector.target&&!drops.includes(collector.target))collector.target=null;
+  if(load>=3)collector.returning=true;
+  if(!collector.returning&&!collector.target){
+    let nearest=null,best=Infinity;
+    for(const resource of drops){
+      if(resource.target||resource.collector||!resource.ground||isFogged(resource.x,resource.y))continue;
+      const d=distance(collector.x,collector.y,resource.x,resource.y);
+      if(d<best){best=d;nearest=resource;}
+    }
+    if(nearest){collector.target=nearest;nearest.collector=collector;}
+    else if(load>0)collector.returning=true;
+  }
+  const tx=collector.returning?BASE.x:collector.target?collector.target.x:BASE.x;
+  const ty=collector.returning?BASE.y+22:collector.target?collector.target.y:BASE.y+25;
+  const d=distance(collector.x,collector.y,tx,ty);
+  if(d>11){
+    const speed=Math.min(d,62*dt),angle=Math.atan2(ty-collector.y,tx-collector.x);
+    collector.x+=Math.cos(angle)*speed;collector.y+=Math.sin(angle)*speed;
+  }else if(collector.returning){
+    for(const kind of RESOURCE_KINDS){state.stored[kind]+=collector.carried[kind];collector.carried[kind]=0;}collector.returning=false;state.basePulse=1;syncHud();
+  }else if(collector.target){
+    const resource=collector.target,at=drops.indexOf(resource);
+    if(at>=0){collector.carried[resource.kind]++;drops.splice(at,1);}
+    collector.target=null;
+  }
+}
+
+function updateKing(dt){
+  const king=state.king;king.cooldown-=dt;king.swing=Math.max(0,king.swing-dt);
+  if(king.cooldown>0)return;
+  let target=null,best=KING.range;
+  for(const enemy of state.enemies){
+    if(isFogged(enemy.x,enemy.y))continue;
+    const d=distance(king.x,king.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}
+  }
+  if(!target)return;
+  king.cooldown=KING.rate;king.swing=.18;king.targetX=target.x;king.targetY=target.y;
+  target.hp-=KING.damage;target.flash=.15;burst(target.x,target.y,"#efe0a0",5);sound(260,.05);
+  if(target.hp<=0)killEnemy(target,false);
+}
+function updatePulseTower(building,dt){
+  const pulse=building.pulseTower;pulse.cooldown=Math.max(0,pulse.cooldown-dt);pulse.flash=Math.max(0,pulse.flash-dt);
+  if(pulse.cooldown>0)return;
+  const targets=state.enemies.filter(enemy=>!isFogged(enemy.x,enemy.y)&&distance(building.x,building.y,enemy.x,enemy.y)<=BUILDING.pulseTower.radius);
+  if(!targets.length)return;
+  pulse.cooldown=BUILDING.pulseTower.cooldown;pulse.flash=.4;
+  for(const enemy of targets){enemy.hp-=2;enemy.flash=.16;burst(enemy.x,enemy.y,"#b18be5",5);if(enemy.hp<=0)killEnemy(enemy,false);}
+  sound(125,.22);
+}
+function updateHazard(building,dt){
+  const hazard=building.hazard;hazard.cooldown-=dt;hazard.flash=Math.max(0,hazard.flash-dt);
+  if(hazard.cooldown>0)return;
+  const enemy=state.enemies.find(item=>distance(building.x,building.y,item.x,item.y)<20);
+  if(!enemy)return;
+  if(building.type==="tar"){
+    hazard.cooldown=.25;hazard.flash=.12;enemy.slow=Math.max(enemy.slow,2);
+  }else if(building.type==="landmine"){
+    for(const target of [...state.enemies]){if(distance(building.x,building.y,target.x,target.y)>BUILDING.landmine.radius)continue;target.hp-=8;target.flash=.2;burst(target.x,target.y,"#e09b43",7);if(target.hp<=0)killEnemy(target,false);}
+    for(let i=0;i<28;i++)particles.push({x:building.x,y:building.y,vx:rand(-140,140),vy:rand(-160,20),life:rand(.3,.7),col:i%2?"#d9893d":"#6e5540"});
+    building.remove=true;sound(75,.25);
+  }else{
+    hazard.cooldown=.55;hazard.flash=.18;enemy.hp-=2;enemy.flash=.14;burst(enemy.x,enemy.y,"#c9c2b5",4);if(enemy.hp<=0)killEnemy(enemy,false);
+  }
+}
+function updateTower(building,dt){
+  const tower=building.tower;tower.cooldown-=dt;tower.flash=Math.max(0,tower.flash-dt);
+  if(tower.cooldown>0)return;
+  const range=BUILDING.tower.radius+(building.upgrades.towerRange?60:0);
+  let target=null,best=range;
+  for(const enemy of state.enemies){
+    if(isFogged(enemy.x,enemy.y))continue;
+    const d=distance(building.x,building.y,enemy.x,enemy.y);
+    if(d<best){best=d;target=enemy;}
+  }
+  if(!target)return;
+  const damage=building.upgrades.towerDamage?2:1;
+  tower.cooldown=building.upgrades.towerSpeed ? .65 : 1.3;tower.flash=.14;tower.targetX=target.x;tower.targetY=target.y;
+  target.hp-=damage;target.flash=.12;burst(target.x,target.y,"#d7c36d",4);
+  if(target.hp<=0)killEnemy(target,false);
+}
+
+function updateWorker(building,dt){
+  const worker=building.worker;
+  worker.step+=dt;
+  worker.hitCooldown-=dt;
+  if(worker.target&&!resourceIsActive(worker.target,worker.kind)){worker.target=null;worker.kind=null;}
+  if(!worker.target){
+    const choice=chooseWorkerTarget(building);
+    if(choice){worker.target=choice.node;worker.kind=choice.kind;}
+  }
+  const tx=worker.target?worker.target.x:building.x;
+  const ty=worker.target?worker.target.y:building.y+16;
+  const d=distance(worker.x,worker.y,tx,ty);
+  if(d>20){
+    const speed=Math.min(d,48*dt),angle=Math.atan2(ty-worker.y,tx-worker.x);
+    worker.x+=Math.cos(angle)*speed;worker.y+=Math.sin(angle)*speed;
+  }else if(worker.target&&worker.hitCooldown<=0){
+    worker.hitCooldown=2.35;
+    const node=worker.target,kind=worker.kind;
+    hitResource(node,kind,true);
+    if(!resourceIsActive(node,kind)){worker.target=null;worker.kind=null;}
+  }
+}
+
+function update(dt){
+  if(state.gameOver||state.paused)return;
+  const keys=state.keys,camera=state.camera;
+  let panX=(keys.has("KeyD")||keys.has("ArrowRight"))-(keys.has("KeyA")||keys.has("ArrowLeft"));
+  let panY=(keys.has("KeyS")||keys.has("ArrowDown"))-(keys.has("KeyW")||keys.has("ArrowUp"));
+  if(panX||panY){const length=Math.hypot(panX,panY),speed=430/camera.zoom;camera.x+=panX/length*speed*dt;camera.y+=panY/length*speed*dt;clampCamera();}
+  state.enemyTimer-=dt;state.coinTimer-=dt;
+  if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(14,22);}
+  if(state.enemyTimer<=0&&state.enemies.length<30){spawnEnemy();state.enemyTimer=rand(ENEMY_SPAWN.min,ENEMY_SPAWN.max);}
+  for(const enemy of state.enemies){
+    const def=ENEMY_TYPES[enemy.type];
+    enemy.wob+=dt*7;enemy.flash=Math.max(0,enemy.flash-dt);enemy.shotFlash=Math.max(0,enemy.shotFlash-dt);enemy.healFlash=Math.max(0,enemy.healFlash-dt);enemy.slow=Math.max(0,(enemy.slow||0)-dt);enemy.attackCooldown-=dt;enemy.healCooldown-=dt;
+    if(enemy.type==="healer"&&enemy.healCooldown<=0){
+      let patient=null,best=150;
+      for(const ally of state.enemies){if(ally===enemy||ally.hp>=ally.max)continue;const dd=distance(enemy.x,enemy.y,ally.x,ally.y);if(dd<best){best=dd;patient=ally;}}
+      if(patient){patient.hp=Math.min(patient.max,patient.hp+2);enemy.healFlash=.3;enemy.healX=patient.x;enemy.healY=patient.y;burst(patient.x,patient.y,"#75c86d",5);}
+      enemy.healCooldown=2.3;
+    }
+    const d=distance(enemy.x,enemy.y,BASE.x,BASE.y);
+    if(d>def.range){const angle=Math.atan2(BASE.y-enemy.y,BASE.x-enemy.x);enemy.x+=Math.cos(angle)*def.speed*(enemy.slow>0 ? .5 : 1)*dt;enemy.y+=Math.sin(angle)*def.speed*(enemy.slow>0 ? .5 : 1)*dt;}
+    else if(def.damage&&enemy.attackCooldown<=0&&state.baseHp>0){
+      enemy.attackCooldown=def.rate;enemy.shotFlash=.14;state.baseHp=Math.max(0,state.baseHp-def.damage);state.basePulse=1;syncHud();
+      if(state.baseHp<=0){endGame();break;}else{toast(def.name+" hit the base");sound(def.range>60?180:95,.09);}
+    }
+  }
+  if(state.gameOver)return;
+  updateKing(dt);
+  state.basePulse=Math.max(0,state.basePulse-dt*3);
+  state.toastTimer=Math.max(0,state.toastTimer-dt);
+  state.collectCooldown-=dt;
+  if(state.collecting&&state.mouse.inside&&state.collectCooldown<=0){
+    // One pickup per short interval makes a drag vacuum nearby pieces without requiring repeated clicks.
+    collectWood(true);
+    state.collectCooldown=.08;
+  }
+  if(state.toastTimer<=0)document.getElementById("toast").classList.remove("on");
+  // Harvested nodes stay exhausted; only their hit-shake animation decays.
+  for(const tree of trees)tree.shake=Math.max(0,tree.shake-dt*7);
+  for(const rock of rocks)rock.shake=Math.max(0,rock.shake-dt*7);
+  for(const diamond of diamonds)diamond.shake=Math.max(0,diamond.shake-dt*7);
+  for(let i=drops.length-1;i>=0;i--){
+    const wood=drops[i];
+    if(wood.ttl!==null&&!wood.target&&!wood.collector){wood.ttl-=dt;if(wood.ttl<=0){drops.splice(i,1);continue;}}
+    wood.spin+=dt*4;
+    if(wood.target==="hand"){
+      wood.t+=dt*7;
+      const ease=1-Math.pow(1-clamp(wood.t,0,1),3);
+      wood.x+=(state.mouse.x-wood.x)*ease*.35;
+      wood.y+=(state.mouse.y-wood.y)*ease*.35;
+      if(wood.t>=1){drops.splice(i,1);state.carried[wood.kind]++;syncHud();}
+      continue;
+    }
+    wood.vy+=170*dt;
+    wood.x+=wood.vx*dt;wood.y+=wood.vy*dt;
+    if(wood.y>=wood.groundY){wood.y=wood.groundY;wood.vx*=.72;wood.vy*=-.22;if(Math.abs(wood.vy)<10){wood.vy=0;wood.vx=0;wood.ground=true;}}
+  }
+  for(const building of buildings){
+    building.pulse=Math.max(0,building.pulse-dt*3);
+    if(building.complete&&building.worker)updateWorker(building,dt);
+    if(building.complete&&building.tower)updateTower(building,dt);
+    if(building.complete&&building.pulseTower)updatePulseTower(building,dt);
+    if(building.complete&&building.ability){building.ability.cooldown=Math.max(0,building.ability.cooldown-dt);building.ability.flash=Math.max(0,building.ability.flash-dt);}
+    if(building.complete&&building.hazard)updateHazard(building,dt);
+  }
+  for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove)buildings.splice(i,1);
+  if(state.carriedBuilding?.building.ability){const ability=state.carriedBuilding.building.ability;ability.cooldown=Math.max(0,ability.cooldown-dt);ability.flash=Math.max(0,ability.flash-dt);}
+  for(const collector of state.collectors)updateCollector(collector,dt);
+  for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
+  updatePrompt();
+}
+
+function syncHud(){
+  const total=carriedTotal();
+  document.getElementById("baseHealth").textContent=state.baseHp+" / "+state.baseMax;
+  document.getElementById("storedWood").textContent=state.stored.wood;
+  document.getElementById("storedStone").textContent=state.stored.stone;
+  document.getElementById("storedDust").textContent=state.stored.dust;
+  document.getElementById("storedCoin").textContent=state.stored.coin;
+  document.getElementById("storedDiamond").textContent=state.stored.diamond;
+  document.getElementById("carriedWood").textContent=state.carried.wood;
+  document.getElementById("carriedStone").textContent=state.carried.stone;
+  document.getElementById("carriedDust").textContent=state.carried.dust;
+  document.getElementById("carriedCoin").textContent=state.carried.coin;
+  document.getElementById("carriedDiamond").textContent=state.carried.diamond;
+  document.getElementById("carriedTotal").textContent=total+" / "+state.capacity;
+  document.getElementById("carryfill").style.width=(100*total/state.capacity)+"%";
+  document.querySelectorAll("button.build").forEach(button=>button.classList.toggle("on",button.dataset.kind===state.buildMode));
+  for(const [kind,label] of [["spikes","spikeStack"],["landmine","landmineStack"],["tar","tarStack"]]){
+    document.getElementById(label).textContent="free · "+state.buildStacks[kind]+" stacks remaining";
+    document.querySelector('button.build[data-kind="'+kind+'"]').classList.toggle("no",state.buildStacks[kind]<=0);
+  }
+  document.getElementById("collectorCount").textContent="collectors "+state.collectors.length+" / "+MAX_COLLECTORS;
+  const recruitBlocked=state.collectors.length>=MAX_COLLECTORS||state.stored.wood<COLLECTOR_COST.wood||state.stored.stone<COLLECTOR_COST.stone;
+  document.getElementById("recruit").classList.toggle("no",recruitBlocked);
+  canvas.classList.toggle("building",state.buildMode);
+}
+function updatePrompt(){
+  const box=document.getElementById("prompt"),label=box.querySelector("span"),target=hoverTarget();
+  box.classList.toggle("on",!!target);
+  if(target)label.textContent=target.kind==="base"?"deposit at base":target.kind==="stockpile"?"store in stockpile":target.kind==="upgrade"?"deposit toward upgrade":"deliver to blueprint";
+}
+let toastNonce=0;
+function toast(message){
+  const el=document.getElementById("toast");el.textContent=message;el.classList.add("on");state.toastTimer=2.2;toastNonce++;
+}
+function endGame(){
+  if(state.gameOver)return;
+  state.gameOver=true;state.collecting=false;state.camera.panning=false;state.keys.clear();cancelCarriedBuilding();closeUpgradeMenu();
+  document.getElementById("gameOver").classList.remove("off");sound(65,.6);
+}
+document.getElementById("restart").addEventListener("click",()=>location.reload());
+function burst(x,y,col,count){for(let i=0;i<count;i++)particles.push({x,y,vx:rand(-55,55),vy:rand(-90,-25),life:rand(.3,.7),col});}
+
+let audio=null;
+function sound(freq,duration){
+  try{audio=audio||new(window.AudioContext||window.webkitAudioContext)();const o=audio.createOscillator(),g=audio.createGain();o.type="square";o.frequency.value=freq;g.gain.setValueAtTime(.035,audio.currentTime);g.gain.exponentialRampToValueAtTime(.0001,audio.currentTime+duration);o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+duration);}catch(_){ }
+}
+
+function rect(x,y,w,h,color){ctx.fillStyle=color;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h));}
+const groundLayer=document.createElement("canvas");groundLayer.width=W;groundLayer.height=H;
+function drawGround(){
+  if(!groundLayer.ready){
+    const c=groundLayer.getContext("2d");c.imageSmoothingEnabled=false;
+    for(let y=0;y<H;y+=8)for(let x=0;x<W;x+=8){
+      const n=(x*13+y*7)%31;
+      c.fillStyle=n%3?"#718441":"#788b46";c.fillRect(x,y,8,8);
+      if(n<6){c.fillStyle="#607638";c.fillRect(x+n,y+(n*3)%7,2,2);}
+    }
+    c.fillStyle="#83944b";c.beginPath();c.ellipse(BASE.x,BASE.y,112,86,0,0,Math.PI*2);c.fill();
+    groundLayer.ready=true;
+  }
+  ctx.drawImage(groundLayer,0,0);
+}
+function drawTree(tree){
+  const x=Math.round(tree.x+(tree.shake?Math.sin(tree.shake*28)*3:0)),y=Math.round(tree.y);
+  if(tree.stump>0){rect(x-8,y-6,16,8,"#79512e");rect(x-5,y-6,10,3,"#c08a4d");return;}
+  rect(x-6,y-31,12,35,"#634226");rect(x-4,y-29,4,30,"#8c6034");
+  const leaf=tree.variant===0?"#506b32":tree.variant===1?"#5b7437":"#48642f";
+  const hi=tree.variant===0?"#738944":"#6d843e";
+  ctx.fillStyle="#344d29";ctx.beginPath();ctx.arc(x,y-45,25,0,Math.PI*2);ctx.arc(x-17,y-33,20,0,Math.PI*2);ctx.arc(x+17,y-34,21,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle=leaf;ctx.beginPath();ctx.arc(x-4,y-49,23,0,Math.PI*2);ctx.arc(x-19,y-38,15,0,Math.PI*2);ctx.arc(x+15,y-39,18,0,Math.PI*2);ctx.fill();
+  rect(x-14,y-58,9,7,hi);rect(x+7,y-50,11,7,hi);rect(x-23,y-38,7,5,hi);
+  if(tree.hp<tree.max){rect(x-18,y+8,36,5,"#2b2119");rect(x-17,y+9,34*tree.hp/tree.max,3,"#d39a3d");}
+}
+function drawRock(rock){
+  if(rock.depleted>0){if(rock.depleted<4)rect(rock.x-5,rock.y,10,4,"#8d8c88");return;}
+  const x=Math.round(rock.x+(rock.shake?Math.sin(rock.shake*30)*3:0)),y=Math.round(rock.y);
+  rect(x-18,y-5,36,13,"#747473");rect(x-13,y-13,25,18,"#969592");rect(x-7,y-18,13,10,"#aaa9a5");rect(x-10,y-12,9,4,"#c2c0ba");rect(x+7,y-6,7,5,"#5f6061");
+  if(rock.hp<rock.max){rect(x-18,y+12,36,5,"#2b2119");rect(x-17,y+13,34*rock.hp/rock.max,3,"#bcbab3");}
+}
+function drawDiamondNode(node){
+  if(node.depleted>0){rect(node.x-4,node.y,8,3,"#557b80");return;}
+  const x=Math.round(node.x+(node.shake?Math.sin(node.shake*30)*3:0)),y=Math.round(node.y);
+  rect(x-16,y+2,32,8,"#4d6264");rect(x-11,y-7,22,11,"#557b80");rect(x-6,y-19,12,17,"#71cbd8");rect(x-2,y-22,6,9,"#c3f5f8");
+  if(node.hp<node.max){rect(x-18,y+14,36,5,"#2b2119");rect(x-17,y+15,34*node.hp/node.max,3,"#79d9e8");}
+}
+function drawResource(resource){
+  ctx.save();
+  if(resource.ttl!==null&&resource.ttl<2&&Math.floor(resource.ttl*7)%2===0)ctx.globalAlpha=.25;
+  ctx.translate(Math.round(resource.x),Math.round(resource.y));ctx.rotate(Math.sin(resource.spin)*.15);
+  if(resource.kind==="stone"){rect(-6,-5,12,10,"#777775");rect(-4,-6,8,8,"#aaa9a5");rect(-2,-5,5,3,"#cbc8c0");}
+  else if(resource.kind==="dust"){rect(-6,-6,12,12,"#624a86");rect(-4,-8,8,13,"#a783df");rect(-2,-6,5,5,"#e2c9ff");}
+  else if(resource.kind==="coin"){rect(-6,-6,12,12,"#9f7227");rect(-5,-7,10,12,"#e3b445");rect(-2,-5,4,7,"#ffe18a");}
+  else if(resource.kind==="diamond"){rect(-7,-3,14,8,"#428f9b");rect(-5,-7,10,12,"#79d9e8");rect(-2,-9,5,9,"#d0f9fb");}
+  else{rect(-9,-4,18,8,"#704728");rect(-7,-5,14,8,"#ad7340");rect(6,-4,3,7,"#d29a5a");rect(-5,-3,7,2,"#c78b50");}
+  ctx.restore();
+}
+function drawEnemy(enemy){
+  const def=ENEMY_TYPES[enemy.type],s=def.size,x=Math.round(enemy.x),y=Math.round(enemy.y+Math.sin(enemy.wob)*2);
+  if(enemy.slow>0){ctx.fillStyle="#57432f99";ctx.beginPath();ctx.ellipse(x,y+7,13*s,5*s,0,0,Math.PI*2);ctx.fill();}
+  if(enemy.shotFlash>0&&def.range>60){ctx.strokeStyle="#d9b65f";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(BASE.x,BASE.y);ctx.stroke();}
+  if(enemy.healFlash>0){ctx.strokeStyle="#75c86d";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(enemy.healX,enemy.healY);ctx.stroke();}
+  if(enemy.type==="archer"){
+    const body=enemy.flash?"#d25b49":"#76583e";rect(x-7,y-10,14,16,body);rect(x-5,y-15,10,7,"#b99468");rect(x-9,y+4,6,5,"#49392d");rect(x+3,y+4,6,5,"#49392d");
+    ctx.strokeStyle="#d1a45d";ctx.lineWidth=2;ctx.beginPath();ctx.arc(x+8,y-5,7,-1.3,1.3);ctx.stroke();rect(x+7,y-12,2,15,"#6e4930");
+  }else if(enemy.type==="healer"){
+    const body=enemy.flash?"#d25b49":"#557649";rect(x-8,y-9,16,16,body);rect(x-5,y-15,10,7,"#b9a58b");rect(x-11,y+4,7,5,"#384d34");rect(x+4,y+4,7,5,"#384d34");rect(x-1,y-7,3,10,"#e3dec5");rect(x-4,y-4,9,3,"#e3dec5");
+  }else{
+    const body=enemy.flash?"#d25b49":enemy.type==="brute"?"#674337":"#403747";
+    rect(x-9*s,y-7*s,18*s,14*s,"#29242e");rect(x-7*s,y-10*s,14*s,15*s,body);rect(x-10*s,y+3*s,6*s,5*s,"#302a35");rect(x+4*s,y+3*s,6*s,5*s,"#302a35");rect(x-5*s,y-5*s,3*s,3*s,"#e3624c");rect(x+2*s,y-5*s,3*s,3*s,"#e3624c");
+  }
+  if(enemy.hp<enemy.max){const width=22*s;rect(x-width/2,y-18*s,width,4,"#241f18");rect(x-width/2+1,y-17*s,(width-2)*enemy.hp/enemy.max,2,"#c65343");}
+}
+function drawBase(){
+  const p=state.basePulse*3;
+  ctx.fillStyle="#b99e6288";ctx.beginPath();ctx.ellipse(BASE.x,BASE.y+28,52+p,20+p*.3,0,0,Math.PI*2);ctx.fill();
+  rect(BASE.x-35,BASE.y-20,70,55,"#b8afa0");rect(BASE.x-35,BASE.y-20,70,7,"#d5cdbf");
+  rect(BASE.x-41,BASE.y-28,18,18,"#aaa093");rect(BASE.x+23,BASE.y-28,18,18,"#aaa093");
+  rect(BASE.x-41,BASE.y-31,7,6,"#d5cdbf");rect(BASE.x-29,BASE.y-31,6,6,"#d5cdbf");rect(BASE.x+23,BASE.y-31,7,6,"#d5cdbf");rect(BASE.x+35,BASE.y-31,6,6,"#d5cdbf");
+  rect(BASE.x-12,BASE.y+4,24,31,"#49392d");rect(BASE.x-8,BASE.y+10,4,4,"#d0a044");
+  rect(BASE.x-28,BASE.y-5,10,13,"#52738a");rect(BASE.x+18,BASE.y-5,10,13,"#52738a");
+  rect(BASE.x-4,BASE.y-42,3,16,"#5d4935");rect(BASE.x-1,BASE.y-42,22,10,"#a94634");
+  if(state.baseHp<state.baseMax){rect(BASE.x-38,BASE.y-52,76,6,"#292119");rect(BASE.x-36,BASE.y-50,72*state.baseHp/state.baseMax,2,"#b84b3c");}
+  const target=hoverTarget();if(target&&target.kind==="base"){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(BASE.x-48,BASE.y-39,96,80);ctx.setLineDash([]);}
+}
+function drawKing(){
+  const king=state.king,x=Math.round(king.x),y=Math.round(king.y);
+  rect(x-6,y-8,12,13,"#9d3f34");rect(x-4,y-16,8,8,"#d8b083");rect(x-5,y-19,3,5,"#d6a642");rect(x-1,y-21,3,7,"#e8be55");rect(x+3,y-19,3,5,"#d6a642");
+  rect(x-6,y+5,4,6,"#3d332a");rect(x+2,y+5,4,6,"#3d332a");
+  if(king.swing>0){const angle=Math.atan2(king.targetY-y,king.targetX-x);ctx.strokeStyle="#f3e6bc";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x+Math.cos(angle)*7,y+Math.sin(angle)*7);ctx.lineTo(x+Math.cos(angle)*24,y+Math.sin(angle)*24);ctx.stroke();}
+  else{rect(x+7,y-6,2,15,"#ded8c9");rect(x+5,y+6,6,2,"#77512f");}
+}
+function drawShed(building,ghost=false){
+  const x=building.x,y=building.y,p=building.pulse*2,def=BUILDING[building.type||state.buildMode||"lumber"];
+  if(building.complete&&def.radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,x,y)<48){
+    const shownRadius=def.radius+(building.type==="tower"&&building.upgrades.towerRange?60:0);
+    ctx.strokeStyle="#ead18d99";ctx.lineWidth=2;ctx.setLineDash([7,6]);ctx.beginPath();ctx.arc(x,y,shownRadius,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+  }
+  if(!building.complete||ghost){
+    ctx.globalAlpha=ghost?.55:1;ctx.strokeStyle=ghost&&canPlace(x,y)?"#f3e5b9":ghost?"#a94634":"#ead18d";ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.strokeRect(x-28-p,y-27-p,56+p*2,54+p*2);ctx.setLineDash([]);
+    rect(x-23,y+9,46,7,building.type==="quarry"?"#777775":"#83603a");rect(x-19,y-3,5,19,"#9a774d");rect(x+14,y-3,5,19,"#9a774d");
+    if(!ghost){const cost=def.cost,done=building.delivered.wood+building.delivered.stone,total=cost.wood+cost.stone;rect(x-25,y+23,50,7,"#292119");rect(x-23,y+25,46*done/total,3,"#d4a443");ctx.fillStyle="#292119";ctx.font="bold 9px monospace";ctx.textAlign="center";ctx.fillText("w "+building.delivered.wood+"/"+cost.wood+"  s "+building.delivered.stone+"/"+cost.stone,x,y+43);}
+    ctx.globalAlpha=1;return;
+  }
+  ctx.fillStyle="#b99e6288";ctx.beginPath();ctx.ellipse(x,y+22,37,12,0,0,Math.PI*2);ctx.fill();
+  if(building.type==="landmine"){
+    rect(x-14,y+5,28,8,"#594738");rect(x-10,y,20,7,"#76614d");rect(x-4,y-4,8,5,"#a74434");rect(x-1,y-8,3,5,"#d8a343");
+  }else if(building.type==="tar"){
+    ctx.fillStyle="#382d27";ctx.beginPath();ctx.ellipse(x,y+7,22,11,0,0,Math.PI*2);ctx.fill();rect(x-13,y+2,8,3,"#554234");rect(x+6,y+7,7,2,"#211c19");
+  }else if(building.type==="spikes"){
+    const metal=building.hazard.flash>0?"#f1dfb7":"#a9a59e";
+    rect(x-18,y+10,36,5,"#65442c");rect(x-14,y-5,4,16,metal);rect(x-2,y-10,4,21,metal);rect(x+10,y-5,4,16,metal);
+    rect(x-18,y+7,5,4,"#7c7872");rect(x+13,y+7,5,4,"#7c7872");
+  }else if(building.type==="beacon"){
+    rect(x-20,y+8,40,14,"#77736d");rect(x-15,y-5,30,14,"#9c9891");rect(x-6,y-26,12,23,"#4c5d61");rect(x-3,y-32,6,9,"#79d8d1");
+    rect(x-13,y-18,7,5,"#79d8d1");rect(x+6,y-18,7,5,"#79d8d1");
+    if(building.ability.flash>0){ctx.strokeStyle="#79e6de";ctx.lineWidth=4;ctx.globalAlpha=building.ability.flash/.35;ctx.beginPath();ctx.arc(x,y,BUILDING.beacon.radius*(1-building.ability.flash/.35),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
+    const hover=state.mouse.inside&&beaconButtonHit(building,state.mouse.x,state.mouse.y),ready=building.ability.cooldown<=0;
+    if(hover){rect(x-12,y-48,24,22,"#292119");rect(x-9,y-45,18,16,ready?"#3e8b70":"#66635d");ctx.fillStyle="#f4e8c6";ctx.font="bold 12px monospace";ctx.textAlign="center";ctx.fillText("↯",x,y-33);}
+    const ratio=building.ability.cooldown/BUILDING.beacon.cooldown;rect(x-20,y+26,40,7,"#292119");rect(x-18,y+28,36*(1-ratio),3,ready?"#70d8d1":"#d19b49");
+    ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(ready?"ready":building.ability.cooldown.toFixed(1)+"s",x,y+42);
+  }else if(building.type==="blast"){
+    rect(x-17,y-8,34,29,"#7b5031");rect(x-14,y-11,28,7,"#a9703f");rect(x-14,y+2,28,4,"#4a3829");rect(x-4,y-16,8,8,"#292119");
+    rect(x+2,y-20,3,7,"#d29a3f");rect(x+5,y-23,3,3,"#efc85e");
+    const hover=state.mouse.inside&&blastButtonHit(building,state.mouse.x,state.mouse.y);
+    if(hover){rect(x-12,y-39,24,22,"#292119");rect(x-9,y-36,18,16,"#b43e32");ctx.fillStyle="#f4e8c6";ctx.font="bold 13px monospace";ctx.textAlign="center";ctx.fillText("!",x,y-24);}
+  }else if(building.type==="obelisk"){
+    rect(x-23,y+18,46,7,"#9b6a38");rect(x-17,y+11,34,8,"#c58b49");
+    rect(x-12,y-47,24,59,"#b87a3d");rect(x-8,y-54,16,8,"#dda15b");rect(x-5,y-58,10,5,"#e3ad68");rect(x+8,y-47,5,59,"#76502f");
+    rect(x-4,y-34,8,8,"#d7a15d");rect(x-2,y-32,4,4,"#72d4cc");
+    rect(x-5,y-18,10,10,"#805832");rect(x-3,y-16,6,6,"#d29a55");rect(x-2,y-1,4,10,"#72d4cc");
+    const hover=state.mouse.inside&&upgradeButtonHit(building,state.mouse.x,state.mouse.y);
+    if(hover&&!building.activeUpgrade){rect(x-27,y+11,22,22,"#292119");rect(x-24,y+14,16,16,"#b45b48");ctx.fillStyle="#f4e8c6";ctx.font="bold 14px monospace";ctx.textAlign="center";ctx.fillText("↑",x-16,y+27);}
+    if(building.activeUpgrade){
+      const job=building.activeUpgrade,upgrade=UPGRADES.find(item=>item.id===job.id);
+      ctx.fillStyle="#f4e8c6";ctx.font="bold 9px monospace";ctx.textAlign="center";
+      ctx.fillText(upgrade.name,x,y-70);ctx.fillText("["+job.delivered.wood+"/"+upgrade.cost.wood+"] wood",x,y-60);ctx.fillText("["+job.delivered.stone+"/"+upgrade.cost.stone+"] stone",x,y-50);
+      const target=hoverTarget();
+      if(target&&target.kind==="upgrade"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(x-34,y-78,68,108);ctx.setLineDash([]);}
+    }
+  }else if(building.type==="pulseTower"){
+    rect(x-22,y+8,44,15,"#6e6874");rect(x-17,y-7,34,17,"#8d8495");rect(x-12,y-19,24,13,"#aaa0b2");
+    rect(x-5,y-31,10,13,"#624a86");rect(x-2,y-35,4,8,"#c09aed");rect(x-15,y-13,6,6,"#b18be5");rect(x+9,y-13,6,6,"#b18be5");
+    const pulse=building.pulseTower;
+    if(pulse.flash>0){ctx.strokeStyle="#bc96ed";ctx.lineWidth=4;ctx.globalAlpha=pulse.flash/.4;ctx.beginPath();ctx.arc(x,y,BUILDING.pulseTower.radius*(1-pulse.flash/.4),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
+    const ratio=pulse.cooldown/BUILDING.pulseTower.cooldown;rect(x-21,y+27,42,7,"#292119");rect(x-19,y+29,38*(1-ratio),3,pulse.cooldown<=0?"#b18be5":"#d19b49");
+    ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(pulse.cooldown<=0?"ready":pulse.cooldown.toFixed(1)+"s",x,y+43);
+  }else if(building.type==="tower"){
+    rect(x-22,y+8,44,15,"#817b72");rect(x-18,y-8,36,18,"#aaa39a");rect(x-15,y-20,30,13,"#beb7ac");
+    rect(x-18,y-23,8,8,"#d3ccc0");rect(x-4,y-23,8,8,"#d3ccc0");rect(x+10,y-23,8,8,"#d3ccc0");
+    rect(x-4,y-13,8,14,"#4f4941");rect(x-1,y-31,3,12,"#594b3b");rect(x+2,y-31,18,5,"#8b633b");
+    if(building.tower&&building.tower.flash>0){ctx.strokeStyle="#f0d76f";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y-27);ctx.lineTo(building.tower.targetX,building.tower.targetY);ctx.stroke();}
+    const hover=state.mouse.inside&&upgradeButtonHit(building,state.mouse.x,state.mouse.y);
+    if(hover&&!building.activeUpgrade){rect(x-27,y+10,22,22,"#292119");rect(x-24,y+13,16,16,"#4d7892");ctx.fillStyle="#f4e8c6";ctx.font="bold 14px monospace";ctx.textAlign="center";ctx.fillText("↑",x-16,y+26);}
+    if(building.activeUpgrade){
+      const job=building.activeUpgrade,upgrade=TOWER_UPGRADES.find(item=>item.id===job.id);
+      ctx.fillStyle="#f4e8c6";ctx.font="bold 9px monospace";ctx.textAlign="center";ctx.fillText(upgrade.name,x,y-48);ctx.fillText("["+job.delivered.wood+"/"+upgrade.cost.wood+"] wood",x,y-38);ctx.fillText("["+job.delivered.stone+"/"+upgrade.cost.stone+"] stone",x,y-28);
+      const target=hoverTarget();if(target&&target.kind==="upgrade"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(x-34,y-56,68,88);ctx.setLineDash([]);}
+    }
+  }else if(building.type==="stockpile"){
+    rect(x-31,y-18,4,43,"#68472c");rect(x+27,y-18,4,43,"#68472c");rect(x-31,y+21,62,4,"#8f6339");
+    const wood=Math.min(12,building.storage.wood),stone=Math.min(12,building.storage.stone),dust=Math.min(4,building.storage.dust),coins=Math.min(3,building.storage.coin),gems=Math.min(3,building.storage.diamond);
+    for(let i=0;i<wood;i++){const xx=x-24+(i%3)*8,yy=y+14-Math.floor(i/3)*6;rect(xx,yy,13,5,"#a9703f");rect(xx+10,yy,3,5,"#d09a5b");}
+    for(let i=0;i<stone;i++){const xx=x+7+(i%3)*7,yy=y+13-Math.floor(i/3)*7;rect(xx,yy,8,7,"#858582");rect(xx+2,yy-2,6,5,"#b1afaa");}
+    for(let i=0;i<dust;i++){const xx=x-5+(i%2)*7,yy=y-2-Math.floor(i/2)*7;rect(xx,yy,6,6,"#a783df");rect(xx+2,yy-2,3,3,"#e2c9ff");}
+    for(let i=0;i<coins;i++){rect(x-13+i*4,y-9-i*2,6,6,"#e3b445");}
+    for(let i=0;i<gems;i++){rect(x+7+i*4,y-9-i*2,6,7,"#79d9e8");}
+    ctx.fillStyle="#292119";ctx.font="bold 8px monospace";ctx.textAlign="center";
+    if(building.storage.wood>12)ctx.fillText("x"+building.storage.wood,x-18,y-15);
+    if(building.storage.stone>12)ctx.fillText("x"+building.storage.stone,x+18,y-15);
+    if(building.storage.dust>4)ctx.fillText("x"+building.storage.dust,x,y-22);
+    if(building.storage.coin>3)ctx.fillText("c"+building.storage.coin,x-12,y-25);
+    if(building.storage.diamond>3)ctx.fillText("d"+building.storage.diamond,x+13,y-25);
+    const target=hoverTarget();if(target&&target.kind==="stockpile"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.strokeRect(x-35,y-23,70,52);ctx.setLineDash([]);}
+  }else if(building.type==="quarry"){
+    rect(x-27,y-5,54,27,"#777775");rect(x-22,y-13,18,13,"#aaa9a5");rect(x+1,y-17,22,17,"#92918e");rect(x-8,y+5,16,17,"#4f4d49");rect(x+25,y-4,7,26,"#65442c");rect(x+20,y+1,17,4,"#b1814e");
+  }else{
+    rect(x-25,y-13,50,36,"#a9703f");rect(x-25,y-13,50,5,"#c28b50");rect(x-30,y-21,60,11,"#8d3d2f");rect(x-24,y-25,48,6,"#ad4c38");rect(x-8,y+2,16,21,"#5e4028");rect(x+29,y-4,7,27,"#69462a");rect(x+24,y+2,17,5,"#bf8650");
+  }
+}
+function drawWorker(worker){
+  const bob=Math.sin(worker.step*8)*1.5,x=Math.round(worker.x),y=Math.round(worker.y+bob);
+  rect(x-5,y-9,10,11,"#d4b079");rect(x-4,y-17,8,8,"#d7b586");rect(x-5,y-18,10,3,"#6f4930");
+  rect(x-5,y+2,4,6,"#49392d");rect(x+2,y+2,4,6,"#49392d");
+  const swing=worker.target&&worker.hitCooldown>.82?7:0;
+  ctx.save();ctx.translate(x+6,y-7);ctx.rotate((swing?-.8:.25));rect(0,-1,13,2,"#65442c");
+  if(worker.kind==="stone"){rect(10,-5,7,4,"#aaa9a5");rect(13,-3,3,7,"#858582");}
+  else{rect(10,-5,5,8,"#b9b7b0");}
+  ctx.restore();
+}
+function drawCollector(collector){
+  const bob=Math.sin(collector.step*9)*1.5,x=Math.round(collector.x),y=Math.round(collector.y+bob);
+  rect(x-6,y-10,12,12,"#4d7892");rect(x-4,y-18,8,8,"#d7b586");rect(x-5,y-19,10,3,"#315064");
+  rect(x-5,y+2,4,6,"#40362d");rect(x+2,y+2,4,6,"#40362d");
+  const load=RESOURCE_KINDS.reduce((total,kind)=>total+collector.carried[kind],0);
+  if(load){const col=collector.carried.diamond?"#79d9e8":collector.carried.coin?"#e3b445":collector.carried.dust?"#a783df":collector.carried.stone?"#aaa9a5":"#bd8047";rect(x-9,y-9,5,11,"#8f673d");rect(x-8,y-7,3,2,col);}
+}
+function drawParticles(){for(const p of particles){ctx.globalAlpha=clamp(p.life*3,0,1);if(p.resource){if(p.kind==="wood")rect(p.x-5,p.y-2,10,5,p.col);else if(p.kind==="dust")rect(p.x-3,p.y-3,6,6,p.col);else rect(p.x-4,p.y-4,8,8,p.col);}else rect(p.x,p.y,3,3,p.col);}ctx.globalAlpha=1;}
+function drawFog(){
+  for(let y=0;y<FOG_H;y++)for(let x=0;x<FOG_W;x++){
+    if(!state.fog[fogIndex(x,y)])continue;
+    rect(x*FOG_TS,y*FOG_TS,FOG_TS,FOG_TS,"#292738");
+    const n=(x*11+y*17)%19;rect(x*FOG_TS+5+n,y*FOG_TS+7+(n*3)%18,3,3,"#37344a");
+  }
+}
+function drawCarryHud(){
+  const total=carriedTotal(),x=VIEW_W-31,y=VIEW_H-31;
+  ctx.textAlign="center";ctx.font="bold 11px monospace";ctx.fillStyle="#292119aa";ctx.fillText(total+"/"+state.capacity,x+1,y-13+1);
+  ctx.fillStyle="#f4f0da";ctx.fillText(total+"/"+state.capacity,x,y-13);
+  // Small pixel hand: screen-space HUD, intentionally unaffected by camera zoom.
+  rect(x-8,y-4,5,4,"#29211999");rect(x-4,y,11,7,"#29211999");rect(x+4,y-5,4,9,"#29211999");
+  rect(x-9,y-5,5,4,"#f4f0da");rect(x-5,y-1,11,7,"#f4f0da");rect(x+3,y-6,4,9,"#f4f0da");rect(x-2,y-6,3,7,"#f4f0da");
+}
+function drawHands(){
+  const kinds=[];for(const kind of RESOURCE_KINDS)for(let i=0;i<state.carried[kind];i++)kinds.push(kind);
+  if(!state.mouse.inside||!kinds.length)return;
+  const shown=Math.min(kinds.length,7);
+  for(let i=0;i<shown;i++){const a=-Math.PI*.85+i/(Math.max(1,shown-1))*Math.PI*.7,r=19+(i%2)*5;ctx.save();ctx.translate(state.mouse.x+Math.cos(a)*r,state.mouse.y+Math.sin(a)*r);ctx.rotate(a+.6);if(kinds[i]==="wood"){rect(-6,-3,12,6,"#b67b43");rect(3,-3,3,6,"#e0a35d");}else if(kinds[i]==="dust"){rect(-5,-5,10,10,"#684e91");rect(-3,-7,7,9,"#b18be5");}else if(kinds[i]==="coin"){rect(-5,-6,10,11,"#e3b445");rect(-2,-5,4,7,"#ffe18a");}else if(kinds[i]==="diamond"){rect(-5,-6,10,11,"#79d9e8");rect(-2,-8,5,8,"#d0f9fb");}else{rect(-5,-5,10,10,"#888784");rect(-3,-6,7,7,"#bbb9b3");}ctx.restore();}
+}
+function draw(){
+  const camera=state.camera;
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle="#1d1c29";ctx.fillRect(0,0,VIEW_W,VIEW_H);
+  ctx.save();
+  // Camera transform owns zoom; pointerPosition() applies its exact inverse for interaction.
+  ctx.translate(VIEW_W/2,VIEW_H/2);ctx.scale(camera.zoom,camera.zoom);ctx.translate(-camera.x,-camera.y);
+  drawGround();
+  const sorted=[...trees].sort((a,b)=>a.y-b.y);
+  for(const rock of rocks)drawRock(rock);
+  for(const diamond of diamonds)drawDiamondNode(diamond);
+  for(const tree of sorted)drawTree(tree);
+  for(const resource of drops)drawResource(resource);
+  for(const enemy of state.enemies)drawEnemy(enemy);
+  drawBase();drawKing();
+  for(const building of buildings)drawShed(building);
+  for(const building of buildings)if(building.worker)drawWorker(building.worker);
+  for(const collector of state.collectors)drawCollector(collector);
+  if(state.buildMode&&state.mouse.inside)drawShed({type:state.buildMode,x:state.mouse.x,y:state.mouse.y,complete:false,pulse:0},true);
+  if(state.carriedBuilding&&state.mouse.inside){const held={...state.carriedBuilding.building,x:state.mouse.x,y:state.mouse.y};drawShed(held);ctx.strokeStyle=canPlace(state.mouse.x,state.mouse.y)?"#f5df98":"#b84b3c";ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.strokeRect(state.mouse.x-32,state.mouse.y-48,64,88);ctx.setLineDash([]);}
+  drawParticles();drawFog();drawHands();
+  ctx.restore();
+  drawCarryHud();
+}
+
+syncHud();
+let previous=performance.now();
+function frame(now){const dt=Math.min(.033,(now-previous)/1000);previous=now;update(dt);draw();requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+toast("click the dark fog to explore");
+</script>
+</body>
+</html>
