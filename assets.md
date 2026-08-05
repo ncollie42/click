@@ -20,6 +20,7 @@ Living checklist for production assets. Current canvas art is placeholder art un
 - [ ] Lumber camp: blueprint and complete
 - [ ] Quarry: blueprint and complete
 - [ ] Stockpile: empty plus stacked wood/stone variants
+- [ ] House: blueprint, complete, spawning, and full-slot states
 - [ ] Obelisk: idle, upgrade available, upgrading, complete pulse
 - [ ] Basic tower: idle, firing, and upgraded variants
 - [ ] Pulse tower: idle, charging, ready, and area-pulse states
@@ -43,9 +44,8 @@ Living checklist for production assets. Current canvas art is placeholder art un
 
 ## Units
 
-- [ ] Wood-gathering worker: idle, walk, chop
-- [ ] Stone-gathering worker: idle, walk, mine
-- [ ] Collector: idle, walk, carrying wood, carrying stone
+- [ ] Generic worker: idle, walk, hurt, downed, carried, revived
+- [ ] Worker job tools: axe, pick, builder hammer, hauling sack, guard weapon
 - [ ] King: idle guard stance, sword attack, hit effects
 - [ ] Future explorer
 - [ ] Future repair unit

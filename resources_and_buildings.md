@@ -6,13 +6,13 @@ Living reference for resources, building categories, and behavior tags.
 
 | Resource | Source | Current uses |
 |---|---|---|
-| Wood | Trees | Construction, upgrades, collector recruitment |
-| Stone | Stone nodes | Construction, upgrades, collector recruitment |
+| Wood | Trees | Construction and upgrades |
+| Stone | Stone nodes | Construction and upgrades |
 | Dust essence | 25% enemy death drop | Collectible and storable; spending use TBD |
 | Gold coin | Temporary random spawn; flashes and vanishes after about 8 seconds | Collectible and storable; spending use TBD |
 | Diamond | Five rare deposits generated more than 600px from the base | Rare mined construction/progression resource; spending use TBD |
 
-Resources may exist in several states: loose on the ground, carried by the player, carried by a collector, stored at the base or stockpile, or delivered to construction/upgrade progress.
+Resources may exist in several states: loose on the ground, carried by the player or a hauling worker, stored at the base or stockpile, or delivered to construction/upgrade progress.
 
 ## Building Categories
 
@@ -23,6 +23,8 @@ base
 │   └── quarry
 ├── storage
 │   └── stockpile
+├── population
+│   └── house
 ├── progression
 │   └── obelisk
 ├── defense
@@ -53,6 +55,7 @@ Categories answer **what role does this building serve?** Tags answer **how does
 ### Activation
 
 - `automatic` — activates without player input.
+- `staffed` — requires a worker dropped onto it before its automatic behavior runs.
 - `manual` — player presses its hover button.
 - `contact` — activates when an enemy touches it.
 
@@ -86,9 +89,10 @@ Categories answer **what role does this building serve?** Tags answer **how does
 
 | Building | Category | Tags |
 |---|---|---|
-| Lumber camp | Production | `constructed`, `automatic`, `resource-node`, `persistent` |
-| Quarry | Production | `constructed`, `automatic`, `resource-node`, `persistent` |
+| Lumber camp | Production | `constructed`, `staffed`, `automatic`, `resource-node`, `persistent` |
+| Quarry | Production | `constructed`, `staffed`, `automatic`, `resource-node`, `persistent` |
 | Stockpile | Storage | `constructed`, `manual`, `persistent` |
+| House | Population | `constructed`, `automatic`, `cooldown`, `persistent` |
 | Obelisk | Progression | `constructed`, `manual`, `upgradeable`, `persistent` |
 | Basic tower | Defense / Tower | `constructed`, `automatic`, `single-target`, `cooldown`, `upgradeable`, `persistent` |
 | Pulse tower | Defense / Tower | `constructed`, `automatic`, `area`, `cooldown`, `persistent` |
@@ -148,6 +152,21 @@ basic tower
 └── advanced
     └── laser tower
 ```
+
+## Worker Assignment
+
+Workers have no permanent specialization. Right-dragging and dropping assigns behavior from the target under the cursor:
+
+| Target | Job |
+|---|---|
+| Incomplete blueprint | Deliver needed wood and stone from covering storage or nearby ground drops |
+| Resource node | Harvest nearby nodes of that resource |
+| Lumber camp / quarry | Staff that production building |
+| Stockpile / base | Haul nearby physical drops to that storage |
+| House | Guard at that house, clearing the prior assignment |
+| Empty ground | Guard that region |
+
+The base supplies three worker slots; each completed house adds two. Empty slots refill automatically at their owning base or house. Jobs remain within the worker's home leash. Harvesting always creates physical ground drops.
 
 ## Design Rule
 
