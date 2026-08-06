@@ -7,42 +7,49 @@
 <title>wooddrop</title>
 <style>
   :root{
-    --ink:#292119; --paper:#f1dfb7; --paper2:#dbc28e; --red:#a94634;
-    --green:#657c35; --gold:#d29a39; --shadow:3px 3px 0 #17120d99;
+    --ink:#292119; --paper:#f1dfb7; --red:#a94634; --gold:#d29a39;
+    --shadow:3px 3px 0 #17120d99;
     --mono:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
-  body{display:grid;place-items:center;background:#172017;color:var(--ink);font:12px/1.35 var(--mono);text-transform:lowercase}
-  #game{width:min(1400px,100vw);padding:10px;display:grid;grid-template-columns:minmax(390px,460px) minmax(0,1fr);gap:8px}
-  .slab{background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow)}
-  aside{padding:8px;min-height:0;max-height:calc(100vh - 20px);overflow-y:auto}
-  h1{font-size:25px;line-height:1;margin:2px 0 5px;letter-spacing:-2px}
-  h1 span{color:var(--red)}
-  .sub{font-size:10px;opacity:.68;margin-bottom:14px}
-  h2{font-size:11px;border-bottom:1px solid #b99f6c;padding-bottom:3px;margin:11px 0 6px}
-  .resource{display:flex;justify-content:space-between;padding:3px 1px;font-weight:bold}
-  .resource b{font-variant-numeric:tabular-nums}
-  #carrybar{height:7px;border:1px solid var(--ink);background:#c4aa77;margin-top:3px}
-  #carryfill{height:100%;background:var(--green);width:0;transition:width .12s}
+  body{display:grid;place-items:center;background:#0b0d13;color:var(--ink);font:12px/1.35 var(--mono);text-transform:lowercase}
+  #game{position:relative;width:min(100vw,calc(100vh * 16 / 9));aspect-ratio:16 / 9;container:game-frame / inline-size}
+  #stage{position:absolute;inset:0}
+  /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, toast 8, game-over 10. */
+  #phaseHud{position:absolute;z-index:3;right:10px;top:10px;width:245px;padding:8px 9px;background:#292119ed;color:var(--paper);border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
+  #phaseHud.night{background:#17213aed;border-color:#c65b4d;color:#dce9ff}
+  #phaseHeader{display:flex;justify-content:space-between;font-size:13px}
+  #phaseProgress{height:5px;margin:6px 0;background:#17120d;border:1px solid #0008}
+  #phaseProgressFill{display:block;height:100%;background:var(--gold)}
+  #phaseHud.night #phaseProgressFill{background:#c65b4d}
+  #forecastLabel{font-size:9px;opacity:.72;margin-bottom:3px}
+  #forecastSides{font-weight:bold;margin-bottom:4px}
+  #forecastRemaining{font-size:9px;color:#d98b75;margin-bottom:3px}
+  #recipeSummary{display:flex;flex-wrap:wrap;gap:2px 9px;list-style:none;font-size:10px}
+  #buildDock{position:absolute;z-index:4;left:50%;bottom:10px;transform:translateX(-50%);width:min(900px,calc(100% - 20px));pointer-events:none}
+  #buildCards{display:none;margin-bottom:5px;padding:5px;background:#f1dfb7f2;border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
+  #buildCards.open{display:block}
+  .build-category{display:none;gap:5px;overflow-x:auto;padding-bottom:2px}
+  .build-category.open{display:flex}
+  #buildTabs{display:grid;grid-template-columns:repeat(3,1fr);width:min(420px,100%);margin:auto;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
   button{width:100%;font:inherit;text-transform:lowercase;text-align:left;color:var(--ink);cursor:pointer;background:#e6d09f;border:2px solid #b99f6c;padding:7px;margin:2px 0}
   button:hover{border-color:var(--ink);background:#f7e8c5}
-  button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
-  button.no{opacity:.45}
-  .smallstatus{font-size:9px;opacity:.7;text-align:center;margin:2px 0 7px}
+  button.on,.dock-tab.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  button:disabled{cursor:not-allowed;opacity:.42;filter:saturate(.4)}
   button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
-  .cost{display:block;font-size:9px;opacity:.7;margin-top:2px}
-  #buildColumns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;align-items:start}
-  .build-category{padding:3px;background:#e7d09d;border:1px solid #b99f6c}
-  .build-category h3{font-size:10px;text-align:center;padding:3px 1px 5px;border-bottom:1px solid #b99f6c;margin-bottom:3px}
-  .build-category button{padding:5px;min-height:48px}
+  .dock-tab{text-align:center;margin:0;padding:6px}
+  .build-category .build{position:relative;flex:0 0 150px;min-height:68px;margin:0;padding:6px}
+  .build-category .build:hover{transform:translateY(-1px)}
+  .build-category .build.on{box-shadow:inset 0 0 0 1px var(--gold)}
+  .cost,.purpose{display:block;font-size:9px;margin-top:2px}
+  .cost{color:#765f42}.purpose{opacity:.72}
   kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
-  #stage{position:relative;min-width:0}
-  canvas{width:100%;height:auto;display:block;background:#617738;border:2px solid var(--ink);box-shadow:var(--shadow);image-rendering:pixelated;cursor:default}
+  canvas{width:100%;height:100%;display:block;background:#617738;image-rendering:pixelated;cursor:default}
   canvas.building{cursor:crosshair}
-  #toast{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s;pointer-events:none;white-space:nowrap}
+  #toast{position:absolute;z-index:8;left:50%;bottom:10px;transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s;pointer-events:none;white-space:nowrap}
   #toast.on{opacity:1}
-  #prompt{position:absolute;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
+  #prompt{position:absolute;z-index:5;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
   #prompt.on{opacity:1}
   #prompt kbd{margin-right:5px}
   #upgradePanel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;width:300px;padding:9px;background:#242919;color:var(--paper);border:2px solid #d8c58f;box-shadow:5px 5px 0 #17120daa}
@@ -66,61 +73,55 @@
   #pauseBadge.off{display:none}
   #gameOver p{margin-bottom:12px}
   #restart{background:var(--ink);color:var(--paper);text-align:center;padding:9px}
-  @media(max-width:900px){#game{grid-template-columns:280px 1fr;padding:5px;gap:5px}#buildColumns{grid-template-columns:1fr}aside{padding:5px}h1{font-size:19px}}
+  @container game-frame (max-width:799px){
+    #phaseHud{right:6px;top:6px;width:50%;padding:5px 6px;font-size:10px}
+    #phaseHeader{font-size:11px}#phaseProgress{margin:4px 0}
+    #forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
+    #buildDock{bottom:6px;width:calc(100% - 12px)}#buildCards{padding:3px;margin-bottom:3px}
+    .build-category{gap:3px}.build-category .build{flex-basis:126px;min-height:58px;padding:5px;font-size:10px}
+    .cost,.purpose{font-size:9px}#buildTabs{width:min(360px,100%);padding:2px}.dock-tab{padding:4px;font-size:10px}
+  }
 </style>
 </head>
 <body>
 <div id="game">
-  <aside class="slab">
-    <h1>wood<span>drop</span></h1>
-    <div class="sub">a tiny gathering demo</div>
-
-    <h2>base</h2>
-    <div class="resource"><span>♥ health</span><b id="baseHealth">100 / 100</b></div>
-    <div class="resource"><span>▰ wood</span><b id="storedWood">0</b></div>
-    <div class="resource"><span>◆ stone</span><b id="storedStone">0</b></div>
-    <div class="resource"><span>✦ dust</span><b id="storedDust">0</b></div>
-    <div class="resource"><span>● coin</span><b id="storedCoin">0</b></div>
-    <div class="resource"><span>♦ diamond</span><b id="storedDiamond">0</b></div>
-    <div class="smallstatus" id="workerCount">workers 0 / 3 · idle/guard 0 · downed 0</div>
-
-    <h2>your hands</h2>
-    <div class="resource"><span>▰ wood</span><b id="carriedWood">0</b></div>
-    <div class="resource"><span>◆ stone</span><b id="carriedStone">0</b></div>
-    <div class="resource"><span>✦ dust</span><b id="carriedDust">0</b></div>
-    <div class="resource"><span>● coin</span><b id="carriedCoin">0</b></div>
-    <div class="resource"><span>♦ diamond</span><b id="carriedDiamond">0</b></div>
-    <div class="resource"><span>total</span><b id="carriedTotal">0 / 5</b></div>
-    <div id="carrybar"><div id="carryfill"></div></div>
-
-    <h2>build</h2>
-    <div id="buildColumns">
-      <section class="build-category">
-        <h3>buildings</h3>
-        <button class="build" data-kind="lumber"><b>+ lumber camp</b><span class="cost">deliver 8 wood + 2 stone</span></button>
-        <button class="build" data-kind="quarry"><b>+ quarry</b><span class="cost">deliver 4 wood + 8 stone</span></button>
-        <button class="build" data-kind="stockpile"><b>+ stockpile</b><span class="cost">deliver 2 wood · stores loose resources</span></button>
-        <button class="build" data-kind="house"><b>+ house</b><span class="cost" id="houseCost">deliver 8 wood + 6 stone · adds 2 worker slots</span></button>
-        <button class="build" data-kind="obelisk"><b>+ obelisk</b><span class="cost">deliver 5 wood + 12 stone · upgrades</span></button>
-        <button class="build" data-kind="beacon"><b>+ shock beacon</b><span class="cost">deliver 4 wood + 8 stone · reusable pulse</span></button>
+  <section id="buildDock" aria-label="build dock">
+    <div id="buildCards">
+      <section class="build-category" data-category="economy">
+        <button class="build" data-kind="lumber" title="staff to gather nearby wood"><b>lumber camp</b><span class="cost">8w · 2s</span><span class="purpose">gathers wood</span></button>
+        <button class="build" data-kind="quarry" title="staff to gather nearby stone"><b>quarry</b><span class="cost">4w · 8s</span><span class="purpose">gathers stone</span></button>
+        <button class="build" data-kind="stockpile" title="stores loose resources for haulers"><b>stockpile</b><span class="cost">2w · 0s</span><span class="purpose">local storage</span></button>
+        <button class="build" data-kind="house" title="adds two worker slots"><b>house</b><span class="cost" id="houseCost">8w · 6s</span><span class="purpose">worker capacity</span></button>
+        <button class="build" data-kind="obelisk" title="accepts permanent building upgrades"><b>obelisk</b><span class="cost">5w · 12s</span><span class="purpose">upgrades</span></button>
       </section>
-      <section class="build-category">
-        <h3>towers</h3>
-        <button class="build" data-kind="tower"><b>+ basic tower</b><span class="cost">deliver 6 wood + 10 stone · attacks enemies</span></button>
-        <button class="build" data-kind="pulseTower"><b>+ pulse tower</b><span class="cost">deliver 8 wood + 12 stone · automatic area pulse</span></button>
+      <section class="build-category" data-category="defense">
+        <button class="build" data-kind="tower" title="fires at one nearby enemy"><b>basic tower</b><span class="cost">6w · 10s</span><span class="purpose">single-target fire</span></button>
+        <button class="build" data-kind="pulseTower" title="automatically damages enemies in an area"><b>pulse tower</b><span class="cost">8w · 12s</span><span class="purpose">area pulse</span></button>
+        <button class="build" data-kind="beacon" title="movable manually-triggered shock pulse"><b>shock beacon</b><span class="cost">4w · 8s</span><span class="purpose">reusable pulse</span></button>
       </section>
-      <section class="build-category">
-        <h3>free deployables</h3>
-        <button class="build" data-kind="blast"><b>+ blast charge</b><span class="cost">free · click its hover button to detonate</span></button>
-        <button class="build" data-kind="spikes"><b>+ spike trap</b><span class="cost" id="spikeStack">free · 5 stacks remaining</span></button>
-        <button class="build" data-kind="landmine"><b>+ land mine</b><span class="cost" id="landmineStack">free · 3 stacks remaining</span></button>
-        <button class="build" data-kind="tar"><b>+ tar</b><span class="cost" id="tarStack">free · 3 stacks remaining</span></button>
+      <section class="build-category" data-category="deployables">
+        <button class="build" data-kind="blast" title="click its hover control to detonate"><b>blast charge</b><span class="cost">free · unlimited</span><span class="purpose">manual blast</span></button>
+        <button class="build" data-kind="spikes" title="repeatedly damages enemies crossing it"><b>spike trap</b><span class="cost" id="spikeStack">free · 5 left</span><span class="purpose">contact damage</span></button>
+        <button class="build" data-kind="landmine" title="single-use area explosion"><b>land mine</b><span class="cost" id="landmineStack">free · 3 left</span><span class="purpose">area blast</span></button>
+        <button class="build" data-kind="tar" title="slows enemies crossing it"><b>tar</b><span class="cost" id="tarStack">free · 3 left</span><span class="purpose">slows enemies</span></button>
       </section>
     </div>
-
-  </aside>
+    <nav id="buildTabs" aria-label="build categories">
+      <button class="dock-tab" data-category="economy">economy</button>
+      <button class="dock-tab" data-category="defense">defense</button>
+      <button class="dock-tab" data-category="deployables">deployables</button>
+    </nav>
+  </section>
   <main id="stage">
-    <canvas id="canvas" width="768" height="512"></canvas>
+    <canvas id="canvas" width="960" height="540"></canvas>
+    <section id="phaseHud">
+      <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
+      <div id="phaseProgress"><i id="phaseProgressFill"></i></div>
+      <div id="forecastLabel">next attack</div>
+      <div id="forecastSides"></div>
+      <div id="forecastRemaining"></div>
+      <ul id="recipeSummary"></ul>
+    </section>
     <div id="prompt"><kbd>release right</kbd><span></span></div>
     <div id="toast"></div>
     <div id="pauseBadge" class="off">paused · esc to resume</div>
@@ -138,8 +139,8 @@
 // Wooddrop's world is one explicit state object. Input mutates it; update advances it; draw only reads it.
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-ctx.imageSmoothingEnabled = false;
-const VIEW_W=768,VIEW_H=512;                 // Fixed canvas viewport in screen pixels.
+ctx.imageSmoothingEnabled=false;
+const VIEW_W=960,VIEW_H=540;                 // Fixed 16:9 logical frame; CSS scales both axes together.
 const W=1536,H=1024;                          // Larger world explored through camera pan/zoom.
 const BASE = {x:W/2,y:H/2,r:43};
 const BASE_ZONE=240;
@@ -178,7 +179,18 @@ const ENEMY_TYPES={
   healer:{name:"healer",hp:5,speed:38,damage:0,range:180,rate:0,size:1},
   brute:{name:"brute",hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35}
 };
+const MAP_SIDE={NORTH:"north",EAST:"east",SOUTH:"south",WEST:"west"},MAP_SIDES=Object.values(MAP_SIDE);
+const WAVE_FRONT_SECONDARY="secondary";
 const ENEMY_POOL=["raider","raider","archer","healer","brute"],DAY_ENEMY_SPAWN={min:14,max:20},DAY_ENEMY_CAP=5;
+const NIGHT_WAVE_SPAWNS=12,NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
+// Authored order/composition changes tactical shape without deriving stats from night number.
+const NIGHT_WAVE_RECIPES=[
+  {id:"raiderRush",spawns:[["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
+  {id:"archerLine",spawns:[["raider","primary"],["archer","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"]]},
+  {id:"healerEscort",spawns:[["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
+  {id:"brutePush",spawns:[["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"]]},
+  {id:"twoFront",spawns:[["raider","primary"],["raider","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"],["brute","primary"],["brute","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"]]}
+];
 const DAY_DURATION=75,NIGHT_DURATION=45;
 const NIGHT_OVERLAY_ALPHA=.5,LIGHT_FADE_TIME=6;
 const KING={range:95,damage:2,rate:.85};
@@ -192,8 +204,9 @@ const particles = [];
 const state = {
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[], fog:new Uint8Array(FOG_W*FOG_H),
-  baseHp:100,baseMax:100,gameOver:false,paused:false,dayEnemyTimer:DAY_ENEMY_SPAWN.min,coinTimer:6,basePulse:0,baseSpawnTimer:WORKER_SPAWN_TIME,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
+  baseHp:100,baseMax:100,gameOver:false,paused:false,dayEnemyTimer:DAY_ENEMY_SPAWN.min,coinTimer:6,basePulse:0,baseSpawnTimer:WORKER_SPAWN_TIME,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0},
+  nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
   upgradeMenu:{building:null,selected:null,kind:null},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
   king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
@@ -204,6 +217,13 @@ const distance = (a,b,c,d) => Math.hypot(a-c,b-d);
 const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
 const RESOURCE_KINDS=["wood","stone","dust","coin","diamond"];
 const carriedTotal=()=>RESOURCE_KINDS.reduce((total,kind)=>total+state.carried[kind],0);
+function oppositeMapSide(side){return side===MAP_SIDE.NORTH?MAP_SIDE.SOUTH:side===MAP_SIDE.SOUTH?MAP_SIDE.NORTH:side===MAP_SIDE.EAST?MAP_SIDE.WEST:MAP_SIDE.EAST;}
+function chooseUpcomingNight(){
+  const wave=state.nightWave,choices=MAP_SIDES.filter(side=>!wave.lastSides.includes(side));
+  wave.upcomingSide=choices[(Math.random()*choices.length)|0];
+  wave.upcomingRecipe=NIGHT_WAVE_RECIPES[(Math.random()*NIGHT_WAVE_RECIPES.length)|0];
+}
+chooseUpcomingNight();
 
 // Full land map: dense resource patches surround one initial clearing, while fog controls expansion.
 function seedWorld(){
@@ -238,7 +258,7 @@ seedWorld();
 // ── Data flow ──
 // Written by: pointer/keyboard handlers below.
 // Read by: update() for collection/drop delivery and draw() for hover feedback.
-// Format: canvas-space pixels; carried/stored are keyed counts for every RESOURCE_KINDS entry.
+// Format: state.mouse is world-space pixels after fixed-frame scaling and inverse camera transform.
 // Lifetime: page load until refresh.
 function pointerPosition(event){
   const r=canvas.getBoundingClientRect(),camera=state.camera;
@@ -287,7 +307,7 @@ window.addEventListener("pointerup",event=>{if(event.button===2)releaseRightMous
 window.addEventListener("pointercancel",()=>{state.collecting=false;state.camera.panning=false;cancelHeldObject();});
 window.addEventListener("blur",()=>{state.collecting=false;state.camera.panning=false;state.keys.clear();cancelHeldObject();});
 window.addEventListener("keydown",event=>{
-  if(event.code==="Escape"){event.preventDefault();if(!event.repeat)togglePause();return;}
+  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(!cancelBuildMode())togglePause();}return;}
   if(["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowLeft","ArrowDown","ArrowRight"].includes(event.code)){event.preventDefault();state.keys.add(event.code);}
 });
 window.addEventListener("keyup",event=>state.keys.delete(event.code));
@@ -300,13 +320,13 @@ function togglePause(){
 }
 function cancelBuildMode(){
   if(!state.buildMode)return false;
-  state.buildMode=null;syncHud();toast("building placement cancelled");return true;
+  state.buildMode=null;syncBuildHud();toast("building placement cancelled");return true;
 }
-function spawnEnemy(){
-  const side=(Math.random()*4)|0,type=ENEMY_POOL[(Math.random()*ENEMY_POOL.length)|0],def=ENEMY_TYPES[type];
+function spawnEnemy(side=null,enemyType=null){
+  const attackSide=side||MAP_SIDES[(Math.random()*MAP_SIDES.length)|0],type=enemyType||ENEMY_POOL[(Math.random()*ENEMY_POOL.length)|0],def=ENEMY_TYPES[type];
   let x,y;
-  if(side===0){x=8;y=rand(20,H-20);}else if(side===1){x=W-8;y=rand(20,H-20);}
-  else if(side===2){x=rand(20,W-20);y=8;}else{x=rand(20,W-20);y=H-8;}
+  if(attackSide===MAP_SIDE.WEST){x=8;y=rand(20,H-20);}else if(attackSide===MAP_SIDE.EAST){x=W-8;y=rand(20,H-20);}
+  else if(attackSide===MAP_SIDE.NORTH){x=rand(20,W-20);y=8;}else{x=rand(20,W-20);y=H-8;}
   state.enemies.push({type,x,y,hp:def.hp,max:def.hp,attackCooldown:0,healCooldown:rand(.5,2),wob:rand(0,6),flash:0,shotFlash:0,healFlash:0,slow:0});
 }
 function enemyAt(x,y){
@@ -390,7 +410,7 @@ function dropHeldObject(){
     const worker=held.object,result=state.mouse.inside&&assignWorker(worker,state.mouse.x,state.mouse.y);
     if(result){state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):result;toast(result==="revived"?"worker revived at full health":"worker assigned: "+assignment);}
     else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast(worker.downed?"downed worker must be dropped on the base or a house":"invalid ground — worker returned");}
-    state.heldObject=null;sound(result==="revived"?720:260,.06);syncHud();return true;
+    state.heldObject=null;sound(result==="revived"?720:260,.06);return true;
   }
   const building=held.object;
   if(state.mouse.inside&&canPlace(state.mouse.x,state.mouse.y)){building.x=state.mouse.x;building.y=state.mouse.y;toast("shock beacon placed");}
@@ -435,7 +455,7 @@ function leftClick(){
       const type=state.buildMode,def=BUILDING_TYPES[type];
       buildings.push(createBuilding(type,m.x,m.y));
       if(def.stack){state.buildStacks[type]--;state.buildMode=state.buildStacks[type]>0?type:null;}else state.buildMode=null;
-      syncHud();
+      setBuildDockCategory(null);syncBuildHud();
       sound(240,.06);
       toast(def.stack?def.name+" placed — "+state.buildStacks[type]+" stacks remain":def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
     }else toast("needs clear ground away from the base");
@@ -556,13 +576,13 @@ function releaseRightMouse(){
 
 function dropCarriedOnGround(silent=false){
   for(const kind of RESOURCE_KINDS){const amount=state.carried[kind];state.carried[kind]=0;for(let i=0;i<amount;i++)spawnResource(kind,state.mouse.x+rand(-10,10),state.mouse.y+rand(-7,7));}
-  if(!silent){toast("resources dropped");sound(310,.06);}syncHud();
+  if(!silent){toast("resources dropped");sound(310,.06);}
 }
 
 function dropToStockpile(building){
   let total=0;
   for(const kind of RESOURCE_KINDS){const amount=state.carried[kind];building.storage[kind]+=amount;state.carried[kind]=0;total+=amount;handoffParticles(building.x,building.y,kind,amount);}
-  building.pulse=1;toast("stockpiled "+total+" resources");sound(470,.07);syncHud();
+  building.pulse=1;toast("stockpiled "+total+" resources");sound(470,.07);
 }
 function unloadStockpile(building,mouseX){
   const slots=["wood","coin","dust","diamond","stone"],slot=clamp(Math.floor((mouseX-building.x+35)/14),0,4),preferred=slots[slot];
@@ -587,7 +607,6 @@ function dropToUpgrade(building){
     building.upgrades[job.id]=true;building.activeUpgrade=null;
     burst(building.x,building.y-25,"#72d4cc",22);toast(upgrade.name+" complete");sound(820,.2);
   }else toast("upgrade needs "+(upgrade.cost.wood-job.delivered.wood)+" wood + "+(upgrade.cost.stone-job.delivered.stone)+" stone");
-  syncHud();
 }
 
 function upgradeButtonHit(building,x,y){const top=building.type==="obelisk"?building.y-66:building.y-48;return x>=building.x-30&&x<=building.x+30&&y>=top&&y<=building.y+38;}
@@ -621,7 +640,7 @@ document.getElementById("upgradeAccept").addEventListener("click",()=>{
 function dropToBase(){
   let total=0;
   for(const kind of RESOURCE_KINDS){const amount=state.carried[kind];state.stored[kind]+=amount;state.carried[kind]=0;total+=amount;handoffParticles(BASE.x,BASE.y,kind,amount);}
-  state.basePulse=1;toast("stored "+total+" resources at base");sound(520,.08);syncHud();
+  state.basePulse=1;toast("stored "+total+" resources at base");sound(520,.08);
 }
 
 function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
@@ -635,7 +654,7 @@ function completeBuilding(building){
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
   burst(building.x,building.y-12,"#ead28d",18);
   const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker slots ready":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?"basic tower complete — it attacks nearby enemies":building.type==="pulseTower"?"pulse tower complete — automatic area attack ready":"shock beacon complete — hover and click to pulse";
-  toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);syncHud();
+  toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);syncBuildHud();
 }
 function dropToBuilding(building){
   const cost=buildingCost(building);let total=0;
@@ -647,7 +666,6 @@ function dropToBuilding(building){
   building.pulse=1;sound(480,.08);
   if(building.delivered.wood>=cost.wood&&building.delivered.stone>=cost.stone)completeBuilding(building);
   else toast("needs "+(cost.wood-building.delivered.wood)+" wood + "+(cost.stone-building.delivered.stone)+" stone");
-  syncHud();
 }
 
 function handoffParticles(x,y,kind,count,fromX=state.mouse.x,fromY=state.mouse.y){
@@ -666,17 +684,23 @@ function canPlace(x,y){
   return true;
 }
 
+function setBuildDockCategory(category){
+  state.buildDockCategory=category;
+  document.getElementById("buildCards").classList.toggle("open",!!category);
+  document.querySelectorAll(".build-category").forEach(panel=>panel.classList.toggle("open",panel.dataset.category===category));
+  document.querySelectorAll(".dock-tab").forEach(tab=>{const active=tab.dataset.category===category;tab.classList.toggle("on",active);tab.setAttribute("aria-expanded",active);});
+}
+document.querySelectorAll(".dock-tab").forEach(tab=>tab.addEventListener("click",()=>setBuildDockCategory(state.buildDockCategory===tab.dataset.category?null:tab.dataset.category)));
 document.querySelectorAll("button.build").forEach(button=>button.addEventListener("click",()=>{
   if(state.gameOver||state.paused)return;
   const kind=button.dataset.kind;
   if(BUILDING_TYPES[kind].stack&&state.buildStacks[kind]<=0){toast("no "+BUILDING_TYPES[kind].name+" stacks remaining");return;}
   state.buildMode=state.buildMode===kind?null:kind;
-  syncHud();
+  syncBuildHud();
   toast(state.buildMode?"click explored, clear ground to place the blueprint":"build cancelled");
 }));
 function completeHouses(){return buildings.filter(building=>building.complete&&building.type==="house");}
 function nextHouseCost(){const count=completeHouses().length;return {wood:HOUSE_COST.wood+HOUSE_COST_ESCALATION.wood*count,stone:HOUSE_COST.stone+HOUSE_COST_ESCALATION.stone*count};}
-function workerSlots(){return BASE_SLOTS+HOUSE_SLOTS*completeHouses().length;}
 function sourceWorkerCount(source){const held=heldWorker();return state.workers.filter(worker=>worker.spawnSource===source).length+(held?.spawnSource===source?1:0);}
 function createWorker(source){
   const postX=source===BASE?BASE.x:source.x,postY=source===BASE?BASE.y+25:source.y+23;
@@ -684,7 +708,7 @@ function createWorker(source){
 }
 function spawnWorker(source){
   const worker=createWorker(source);state.workers.push(worker);
-  burst(worker.postX,worker.postY,"#ead28d",9);sound(720,.12);syncHud();
+  burst(worker.postX,worker.postY,"#ead28d",9);sound(720,.12);
 }
 function updateWorkerSpawns(dt){
   for(const [source,slots] of [[BASE,BASE_SLOTS],...completeHouses().map(house=>[house,HOUSE_SLOTS])]){
@@ -714,7 +738,7 @@ function downWorker(worker){
   if(worker.downed)return;
   clearWorkerTask(worker);worker.combatTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.downed=true;worker.downedTimer=WORKER_DOWNED_TIME;worker.hp=0;
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,worker.x+rand(-7,7),worker.y+rand(-5,5));}
-  burst(worker.x,worker.y,"#9d493d",9);toast("worker down — carry to base or house, or send a hauler");syncHud();
+  burst(worker.x,worker.y,"#9d493d",9);toast("worker down — carry to base or house, or send a hauler");
 }
 function workerAttack(worker,enemy){
   worker.combatTarget=enemy;if(worker.attackCooldown>0)return;
@@ -724,7 +748,7 @@ function depositWorkerLoad(worker){
   // Hauling moves already-physical drops; harvesting itself can only call hitResource() and never reaches storage.
   const storage=worker.jobTarget;
   for(const kind of RESOURCE_KINDS){const amount=worker.carried[kind];if(!amount)continue;if(storage===BASE)state.stored[kind]+=amount;else storage.storage[kind]+=amount;worker.carried[kind]=0;}
-  if(storage===BASE){state.basePulse=1;syncHud();}else storage.pulse=1;
+  if(storage===BASE)state.basePulse=1;else storage.pulse=1;
   worker.returning=false;burst(worker.postX,worker.postY,"#e5ce91",5);
 }
 function storageServiceRadius(storage){return storage===BASE?BASE_ZONE:BUILDING_TYPES[storage.type].serviceRadius;}
@@ -762,7 +786,7 @@ function updateBuilder(worker,dt){
   if(!source.covered){worker.starved=true;moveWorker(worker,worker.postX,worker.postY,dt);return;}
   if(storage){
     worker.starved=false;if(!moveWorker(worker,storage.x,storage.y,dt,storage===BASE?BASE.r-4:18))return;
-    const stock=storageStock(storage);let room=WORKER_CARRY;for(const kind of ["wood","stone"]){const amount=Math.min(room,stock[kind],buildNeed(building,kind,worker));stock[kind]-=amount;worker.carried[kind]+=amount;room-=amount;}if(storage===BASE)syncHud();else storage.pulse=1;return;
+    const stock=storageStock(storage);let room=WORKER_CARRY;for(const kind of ["wood","stone"]){const amount=Math.min(room,stock[kind],buildNeed(building,kind,worker));stock[kind]-=amount;worker.carried[kind]+=amount;room-=amount;}if(storage!==BASE)storage.pulse=1;return;
   }
   let nearest=null,best=Infinity;
   for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||!["wood","stone"].includes(resource.kind)||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>WORKER_LEASH)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
@@ -842,7 +866,7 @@ function updateHauler(worker,dt){
   }
   if(worker.returning){
     const carriedBody=worker.taskTarget?.downed?worker.taskTarget:null,arrived=moveWorker(worker,worker.postX,worker.postY,dt,13);if(carriedBody){carriedBody.x=worker.x;carriedBody.y=worker.y+8;}
-    if(arrived){depositWorkerLoad(worker);if(carriedBody){reviveWorker(carriedBody,storage,storage===BASE?25:18);clearWorkerTask(worker);burst(carriedBody.x,carriedBody.y,"#73a04c",9);toast("hauler recovered a worker");syncHud();}}return;
+    if(arrived){depositWorkerLoad(worker);if(carriedBody){reviveWorker(carriedBody,storage,storage===BASE?25:18);clearWorkerTask(worker);burst(carriedBody.x,carriedBody.y,"#73a04c",9);toast("hauler recovered a worker");}}return;
   }
   if(worker.taskTarget){
     const target=worker.taskTarget;if(moveWorker(worker,target.x,target.y,dt,10)){if(target.downed){worker.returning=true;target.x=worker.x;target.y=worker.y+8;}else{const at=resourceDrops.indexOf(target);if(at>=0){worker.carried[target.kind]++;resourceDrops.splice(at,1);}delete target.claimedBy;worker.taskTarget=null;if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;}}return;
@@ -887,8 +911,15 @@ function updateWorker(worker,dt){
 // Only this function changes phase identity and owns both phase-boundary side effects.
 function transitionPhase(){
   const clock=state.clock;
-  if(clock.phase==="day"){clock.phase="night";clock.remaining=NIGHT_DURATION;}
-  else{clock.phase="day";clock.remaining=DAY_DURATION;clock.completedNights++;state.dayEnemyTimer=rand(DAY_ENEMY_SPAWN.min,DAY_ENEMY_SPAWN.max);}
+  if(clock.phase==="day"){
+    const wave=state.nightWave;
+    clock.phase="night";clock.remaining=NIGHT_DURATION;
+    wave.activeSide=wave.upcomingSide;wave.activeRecipe=wave.upcomingRecipe;wave.secondarySide=wave.activeRecipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;wave.lastSides=wave.secondarySide?[wave.activeSide,wave.secondarySide]:[wave.activeSide];wave.remainingSpawns=NIGHT_WAVE_SPAWNS;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/NIGHT_WAVE_SPAWNS;wave.nightNumber++;
+    chooseUpcomingNight();
+  }else{
+    clock.phase="day";clock.remaining=DAY_DURATION;clock.completedNights++;state.dayEnemyTimer=rand(DAY_ENEMY_SPAWN.min,DAY_ENEMY_SPAWN.max);
+    state.nightWave.activeSide=null;state.nightWave.secondarySide=null;state.nightWave.activeRecipe=null;state.nightWave.remainingSpawns=0;
+  }
 }
 function updateClock(dt){
   const clock=state.clock;
@@ -905,10 +936,20 @@ function updateDaytimeEnemySpawns(dt){
   state.dayEnemyTimer=rand(DAY_ENEMY_SPAWN.min,DAY_ENEMY_SPAWN.max);
   if(state.enemies.length<DAY_ENEMY_CAP)spawnEnemy();
 }
+function updateNightEnemyWave(dt){
+  if(state.clock.phase!=="night")return;
+  const wave=state.nightWave,interval=NIGHT_WAVE_WINDOW/NIGHT_WAVE_SPAWNS;
+  wave.elapsed+=dt;
+  // Scheduled thresholds, rather than random frame rolls, keep the quota stable across frame rates.
+  while(wave.remainingSpawns>0&&wave.elapsed>=wave.nextSpawnAt&&state.enemies.length<NIGHT_ENEMY_CAP){
+    const spawn=wave.activeRecipe.spawns[NIGHT_WAVE_SPAWNS-wave.remainingSpawns],side=spawn[1]===WAVE_FRONT_SECONDARY?wave.secondarySide:wave.activeSide;
+    spawnEnemy(side,spawn[0]);wave.remainingSpawns--;wave.nextSpawnAt+=interval;
+  }
+}
 
 function update(dt){
   if(state.gameOver||state.paused)return;
-  updateClock(dt);updateDaytimeEnemySpawns(dt);
+  updateClock(dt);updateDaytimeEnemySpawns(dt);updateNightEnemyWave(dt);
   const keys=state.keys,camera=state.camera;
   let panX=(keys.has("KeyD")||keys.has("ArrowRight"))-(keys.has("KeyA")||keys.has("ArrowLeft"));
   let panY=(keys.has("KeyS")||keys.has("ArrowDown"))-(keys.has("KeyW")||keys.has("ArrowUp"));
@@ -930,7 +971,7 @@ function update(dt){
     else if(def.damage&&enemy.attackCooldown<=0){
       enemy.attackCooldown=def.rate;enemy.shotFlash=.14;enemy.shotX=targetX;enemy.shotY=targetY;
       if(victim){victim.retaliationTarget=enemy;victim.hp=Math.max(0,victim.hp-def.damage);if(victim.hp<=0)downWorker(victim);}
-      else{state.baseHp=Math.max(0,state.baseHp-def.damage);state.basePulse=1;syncHud();if(state.baseHp<=0){endGame();break;}}
+      else{state.baseHp=Math.max(0,state.baseHp-def.damage);state.basePulse=1;if(state.baseHp<=0){endGame();break;}}
       toast(def.name+" hit "+(victim?"a worker":"the base"));sound(def.range>60?180:95,.09);
     }
   }
@@ -958,7 +999,7 @@ function update(dt){
       const ease=1-Math.pow(1-clamp(drop.t,0,1),3);
       drop.x+=(state.mouse.x-drop.x)*ease*.35;
       drop.y+=(state.mouse.y-drop.y)*ease*.35;
-      if(drop.t>=1){resourceDrops.splice(i,1);state.carried[drop.kind]++;syncHud();}
+      if(drop.t>=1){resourceDrops.splice(i,1);state.carried[drop.kind]++;}
       continue;
     }
     drop.vy+=170*dt;
@@ -977,35 +1018,39 @@ function update(dt){
   const held=heldBuilding();if(held?.ability){const ability=held.ability;ability.cooldown=Math.max(0,ability.cooldown-dt);ability.flash=Math.max(0,ability.flash-dt);}
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>!worker.downed&&worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
-  for(let i=state.workers.length-1;i>=0;i--)if(state.workers[i].downed&&state.workers[i].downedTimer<=0){const worker=state.workers[i];state.workers.splice(i,1);burst(worker.x,worker.y,"#55443b",8);toast("a downed worker was lost");syncHud();}
-  if(heldWorker()?.downed){const worker=heldWorker();worker.downedTimer-=dt;if(worker.downedTimer<=0){state.heldObject=null;toast("a downed worker was lost");syncHud();}}
+  for(let i=state.workers.length-1;i>=0;i--)if(state.workers[i].downed&&state.workers[i].downedTimer<=0){const worker=state.workers[i];state.workers.splice(i,1);burst(worker.x,worker.y,"#55443b",8);toast("a downed worker was lost");}
+  if(heldWorker()?.downed){const worker=heldWorker();worker.downedTimer-=dt;if(worker.downedTimer<=0){state.heldObject=null;toast("a downed worker was lost");}}
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
-  updatePrompt();
+  updatePrompt();syncPhaseHud();
 }
 
-function syncHud(){
-  const total=carriedTotal();
-  document.getElementById("baseHealth").textContent=state.baseHp+" / "+state.baseMax;
-  document.getElementById("storedWood").textContent=state.stored.wood;
-  document.getElementById("storedStone").textContent=state.stored.stone;
-  document.getElementById("storedDust").textContent=state.stored.dust;
-  document.getElementById("storedCoin").textContent=state.stored.coin;
-  document.getElementById("storedDiamond").textContent=state.stored.diamond;
-  document.getElementById("carriedWood").textContent=state.carried.wood;
-  document.getElementById("carriedStone").textContent=state.carried.stone;
-  document.getElementById("carriedDust").textContent=state.carried.dust;
-  document.getElementById("carriedCoin").textContent=state.carried.coin;
-  document.getElementById("carriedDiamond").textContent=state.carried.diamond;
-  document.getElementById("carriedTotal").textContent=total+" / "+state.capacity;
-  document.getElementById("carryfill").style.width=(100*total/state.capacity)+"%";
+function syncPhaseHud(){
+  const clock=state.clock,wave=state.nightWave,isDay=clock.phase==="day",duration=isDay?DAY_DURATION:NIGHT_DURATION;
+  const recipeState=isDay?wave.upcomingRecipe:wave.activeRecipe,recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===recipeState?.id),side=isDay?wave.upcomingSide:wave.activeSide;
+  const secondary=recipe?.id==="twoFront"?(isDay?oppositeMapSide(side):wave.secondarySide):null,panel=document.getElementById("phaseHud");
+  const setText=(id,text)=>{const element=document.getElementById(id);if(element.textContent!==text)element.textContent=text;};
+  const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber;
+  setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"));
+  panel.classList.toggle("night",!isDay);
+  document.getElementById("phaseProgressFill").style.width=(100*clamp((duration-clock.remaining)/duration,0,1)).toFixed(2)+"%";
+  setText("forecastLabel",isDay?"next attack":"current wave");setText("forecastRemaining",isDay?"":wave.remainingSpawns+" scheduled spawns remaining");
+  const signature=[clock.phase,recipe?.id,side,secondary].join("|");
+  if(panel.dataset.forecast!==signature){
+    panel.dataset.forecast=signature;
+    const arrows={north:"↑",east:"→",south:"↓",west:"←"};
+    setText("forecastSides",side?(arrows[side]+" "+side+(secondary?" · "+arrows[secondary]+" "+secondary:"")):"no attack scheduled");
+    const summary=document.getElementById("recipeSummary");summary.replaceChildren();
+    if(recipe){const counts={};for(const spawn of recipe.spawns)counts[spawn[0]]=(counts[spawn[0]]||0)+1;for(const [type,count] of Object.entries(counts)){const item=document.createElement("li");item.textContent=count+"× "+type;summary.appendChild(item);}}
+  }
+}
+
+function syncBuildHud(){
   document.querySelectorAll("button.build").forEach(button=>button.classList.toggle("on",button.dataset.kind===state.buildMode));
   for(const [kind,label] of [["spikes","spikeStack"],["landmine","landmineStack"],["tar","tarStack"]]){
-    document.getElementById(label).textContent="free · "+state.buildStacks[kind]+" stacks remaining";
-    document.querySelector('button.build[data-kind="'+kind+'"]').classList.toggle("no",state.buildStacks[kind]<=0);
+    const unavailable=state.buildStacks[kind]<=0,button=document.querySelector('button.build[data-kind="'+kind+'"]');
+    document.getElementById(label).textContent="free · "+state.buildStacks[kind]+" left";button.disabled=unavailable;
   }
-  const held=heldWorker(),totalWorkers=state.workers.length+(held?1:0),guards=state.workers.filter(worker=>!worker.downed&&worker.job==="guard").length,downed=state.workers.filter(worker=>worker.downed).length+(held?.downed?1:0);
-  document.getElementById("workerCount").textContent="workers "+totalWorkers+" / "+workerSlots()+" · idle/guard "+guards+" · downed "+downed;
-  const houseCost=nextHouseCost();document.getElementById("houseCost").textContent="deliver "+houseCost.wood+" wood + "+houseCost.stone+" stone · adds "+HOUSE_SLOTS+" worker slots";
+  const houseCost=nextHouseCost();document.getElementById("houseCost").textContent=houseCost.wood+"w · "+houseCost.stone+"s";
   canvas.classList.toggle("building",state.buildMode);
 }
 function updatePrompt(){
@@ -1247,19 +1292,18 @@ function drawFog(){
     const n=(x*11+y*17)%19;rect(x*FOG_TS+5+n,y*FOG_TS+7+(n*3)%18,3,3,"#37344a");
   }
 }
-function drawClockHud(){
-  const clock=state.clock,label=clock.phase+" · "+Math.ceil(clock.remaining)+"s";
-  ctx.font="bold 11px monospace";ctx.textAlign="right";
-  const width=ctx.measureText(label).width+14;rect(VIEW_W-width-8,8,width,22,"#292119cc");
-  ctx.fillStyle=clock.phase==="night"?"#a9c8ee":"#f1dfb7";ctx.fillText(label,VIEW_W-15,23);
+function drawWarningEdge(side,alpha){
+  const thickness=18;ctx.fillStyle="rgba(202,72,48,"+alpha+")";
+  if(side===MAP_SIDE.NORTH)ctx.fillRect(0,0,VIEW_W,thickness);
+  else if(side===MAP_SIDE.SOUTH)ctx.fillRect(0,VIEW_H-thickness,VIEW_W,thickness);
+  else if(side===MAP_SIDE.WEST)ctx.fillRect(0,0,thickness,VIEW_H);
+  else ctx.fillRect(VIEW_W-thickness,0,thickness,VIEW_H);
 }
-function drawCarryHud(){
-  const total=carriedTotal(),x=VIEW_W-31,y=VIEW_H-31;
-  ctx.textAlign="center";ctx.font="bold 11px monospace";ctx.fillStyle="#292119aa";ctx.fillText(total+"/"+state.capacity,x+1,y-13+1);
-  ctx.fillStyle="#f4f0da";ctx.fillText(total+"/"+state.capacity,x,y-13);
-  // Small pixel hand: screen-space HUD, intentionally unaffected by camera zoom.
-  rect(x-8,y-4,5,4,"#29211999");rect(x-4,y,11,7,"#29211999");rect(x+4,y-5,4,9,"#29211999");
-  rect(x-9,y-5,5,4,"#f4f0da");rect(x-5,y-1,11,7,"#f4f0da");rect(x+3,y-6,4,9,"#f4f0da");rect(x-2,y-6,3,7,"#f4f0da");
+function drawNightTelegraph(){
+  const clock=state.clock,wave=state.nightWave,side=wave.upcomingSide,recipe=wave.upcomingRecipe;
+  if(clock.phase!=="day"||clock.remaining>NIGHT_TELEGRAPH_TIME||!side||!recipe)return;
+  const alpha=.42+Math.sin(clock.remaining*5)*.14,secondary=recipe.id==="twoFront"?oppositeMapSide(side):null;
+  drawWarningEdge(side,alpha);if(secondary)drawWarningEdge(secondary,alpha);
 }
 function drawHands(){
   const kinds=[];for(const kind of RESOURCE_KINDS)for(let i=0;i<state.carried[kind];i++)kinds.push(kind);
@@ -1304,12 +1348,12 @@ function draw(){
   ctx.restore();
   // Lighting is screen-space and precedes interaction/HUD layers so feedback stays readable at night.
   if(state.clock.light>0){ctx.fillStyle="rgba(12,28,67,"+state.clock.light+")";ctx.fillRect(0,0,VIEW_W,VIEW_H);}
+  drawNightTelegraph();
   ctx.save();ctx.translate(VIEW_W/2,VIEW_H/2);ctx.scale(camera.zoom,camera.zoom);ctx.translate(-camera.x,-camera.y);
   drawInteractionPreviews();drawHands();ctx.restore();
-  drawClockHud();drawCarryHud();
 }
 
-syncHud();
+syncBuildHud();syncPhaseHud();setBuildDockCategory(null);
 let previous=performance.now();
 function frame(now){const dt=Math.min(.033,(now-previous)/1000);previous=now;update(dt);draw();requestAnimationFrame(frame);}
 requestAnimationFrame(frame);
