@@ -149,6 +149,26 @@ Manually clicking fog becomes annoying. There is currently no reason not to clic
 - Change the pace or introduce a new mechanic approximately every 6–9 minutes.
 - Reassess the interval using player-session data.
 
+## Destructible Environment and Path Clearing
+
+**Tags:** `Core Gameplay`, `Immersion`
+
+Destruction should lead somewhere rather than exist only for decoration.
+
+- Place rubble, fallen trees, brambles, ruined walls, or boulders that block movement, enemy routes, service coverage, or building placement.
+- Let the player remove obstacles by repeatedly clicking to crack and break them. Clearing terrain competes directly for cursor attention.
+- Every obstacle should produce a meaningful result: open a shortcut, expose a resource patch, reveal a build site, connect service zones, or uncover a small reward.
+- Breaking barriers can be a tradeoff: opening a useful route for workers may also create a shorter enemy approach.
+- Let obstacle material determine its drops: fallen trees yield wood, boulders yield stone, ruins may hide coins or dust.
+- Telegraph what lies beyond enough to create a decision, without revealing the exact reward.
+- Possible later automation: workers clear marked obstacles slowly, while manual clicking remains faster.
+
+Related ideas:
+
+- Enemies may break weak barriers and gradually create new attack routes.
+- Movable barricades could let the player close one path while opening another.
+- A night wave could arrive through a previously safe route after destroying its blockage.
+
 ## Small Interactive World Props
 
 **Tags:** `Game Feel / Juice`, `Immersion`

@@ -16,7 +16,7 @@
   body{display:grid;place-items:center;background:#0b0d13;color:var(--ink);font:12px/1.35 var(--mono);text-transform:lowercase}
   #game{position:relative;width:min(100vw,calc(100vh * 16 / 9));aspect-ratio:16 / 9;container:game-frame / inline-size}
   #stage{position:absolute;inset:0}
-  /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, toast 8, game-over 10. */
+  /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, debug 7, toast 8, game-over 10. */
   #phaseHud{position:absolute;z-index:3;right:10px;top:10px;width:245px;padding:8px 9px;background:#292119ed;color:var(--paper);border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
   #phaseHud.night{background:#17213aed;border-color:#c65b4d;color:#dce9ff}
   #phaseHeader{display:flex;justify-content:space-between;font-size:13px}
@@ -32,7 +32,7 @@
   #buildCards.open{display:block}
   .build-category{display:none;gap:5px;overflow-x:auto;padding-bottom:2px}
   .build-category.open{display:flex}
-  #buildTabs{display:grid;grid-template-columns:repeat(3,1fr);width:min(420px,100%);margin:auto;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
+  #buildTabs{display:grid;grid-template-columns:repeat(4,1fr);width:min(520px,100%);margin:auto;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
   button{width:100%;font:inherit;text-transform:lowercase;text-align:left;color:var(--ink);cursor:pointer;background:#e6d09f;border:2px solid #b99f6c;padding:7px;margin:2px 0}
   button:hover{border-color:var(--ink);background:#f7e8c5}
   button.on,.dock-tab.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
@@ -47,24 +47,36 @@
   kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
   canvas{width:100%;height:100%;display:block;background:#617738;image-rendering:pixelated;cursor:default}
   canvas.building{cursor:crosshair}
-  #toast{position:absolute;z-index:8;left:50%;bottom:10px;transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s;pointer-events:none;white-space:nowrap}
-  #toast.on{opacity:1}
+  #toast{position:absolute;z-index:8;left:50%;bottom:calc(var(--build-dock-clearance,42px) + 16px);transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s,bottom .15s;pointer-events:none;white-space:nowrap}
+  #toast.on{opacity:1}#game.modal-open #toast{opacity:0}
   #prompt{position:absolute;z-index:5;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
   #prompt.on{opacity:1}
   #prompt kbd{margin-right:5px}
-  #upgradePanel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;width:300px;padding:9px;background:#242919;color:var(--paper);border:2px solid #d8c58f;box-shadow:5px 5px 0 #17120daa}
-  #upgradePanel.off{display:none}
-  #upgradePanel h3{text-align:center;font-size:14px;border-bottom:1px solid #8f9760;padding-bottom:5px;margin-bottom:7px}
+  #upgradePanel,#debugPanel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,calc(100% - 20px));max-height:calc(100% - 20px);overflow:auto;padding:9px;background:#242919;color:var(--paper);border:2px solid #d8c58f;box-shadow:5px 5px 0 #17120daa}
+  #upgradePanel{z-index:6}#debugPanel{z-index:7;border-color:#d77a62}
+  #upgradePanel.off,#debugPanel.off{display:none}
+  #upgradePanel h3,#debugPanel h3{text-align:center;font-size:14px;border-bottom:1px solid #8f9760;padding-bottom:5px;margin-bottom:7px}
+  #debugPanel h3::before{content:"debug · ";color:#ed8a70}
   #upgradeOptions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
   #upgradeOptions button{height:58px;text-align:center;padding:4px;background:#354027;color:var(--paper);border-color:#69754b;font-size:9px}
   #upgradeOptions button.on{border-color:#78d7d4;background:#425339}
   #upgradeOptions button.owned{opacity:.4}
   #upgradeOptions b{display:block;font-size:17px;line-height:1.1}
+  #upgradeOptions .variant-card{height:58px;text-align:center;padding:4px}
+  #upgradeOptions .variant-card b{font-size:17px}
+  #upgradeDetail .detail-meta{color:#9ed8d3;font-size:9px;margin-bottom:3px}
   #upgradeDetail{min-height:64px;margin-top:7px;padding:6px;border-top:1px solid #8f9760;border-bottom:1px solid #8f9760}
   #upgradeDetail b{display:block;margin-bottom:3px}
   #upgradeActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}
   #upgradeActions button{text-align:center;margin:0}
   #upgradeAccept{background:#557a35;color:#fff}#upgradeDecline{background:#8e2924;color:#fff}
+  #debugButton{margin:0;padding:6px;text-align:center;background:#4d2f2b;color:#f1dfb7;border-color:#a75a4d}#debugButton.on{background:#8e3e34}
+  #debugOptions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+  #debugOptions button{height:68px;text-align:center;padding:4px;background:#354027;color:var(--paper);border-color:#69754b;font-size:9px}
+  #debugOptions b{display:block;font-size:17px;line-height:1.1}#debugOptions span{display:block;margin-top:2px}
+  #debugOptions button.legitimate{border-color:#d4b95f}#debugOptions button.forced-on{border-color:#78d7d4;background:#425339}#debugOptions button.forced-off{border-color:#d56b5b;background:#51312c}#debugOptions button.unowned{opacity:.72}
+  #debugDetail{min-height:42px;margin-top:7px;padding:6px;border-top:1px solid #8f9760;border-bottom:1px solid #8f9760}
+  #debugActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}#debugActions button{text-align:center;margin:0}#debugClear{background:#725b32;color:#fff}#debugClose{background:#8e2924;color:#fff}
   #gameOver{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:#17120dcc}
   #gameOver.off{display:none}
   #gameOver .endcard{width:280px;padding:18px;text-align:center;background:var(--paper);border:2px solid var(--ink);box-shadow:5px 5px 0 #0008}
@@ -79,7 +91,8 @@
     #forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
     #buildDock{bottom:6px;width:calc(100% - 12px)}#buildCards{padding:3px;margin-bottom:3px}
     .build-category{gap:3px}.build-category .build{flex-basis:126px;min-height:58px;padding:5px;font-size:10px}
-    .cost,.purpose{font-size:9px}#buildTabs{width:min(360px,100%);padding:2px}.dock-tab{padding:4px;font-size:10px}
+    .cost,.purpose{font-size:9px}#buildTabs{width:min(440px,100%);padding:2px}.dock-tab{padding:4px;font-size:10px}
+    #debugOptions{grid-template-columns:repeat(2,1fr)}#upgradePanel,#debugPanel{max-height:calc(100% - 12px)}
   }
 </style>
 </head>
@@ -95,9 +108,7 @@
         <button class="build" data-kind="obelisk" title="accepts permanent building upgrades"><b>obelisk</b><span class="cost">5w · 12s</span><span class="purpose">upgrades</span></button>
       </section>
       <section class="build-category" data-category="defense">
-        <button class="build" data-kind="tower" title="fires at one nearby enemy"><b>basic tower</b><span class="cost">6w · 10s</span><span class="purpose">single-target fire</span></button>
-        <button class="build" data-kind="pulseTower" title="automatically damages enemies in an area"><b>pulse tower</b><span class="cost">8w · 12s</span><span class="purpose">area pulse</span></button>
-        <button class="build" data-kind="beacon" title="movable manually-triggered shock pulse"><b>shock beacon</b><span class="cost">4w · 8s</span><span class="purpose">reusable pulse</span></button>
+        <button class="build" data-kind="tower" title="fires nearby and accepts one permanent variant"><b>basic tower</b><span class="cost">6w · 10s</span><span class="purpose">upgradeable chassis</span></button>
       </section>
       <section class="build-category" data-category="deployables">
         <button class="build" data-kind="blast" title="click its hover control to detonate"><b>blast charge</b><span class="cost">free · unlimited</span><span class="purpose">manual blast</span></button>
@@ -110,6 +121,7 @@
       <button class="dock-tab" data-category="economy">economy</button>
       <button class="dock-tab" data-category="defense">defense</button>
       <button class="dock-tab" data-category="deployables">deployables</button>
+      <button id="debugButton" type="button" hidden>debug</button>
     </nav>
   </section>
   <main id="stage">
@@ -131,6 +143,12 @@
       <div id="upgradeDetail">select an upgrade</div>
       <div id="upgradeActions"><button id="upgradeAccept">accept</button><button id="upgradeDecline">decline</button></div>
     </section>
+    <section id="debugPanel" class="off" aria-label="debug global upgrades" hidden>
+      <h3>global upgrades</h3>
+      <div id="debugOptions"></div>
+      <div id="debugDetail">click an upgrade to force its effective state.</div>
+      <div id="debugActions"><button id="debugClear">clear overrides</button><button id="debugClose">close</button></div>
+    </section>
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
   </main>
 </div>
@@ -146,19 +164,18 @@ const BASE = {x:W/2,y:H/2,r:43};
 const BASE_ZONE=240;
 const BASE_SLOTS=3,HOUSE_SLOTS=2,HOUSE_COST={wood:8,stone:6},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
 const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3,WORKER_DOWNED_TIME=20;
+const DEBUG_UI_ENABLED=true,AUTO_CLICK_CPS=1.5;
 const BUILDING_TYPES = {
   lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155},
   quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155},
   stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},serviceRadius:175},
   house:{name:"house",resource:null,cost:HOUSE_COST},
   obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12}},
-  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},effectRadius:180},
-  pulseTower:{name:"pulse tower",resource:null,cost:{wood:8,stone:12},effectRadius:145,cooldown:5},
+  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10}},
   blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},effectRadius:135,instant:true},
-  beacon:{name:"shock beacon",resource:null,cost:{wood:4,stone:8},effectRadius:150,cooldown:8},
   spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},instant:true,stack:true},
   landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},effectRadius:65,instant:true,stack:true},
-  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},effectRadius:22,instant:true,stack:true}
+  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},effectRadius:22,slowDuration:2,slowMultiplier:.5,instant:true,stack:true}
 };
 const UPGRADES=[
   {id:"hardness",icon:"⛏",name:"click hardness",cost:{wood:5,stone:5},description:"placeholder: mine tougher resources with each click."},
@@ -166,13 +183,27 @@ const UPGRADES=[
   {id:"hands",icon:"☝",name:"hand size",cost:{wood:6,stone:6},description:"placeholder: increase your carrying capacity."},
   {id:"magnet",icon:"⌁",name:"auto collect",cost:{wood:10,stone:8},description:"placeholder: pull nearby loose resources toward you."},
   {id:"storage",icon:"▣",name:"building storage",cost:{wood:12,stone:5},description:"placeholder: increase stockpile storage and organization."},
-  {id:"fuel",icon:"▰",name:"worker fuel",cost:{wood:7,stone:10},description:"placeholder: let gathering workers operate faster."}
+  {id:"fuel",icon:"▰",name:"worker fuel",cost:{wood:7,stone:10},description:"placeholder: let gathering workers operate faster."},
+  {id:"autoClick",icon:"↻",name:"steady hand",cost:{wood:9,stone:7},description:"hold primary click to repeatedly gather or attack beneath the cursor."}
 ];
-const TOWER_UPGRADES=[
-  {id:"towerRange",icon:"◎",name:"long sight",cost:{wood:5,stone:8},description:"increase this tower's attack radius."},
-  {id:"towerDamage",icon:"✦",name:"heavy shot",cost:{wood:8,stone:10},description:"increase this tower's damage from 1 to 2."},
-  {id:"towerSpeed",icon:"»",name:"quick loader",cost:{wood:10,stone:7},description:"make this tower fire twice as quickly."}
-];
+// Tower chassis state selects one definition here; update, input, range UI, and cooldown UI read no duplicated stats.
+const TOWER_VARIANTS={
+  basic:{icon:"⌂",name:"basic tower",family:"Starter",description:"steady single-target defense; chassis for one permanent variant.",cost:{},attackMode:"single",range:180,damage:1,cooldown:1.3,maxHp:10,manual:false,movable:false,accent:"#d7c36d",sound:260},
+  turret:{icon:"⌖",name:"turret",family:"Starter",description:"cheapest choice; compact gun with a modest single-target improvement.",cost:{wood:2,stone:2},attackMode:"single",range:165,damage:2,cooldown:1.2,maxHp:12,manual:false,movable:false,accent:"#d8b06a",sound:290},
+  outpost:{icon:"▣",name:"outpost",family:"Starter",description:"durable early generalist with balanced range, damage, and cadence.",cost:{wood:5,stone:7},attackMode:"single",range:220,damage:3,cooldown:1.25,maxHp:45,manual:false,movable:false,accent:"#c9b88d",sound:250},
+  watch:{icon:"»",name:"watch tower",family:"Ballistics",description:"low-damage twin guns fire rapidly into nearby light enemies.",cost:{wood:6,stone:8},attackMode:"single",range:195,damage:1,cooldown:.35,maxHp:18,manual:false,movable:false,accent:"#e3c260",sound:390},
+  sniper:{icon:"◎",name:"sniper tower",family:"Ballistics",description:"extreme-range burst deletes light enemies but reloads slowly.",cost:{wood:8,stone:10,diamond:1},attackMode:"single",range:430,damage:8,cooldown:3.2,maxHp:12,manual:false,movable:false,accent:"#d9e3c2",sound:620},
+  brick:{icon:"▦",name:"brick tower",family:"Ballistics",description:"armored rapid-fire tower built to sustain pressure.",cost:{wood:5,stone:14,dust:2},attackMode:"single",range:210,damage:1,cooldown:.4,maxHp:80,manual:false,movable:false,accent:"#b9654f",sound:350},
+  aggro:{icon:"!",name:"aggro tower",family:"Ballistics",description:"extreme health and long-range taunt traded for negligible damage.",cost:{stone:16,dust:2},attackMode:"single",range:180,damage:1,cooldown:3,maxHp:160,tauntRadius:320,manual:false,movable:false,accent:"#d04f43",sound:150},
+  fire:{icon:"♨",name:"fire tower",family:"Elemental",description:"direct hits ignite targets for timed damage after impact.",cost:{wood:5,stone:8,dust:2},attackMode:"burn",range:190,damage:1,cooldown:1.4,burnDamage:1,burnDuration:3,burnInterval:.75,maxHp:18,manual:false,movable:false,accent:"#ef7b3f",impactColor:"#ef6a32",sound:180},
+  freeze:{icon:"❄",name:"freeze tower",family:"Elemental",description:"rapid hits apply a short movement slow.",cost:{wood:7,stone:9,dust:2},attackMode:"slow",range:215,damage:1,cooldown:.55,slowDuration:1.5,slowMultiplier:.65,maxHp:24,manual:false,movable:false,accent:"#8fd9ee",impactColor:"#8fd9ee",sound:560},
+  tarTower:{icon:"≋",name:"tar tower",family:"Elemental",description:"low damage applies a stronger, longer ranged slow.",cost:{wood:4,stone:9,dust:3},attackMode:"slow",range:230,damage:1,cooldown:1.8,slowDuration:3.5,slowMultiplier:.4,maxHp:24,manual:false,movable:false,accent:"#6d5843",impactColor:"#5b4637",sound:110},
+  teleport:{icon:"↶",name:"teleport tower",family:"Control",description:"damages one enemy and pushes it toward its recorded spawn edge.",cost:{stone:10,dust:3,diamond:1},attackMode:"push",range:225,damage:2,cooldown:2.2,pushDistance:110,maxHp:20,manual:false,movable:false,accent:"#7396e8",impactColor:"#7396e8",sound:680},
+  bomb:{icon:"●",name:"bomb tower",family:"Special",description:"slow shells damage groups clustered around the selected target.",cost:{wood:8,stone:10,dust:2},attackMode:"splash",range:210,damage:3,cooldown:2.6,splashRadius:55,maxHp:16,manual:false,movable:false,accent:"#e39a3f",impactColor:"#e38a38",sound:80},
+  laser:{icon:"╱",name:"laser tower",family:"Special",description:"a focused beam pierces every enemy intersecting its line.",cost:{stone:10,dust:3,diamond:2},attackMode:"line",range:320,damage:2,cooldown:1.7,beamWidth:18,maxHp:16,manual:false,movable:false,accent:"#78e3df",impactColor:"#78e3df",sound:720},
+  pulse:{icon:"◉",name:"pulse tower",family:"Special",description:"automatically strikes every enemy in its pulse radius.",cost:{wood:4,stone:6,dust:2},attackMode:"periodic area",effectRadius:145,damage:2,cooldown:5,maxHp:20,manual:false,movable:false,accent:"#b18be5",sound:125},
+  shock:{icon:"↯",name:"shock tower",family:"Special",description:"movable tower with a manually triggered reusable shock pulse.",cost:{wood:2,stone:4,coin:1,diamond:1},attackMode:"manual area",effectRadius:150,damage:2,cooldown:8,maxHp:15,manual:true,movable:true,accent:"#70d8d1",sound:105}
+};
 const ENEMY_TYPES={
   raider:{name:"raider",hp:5,speed:52,damage:2,range:40,rate:1,size:1},
   archer:{name:"archer",hp:4,speed:42,damage:1,range:155,rate:1.8,size:1},
@@ -208,7 +239,7 @@ const state = {
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0},
   nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
-  upgradeMenu:{building:null,selected:null,kind:null},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
+  upgradeMenu:{building:null,selected:null,kind:null},debug:{upgradeOverrides:{},selected:null},primaryClick:{held:false,repeat:0,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
   king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
 };
 
@@ -217,6 +248,16 @@ const distance = (a,b,c,d) => Math.hypot(a-c,b-d);
 const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
 const RESOURCE_KINDS=["wood","stone","dust","coin","diamond"];
 const carriedTotal=()=>RESOURCE_KINDS.reduce((total,kind)=>total+state.carried[kind],0);
+// ── Global upgrade ownership flow ──
+// Legitimate writes: completed obelisks set building.upgrades[id] in dropToUpgrade().
+// Debug writes:      helpers below mutate only state.debug.upgradeOverrides; missing means no override.
+// Gameplay reads:    globalUpgradeEnabled() resolves explicit true/false first, then legitimate ownership.
+function legitimateGlobalUpgradeOwned(id){return buildings.some(building=>building.complete&&building.type==="obelisk"&&building.upgrades[id]);}
+function globalUpgradeHasOverride(id){return Object.hasOwn(state.debug.upgradeOverrides,id);}
+function globalUpgradeEnabled(id){return globalUpgradeHasOverride(id)?state.debug.upgradeOverrides[id]:legitimateGlobalUpgradeOwned(id);}
+function setGlobalUpgradeDebugOverride(id,enabled){if(!UPGRADES.some(upgrade=>upgrade.id===id))return;state.debug.upgradeOverrides[id]=!!enabled;if(id==="autoClick"&&!globalUpgradeEnabled(id))stopPrimaryClick();if(debugPanelOpen())renderDebugPanel();}
+function clearGlobalUpgradeDebugOverride(id){delete state.debug.upgradeOverrides[id];if(id==="autoClick"&&!globalUpgradeEnabled(id))stopPrimaryClick();if(debugPanelOpen())renderDebugPanel();}
+function clearGlobalUpgradeDebugOverrides(){state.debug.upgradeOverrides={};if(!globalUpgradeEnabled("autoClick"))stopPrimaryClick();if(debugPanelOpen())renderDebugPanel();}
 function oppositeMapSide(side){return side===MAP_SIDE.NORTH?MAP_SIDE.SOUTH:side===MAP_SIDE.SOUTH?MAP_SIDE.NORTH:side===MAP_SIDE.EAST?MAP_SIDE.WEST:MAP_SIDE.EAST;}
 function chooseUpcomingNight(){
   const wave=state.nightWave,choices=MAP_SIDES.filter(side=>!wave.lastSides.includes(side));
@@ -292,30 +333,36 @@ canvas.addEventListener("pointermove",event=>{
   }
   pointerPosition(event);
 });
-canvas.addEventListener("pointerleave",()=>state.mouse.inside=false);
+canvas.addEventListener("pointerleave",()=>{state.mouse.inside=false;state.primaryClick.repeat=0;});
 canvas.addEventListener("contextmenu",event=>event.preventDefault());
 canvas.addEventListener("auxclick",event=>event.preventDefault());
 canvas.addEventListener("pointerdown",event=>{
   pointerPosition(event);
   if(event.button===1){event.preventDefault();state.camera.panning=true;state.camera.lastX=event.clientX;state.camera.lastY=event.clientY;canvas.setPointerCapture(event.pointerId);return;}
-  if(state.gameOver||state.paused)return;
-  if(event.button===0)leftClick();
+  if(state.gameOver||state.paused||modalOpen())return;
+  if(event.button===0){leftClick();if(globalUpgradeEnabled("autoClick")&&!modalOpen())startPrimaryClick();}
   if(event.button===2){if(cancelBuildMode())return;if(pickUpMovableAt(state.mouse.x,state.mouse.y))return;state.collecting=true;collectDrop();state.collectCooldown=.08;}
 });
 // Window-level release prevents collection or camera drag getting stuck outside the canvas.
-window.addEventListener("pointerup",event=>{if(event.button===2)releaseRightMouse();if(event.button===1)state.camera.panning=false;});
-window.addEventListener("pointercancel",()=>{state.collecting=false;state.camera.panning=false;cancelHeldObject();});
-window.addEventListener("blur",()=>{state.collecting=false;state.camera.panning=false;state.keys.clear();cancelHeldObject();});
+window.addEventListener("pointerup",event=>{if(event.button===0)stopPrimaryClick();if(event.button===2)releaseRightMouse();if(event.button===1)state.camera.panning=false;});
+window.addEventListener("pointercancel",()=>{stopPrimaryClick();state.collecting=false;state.camera.panning=false;cancelHeldObject();});
+window.addEventListener("blur",()=>{stopPrimaryClick();state.collecting=false;state.camera.panning=false;state.keys.clear();cancelHeldObject();});
 window.addEventListener("keydown",event=>{
-  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(!cancelBuildMode())togglePause();}return;}
+  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeDebugPanel())return;if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
   if(["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowLeft","ArrowDown","ArrowRight"].includes(event.code)){event.preventDefault();state.keys.add(event.code);}
 });
 window.addEventListener("keyup",event=>state.keys.delete(event.code));
 
+function startPrimaryClick(){const primary=state.primaryClick;primary.held=true;primary.repeat=0;primary.audioCooldown=.25;}
+function stopPrimaryClick(){const primary=state.primaryClick;primary.held=false;primary.repeat=0;primary.audioCooldown=0;}
+function stopGameplayInput(cancelPlacement=false){
+  stopPrimaryClick();state.collecting=false;state.camera.panning=false;state.keys.clear();
+  if(cancelPlacement){state.buildMode=null;setBuildDockCategory(null);syncBuildHud();}
+}
 function togglePause(){
   if(state.gameOver)return;
-  state.paused=!state.paused;state.collecting=false;state.camera.panning=false;state.keys.clear();
-  if(state.paused)closeUpgradeMenu();
+  state.paused=!state.paused;stopGameplayInput();
+  if(state.paused){closeDebugPanel();closeUpgradeMenu();}
   document.getElementById("pauseBadge").classList.toggle("off",!state.paused);sound(state.paused?180:360,.06);
 }
 function cancelBuildMode(){
@@ -327,7 +374,7 @@ function spawnEnemy(side=null,enemyType=null){
   let x,y;
   if(attackSide===MAP_SIDE.WEST){x=8;y=rand(20,H-20);}else if(attackSide===MAP_SIDE.EAST){x=W-8;y=rand(20,H-20);}
   else if(attackSide===MAP_SIDE.NORTH){x=rand(20,W-20);y=8;}else{x=rand(20,W-20);y=H-8;}
-  state.enemies.push({type,x,y,hp:def.hp,max:def.hp,attackCooldown:0,healCooldown:rand(.5,2),wob:rand(0,6),flash:0,shotFlash:0,healFlash:0,slow:0});
+  state.enemies.push({type,spawnSide:attackSide,x,y,hp:def.hp,max:def.hp,attackCooldown:0,healCooldown:rand(.5,2),wob:rand(0,6),flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null});
 }
 function enemyAt(x,y){
   let target=null,best=Infinity;
@@ -340,18 +387,20 @@ function enemyAt(x,y){
 }
 function killEnemy(enemy,announce=true){
   const at=state.enemies.indexOf(enemy);if(at<0)return;
-  state.enemies.splice(at,1);
+  // Death owns status teardown so every damage path releases tower/source references immediately.
+  enemy.status={burn:null,slow:null};enemy.retaliationTower=null;state.enemies.splice(at,1);
   const droppedDust=Math.random()<.25;
   if(droppedDust)spawnResource("dust",enemy.x+rand(-7,7),enemy.y);
   burst(enemy.x,enemy.y,"#4b3b50",12);if(announce||droppedDust)toast(droppedDust?"enemy defeated — dust dropped":"enemy defeated");sound(150,.12);
 }
-function hitEnemy(enemy){
+function hitEnemy(enemy,quiet=false){
   enemy.hp--;enemy.flash=.16;
-  burst(enemy.x,enemy.y,"#d25b49",5);sound(610,.045);
+  burst(enemy.x,enemy.y,"#d25b49",5);if(!quiet)sound(610,.045);
   if(enemy.hp<=0)killEnemy(enemy);
 }
 function blastButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-34&&y<=building.y+34;}
-function beaconButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-42&&y<=building.y+34;}
+function manualTowerButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-42&&y<=building.y+34;}
+function towerVariant(building){return TOWER_VARIANTS[building.tower?.variant||"basic"];}
 function workerNodeAt(x,y){
   let found=null,best=38;
   for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){const d=distance(x,y,node.x,node.y);if(resourceIsActive(node,kind)&&!isFogged(node.x,node.y)&&d<best){found={node,kind};best=d;}}
@@ -365,10 +414,10 @@ function pickUpMovableAt(x,y){
     clearWorkerTask(worker);state.workers.splice(state.workers.indexOf(worker),1);
     state.heldObject={kind:"worker",object:worker,originX:worker.x,originY:worker.y};state.collecting=false;toast(worker.downed?"downed worker lifted — carry to base or house":"worker lifted — release to assign");return true;
   }
-  const building=buildings.find(item=>item.complete&&item.type==="beacon"&&beaconButtonHit(item,x,y));
+  const building=buildings.find(item=>item.complete&&item.type==="tower"&&towerVariant(item).movable&&manualTowerButtonHit(item,x,y));
   if(!building)return false;
   state.heldObject={kind:"building",object:building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;
-  toast("shock beacon picked up — release right to place");return true;
+  toast(towerVariant(building).name+" picked up — release right to place");return true;
 }
 function heldWorker(){return state.heldObject?.kind==="worker"?state.heldObject.object:null;}
 function heldBuilding(){return state.heldObject?.kind==="building"?state.heldObject.object:null;}
@@ -413,18 +462,19 @@ function dropHeldObject(){
     state.heldObject=null;sound(result==="revived"?720:260,.06);return true;
   }
   const building=held.object;
-  if(state.mouse.inside&&canPlace(state.mouse.x,state.mouse.y)){building.x=state.mouse.x;building.y=state.mouse.y;toast("shock beacon placed");}
-  else{building.x=held.originX;building.y=held.originY;toast("invalid ground — beacon returned");}
+  if(state.mouse.inside&&canPlace(state.mouse.x,state.mouse.y)){building.x=state.mouse.x;building.y=state.mouse.y;toast(towerVariant(building).name+" placed");}
+  else{building.x=held.originX;building.y=held.originY;toast("invalid ground — tower returned");}
   buildings.push(building);state.heldObject=null;sound(260,.06);return true;
 }
-function activateBeacon(building){
-  if(building.ability.cooldown>0){toast("shock beacon recharging: "+building.ability.cooldown.toFixed(1)+"s");return;}
-  building.ability.cooldown=BUILDING_TYPES.beacon.cooldown;building.ability.flash=.35;
+function activateManualTower(building){
+  const tower=building.tower,variant=towerVariant(building);if(!variant.manual)return;
+  if(tower.cooldown>0){toast(variant.name+" recharging: "+tower.cooldown.toFixed(1)+"s");return;}
+  tower.cooldown=variant.cooldown;tower.flash=.35;
   for(const enemy of [...state.enemies]){
-    if(distance(building.x,building.y,enemy.x,enemy.y)>BUILDING_TYPES.beacon.effectRadius)continue;
-    enemy.hp-=2;enemy.flash=.2;burst(enemy.x,enemy.y,"#70d8d1",7);if(enemy.hp<=0)killEnemy(enemy,false);
+    if(isFogged(enemy.x,enemy.y)||distance(building.x,building.y,enemy.x,enemy.y)>variant.effectRadius)continue;
+    damageEnemy(enemy,variant.damage,variant.accent,7,building);
   }
-  burst(building.x,building.y,"#70d8d1",24);toast("shock pulse fired");sound(105,.28);
+  burst(building.x,building.y,variant.accent,24);toast("shock pulse fired");sound(variant.sound,.28);
 }
 function detonateBlast(building){
   for(const enemy of [...state.enemies]){
@@ -437,9 +487,26 @@ function detonateBlast(building){
 }
 function createBuilding(type,x,y){
   const def=BUILDING_TYPES[type],cost=type==="house"?nextHouseCost():{...def.cost};
-  return {type,x,y,cost,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,tower:null,pulseTower:null,ability:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
+  return {type,x,y,cost,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
 }
 
+function playerResourceAt(x,y){
+  let target=null,kind=null,best=34;
+  for(const tree of trees){if(tree.stump>0||isFogged(tree.x,tree.y))continue;const d=distance(x,y,tree.x,tree.y-10);if(d<best){best=d;target=tree;kind="wood";}}
+  for(const rock of rocks){if(rock.depleted>0||isFogged(rock.x,rock.y))continue;const d=distance(x,y,rock.x,rock.y);if(d<best){best=d;target=rock;kind="stone";}}
+  for(const diamond of diamonds){if(diamond.depleted>0||isFogged(diamond.x,diamond.y))continue;const d=distance(x,y,diamond.x,diamond.y);if(d<best){best=d;target=diamond;kind="diamond";}}
+  return target?{target,kind}:null;
+}
+function repeatedPrimaryClick(){
+  const m=state.mouse;if(!m.inside||isFogged(m.x,m.y))return false;const primary=state.primaryClick,quiet=primary.audioCooldown>0,enemy=enemyAt(m.x,m.y);
+  if(enemy){hitEnemy(enemy,quiet);if(!quiet)primary.audioCooldown=.25;return true;}
+  const resource=playerResourceAt(m.x,m.y);if(!resource)return false;hitResource(resource.target,resource.kind,false,quiet);if(!quiet)primary.audioCooldown=.25;return true;
+}
+// Primary hold is simulation-owned: DOM input starts/stops it; this accumulator emits only safe enemy/resource actions.
+function updateAutoClick(dt){
+  const primary=state.primaryClick;if(!primary.held)return;if(modalOpen()||!globalUpgradeEnabled("autoClick")){stopPrimaryClick();return;}
+  primary.audioCooldown=Math.max(0,primary.audioCooldown-dt);if(!state.mouse.inside){primary.repeat=0;return;}const interval=1/AUTO_CLICK_CPS;primary.repeat=Math.min(interval,primary.repeat+dt);if(primary.repeat>=interval){primary.repeat-=interval;repeatedPrimaryClick();}
+}
 function leftClick(){
   if(state.gameOver||state.paused)return;
   const m=state.mouse;
@@ -463,41 +530,24 @@ function leftClick(){
   }
   const blast=buildings.find(building=>building.complete&&building.type==="blast"&&blastButtonHit(building,m.x,m.y));
   if(blast){detonateBlast(blast);return;}
-  const beacon=buildings.find(building=>building.complete&&building.type==="beacon"&&beaconButtonHit(building,m.x,m.y));
-  if(beacon){activateBeacon(beacon);return;}
+  const manualTower=buildings.find(building=>building.complete&&building.type==="tower"&&towerVariant(building).manual&&manualTowerButtonHit(building,m.x,m.y));
+  if(manualTower){activateManualTower(manualTower);return;}
   const obelisk=buildings.find(building=>building.complete&&building.type==="obelisk"&&upgradeButtonHit(building,m.x,m.y));
   if(obelisk){openUpgradeMenu(obelisk,"obelisk");return;}
-  const tower=buildings.find(building=>building.complete&&building.type==="tower"&&upgradeButtonHit(building,m.x,m.y));
+  const tower=buildings.find(building=>building.complete&&building.type==="tower"&&building.tower.variant==="basic"&&!building.activeUpgrade&&upgradeButtonHit(building,m.x,m.y));
   if(tower){openUpgradeMenu(tower,"tower");return;}
   const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
   if(pile){unloadStockpile(pile,m.x);return;}
-  let target=null,kind=null,best=34;
-  for(const tree of trees){
-    if(tree.stump>0||isFogged(tree.x,tree.y))continue;
-    const d=distance(m.x,m.y,tree.x,tree.y-10);
-    if(d<best){best=d;target=tree;kind="wood";}
-  }
-  for(const rock of rocks){
-    if(rock.depleted>0||isFogged(rock.x,rock.y))continue;
-    const d=distance(m.x,m.y,rock.x,rock.y);
-    if(d<best){best=d;target=rock;kind="stone";}
-  }
-  for(const diamond of diamonds){
-    if(diamond.depleted>0||isFogged(diamond.x,diamond.y))continue;
-    const d=distance(m.x,m.y,diamond.x,diamond.y);
-    if(d<best){best=d;target=diamond;kind="diamond";}
-  }
-  if(!target){toast("left click a tree, rock, or diamond deposit");return;}
-  hitResource(target,kind,false);
+  const resource=playerResourceAt(m.x,m.y);if(!resource){toast("left click a tree, rock, or diamond deposit");return;}hitResource(resource.target,resource.kind,false);
 }
 
 // Player and harvesting workers share this path: harvesting automation creates physical drops, never stored resources.
-function hitResource(target,kind,automatic){
+function hitResource(target,kind,automatic,quiet=false){
   target.hp--;
   target.shake=1;
   spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
   burst(target.x,target.y-12,kind==="wood"?"#9fb351":kind==="diamond"?"#78d7e5":"#bbb7ae",5);
-  if(!automatic)sound(kind==="wood"?350+target.hp*25:kind==="diamond"?760:170+target.hp*15,.045);
+  if(!automatic&&!quiet)sound(kind==="wood"?350+target.hp*25:kind==="diamond"?760:170+target.hp*15,.045);
   if(target.hp<=0&&kind==="wood"){
     target.stump=1;
     burst(target.x,target.y-10,"#557036",13);
@@ -592,48 +642,72 @@ function unloadStockpile(building,mouseX){
   spawnResource(kind,building.x+rand(-18,18),building.y+28);
   building.pulse=1;toast("pulled 1 "+kind+" from stockpile");sound(kind==="wood"?390:180,.05);
 }
-function upgradeList(kind){return kind==="tower"?TOWER_UPGRADES:UPGRADES;}
+function towerUpgradeList(){return Object.entries(TOWER_VARIANTS).filter(([id])=>id!=="basic").map(([id,variant])=>({id,...variant}));}
+function upgradeList(kind){return kind==="tower"?towerUpgradeList():UPGRADES;}
+function resourceCounts(){return Object.fromEntries(RESOURCE_KINDS.map(kind=>[kind,0]));}
+function costText(cost){return RESOURCE_KINDS.filter(kind=>(cost[kind]||0)>0).map(kind=>cost[kind]+" "+kind).join(" + ")||"free";}
+function upgradeNeedText(upgrade,delivered){return RESOURCE_KINDS.filter(kind=>(upgrade.cost[kind]||0)>delivered[kind]).map(kind=>(upgrade.cost[kind]-delivered[kind])+" "+kind).join(" + ");}
 function dropToUpgrade(building){
-  const job=building.activeUpgrade,upgrade=upgradeList(job.kind).find(item=>item.id===job.id);
+  const job=building.activeUpgrade,upgrade=upgradeList(job.kind).find(item=>item.id===job.id),kinds=job.kind==="tower"?RESOURCE_KINDS:["wood","stone"];
   let total=0;
-  for(const kind of ["wood","stone"]){
-    const amount=Math.min(upgrade.cost[kind]-job.delivered[kind],state.carried[kind]);
+  for(const kind of kinds){
+    const amount=Math.min((upgrade.cost[kind]||0)-job.delivered[kind],state.carried[kind]);
     state.carried[kind]-=amount;job.delivered[kind]+=amount;total+=amount;
     handoffParticles(building.x,building.y,kind,amount);
   }
   if(!total){toast("upgrade does not need those resources");return;}
   building.pulse=1;
-  if(job.delivered.wood>=upgrade.cost.wood&&job.delivered.stone>=upgrade.cost.stone){
-    building.upgrades[job.id]=true;building.activeUpgrade=null;
-    burst(building.x,building.y-25,"#72d4cc",22);toast(upgrade.name+" complete");sound(820,.2);
-  }else toast("upgrade needs "+(upgrade.cost.wood-job.delivered.wood)+" wood + "+(upgrade.cost.stone-job.delivered.stone)+" stone");
+  if(kinds.every(kind=>job.delivered[kind]>=(upgrade.cost[kind]||0))){
+    if(job.kind==="tower"){const tower=building.tower,healthRatio=tower.maxHp?clamp(tower.hp/tower.maxHp,0,1):1;tower.variant=job.id;tower.maxHp=upgrade.maxHp;tower.hp=upgrade.maxHp*healthRatio;}
+    else building.upgrades[job.id]=true;
+    building.activeUpgrade=null;burst(building.x,building.y-25,"#72d4cc",22);toast(upgrade.name+" complete");sound(820,.2);
+  }else toast("upgrade needs "+upgradeNeedText(upgrade,job.delivered));
 }
 
 function upgradeButtonHit(building,x,y){const top=building.type==="obelisk"?building.y-66:building.y-48;return x>=building.x-30&&x<=building.x+30&&y>=top&&y<=building.y+38;}
-function closeUpgradeMenu(){state.upgradeMenu.building=null;state.upgradeMenu.selected=null;state.upgradeMenu.kind=null;document.getElementById("upgradePanel").classList.add("off");}
+function upgradePanelOpen(){return !document.getElementById("upgradePanel").classList.contains("off");}
+function debugPanelOpen(){return DEBUG_UI_ENABLED&&!document.getElementById("debugPanel").classList.contains("off");}
+function modalOpen(){return upgradePanelOpen()||debugPanelOpen();}
+function syncModalUi(){document.getElementById("game").classList.toggle("modal-open",modalOpen());}
+function closeUpgradeMenu(){const wasOpen=upgradePanelOpen();state.upgradeMenu.building=null;state.upgradeMenu.selected=null;state.upgradeMenu.kind=null;document.getElementById("upgradePanel").classList.add("off");syncModalUi();return wasOpen;}
+function closeDebugPanel(){const wasOpen=debugPanelOpen();document.getElementById("debugPanel").classList.add("off");document.getElementById("debugButton").classList.remove("on");syncModalUi();return wasOpen;}
 function openUpgradeMenu(building,kind){
   if(building.activeUpgrade){toast("finish the active upgrade by depositing resources");return;}
-  const list=upgradeList(kind);
-  state.upgradeMenu.building=building;state.upgradeMenu.kind=kind;
-  state.upgradeMenu.selected=list.find(item=>!building.upgrades[item.id])?.id||null;
-  renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");
+  if(kind==="tower"&&building.tower.variant!=="basic"){toast("this tower already has a permanent variant");return;}
+  closeDebugPanel();stopGameplayInput();const list=upgradeList(kind);
+  state.upgradeMenu.building=building;state.upgradeMenu.kind=kind;state.upgradeMenu.selected=list.find(item=>!building.upgrades[item.id])?.id||null;
+  renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");syncModalUi();
 }
 function renderUpgradeMenu(){
-  const menu=state.upgradeMenu,building=menu.building,list=upgradeList(menu.kind),options=document.getElementById("upgradeOptions"),detail=document.getElementById("upgradeDetail");
-  document.getElementById("upgradeTitle").textContent=menu.kind+" upgrades";options.replaceChildren();
-  for(const upgrade of list){
-    const button=document.createElement("button");button.classList.toggle("on",menu.selected===upgrade.id);button.classList.toggle("owned",!!building.upgrades[upgrade.id]);
-    button.innerHTML="<b>"+upgrade.icon+"</b>"+upgrade.name+(building.upgrades[upgrade.id]?" · done":"");
-    button.addEventListener("click",()=>{if(building.upgrades[upgrade.id])return;menu.selected=upgrade.id;renderUpgradeMenu();});options.appendChild(button);
+  const menu=state.upgradeMenu,building=menu.building,list=upgradeList(menu.kind),options=document.getElementById("upgradeOptions"),detail=document.getElementById("upgradeDetail"),towerMenu=menu.kind==="tower";
+  document.getElementById("upgradeTitle").textContent=towerMenu?"choose one permanent tower variant":menu.kind+" upgrades";options.replaceChildren();
+  if(towerMenu)for(const variant of list){
+    const button=document.createElement("button");button.className="variant-card";button.classList.toggle("on",menu.selected===variant.id);button.title=variant.family+" · "+variant.attackMode+" · "+variant.description;button.innerHTML="<b>"+variant.icon+"</b>"+variant.name;button.addEventListener("click",()=>{menu.selected=variant.id;renderUpgradeMenu();});options.appendChild(button);
+  }else for(const upgrade of list){
+    const button=document.createElement("button");button.classList.toggle("on",menu.selected===upgrade.id);button.classList.toggle("owned",!!building.upgrades[upgrade.id]);button.innerHTML="<b>"+upgrade.icon+"</b>"+upgrade.name+(building.upgrades[upgrade.id]?" · done":"");button.addEventListener("click",()=>{if(building.upgrades[upgrade.id])return;menu.selected=upgrade.id;renderUpgradeMenu();});options.appendChild(button);
   }
-  const selected=list.find(item=>item.id===menu.selected);
-  detail.innerHTML=selected?"<b>"+selected.name+"</b>"+selected.description+"<br>cost: "+selected.cost.wood+" wood + "+selected.cost.stone+" stone":"all upgrades complete";
+  const selected=list.find(item=>item.id===menu.selected);detail.innerHTML=selected?"<b>"+(towerMenu?selected.icon+" ":"")+selected.name+"</b>"+(towerMenu?"<div class=\"detail-meta\">"+selected.family+" · "+selected.attackMode+"</div>":"")+selected.description+"<br>cost: "+costText(selected.cost):"all upgrades complete";
 }
+function renderDebugPanel(){
+  const options=document.getElementById("debugOptions"),detail=document.getElementById("debugDetail");options.replaceChildren();
+  for(const upgrade of UPGRADES){
+    const legitimate=legitimateGlobalUpgradeOwned(upgrade.id),forced=globalUpgradeHasOverride(upgrade.id),enabled=globalUpgradeEnabled(upgrade.id),button=document.createElement("button");button.classList.add(forced?(enabled?"forced-on":"forced-off"):(legitimate?"legitimate":"unowned"));
+    const sourceLabel=forced?"debug-forced "+(enabled?"on":"off"):(legitimate?"legitimately owned":"not owned");button.innerHTML="<b>"+upgrade.icon+"</b>"+upgrade.name+"<span>"+(enabled?"enabled":"disabled")+" · "+sourceLabel+"</span>";button.addEventListener("click",()=>{state.debug.selected=upgrade.id;setGlobalUpgradeDebugOverride(upgrade.id,!globalUpgradeEnabled(upgrade.id));});options.appendChild(button);
+  }
+  const selected=UPGRADES.find(upgrade=>upgrade.id===state.debug.selected);detail.innerHTML=selected?"<b>"+selected.icon+" "+selected.name+"</b><br>"+selected.description+(selected.id==="autoClick"?"<br>rate: "+AUTO_CLICK_CPS+" clicks per second":""):"click an upgrade to force its effective state.";
+}
+function openDebugPanel(){
+  if(!DEBUG_UI_ENABLED||state.gameOver||state.paused)return;closeUpgradeMenu();stopGameplayInput(true);state.debug.selected??=UPGRADES[0]?.id||null;renderDebugPanel();document.getElementById("debugPanel").classList.remove("off");document.getElementById("debugButton").classList.add("on");syncModalUi();
+}
+function syncDebugUiAvailability(){document.getElementById("debugButton").hidden=!DEBUG_UI_ENABLED;document.getElementById("debugPanel").hidden=!DEBUG_UI_ENABLED;if(!DEBUG_UI_ENABLED)closeDebugPanel();}
+document.getElementById("debugButton").addEventListener("click",()=>{if(debugPanelOpen())closeDebugPanel();else openDebugPanel();});
+document.getElementById("debugClear").addEventListener("click",clearGlobalUpgradeDebugOverrides);
+document.getElementById("debugClose").addEventListener("click",closeDebugPanel);
 document.getElementById("upgradeDecline").addEventListener("click",closeUpgradeMenu);
 document.getElementById("upgradeAccept").addEventListener("click",()=>{
   const menu=state.upgradeMenu,upgrade=upgradeList(menu.kind).find(item=>item.id===menu.selected);
   if(!menu.building||!upgrade)return;
-  menu.building.activeUpgrade={id:upgrade.id,kind:menu.kind,delivered:{wood:0,stone:0}};
+  menu.building.activeUpgrade={id:upgrade.id,kind:menu.kind,delivered:resourceCounts()};
   const destination=menu.kind;closeUpgradeMenu();toast("accepted "+upgrade.name+" — deposit resources at the "+destination);sound(590,.1);
 });
 
@@ -648,12 +722,10 @@ function completeBuilding(building){
   if(building.complete)return;
   const def=BUILDING_TYPES[building.type];building.complete=true;building.starved=false;
   if(def.resource)state.capacity+=2;
-  if(building.type==="tower")building.tower={cooldown:.5,flash:0};
-  if(building.type==="pulseTower")building.pulseTower={cooldown:BUILDING_TYPES.pulseTower.cooldown,flash:0};
-  if(building.type==="beacon")building.ability={cooldown:0,flash:0};
+  if(building.type==="tower"){const variant=TOWER_VARIANTS.basic;building.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp};}
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
   burst(building.x,building.y-12,"#ead28d",18);
-  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker slots ready":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?"basic tower complete — it attacks nearby enemies":building.type==="pulseTower"?"pulse tower complete — automatic area attack ready":"shock beacon complete — hover and click to pulse";
+  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker slots ready":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?"basic tower complete — hover it to choose one variant":def.name+" complete";
   toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);syncBuildHud();
 }
 function dropToBuilding(building){
@@ -691,6 +763,9 @@ function setBuildDockCategory(category){
   document.querySelectorAll(".dock-tab").forEach(tab=>{const active=tab.dataset.category===category;tab.classList.toggle("on",active);tab.setAttribute("aria-expanded",active);});
 }
 document.querySelectorAll(".dock-tab").forEach(tab=>tab.addEventListener("click",()=>setBuildDockCategory(state.buildDockCategory===tab.dataset.category?null:tab.dataset.category)));
+// Toasts occupy the notification lane immediately above the dock in both collapsed and expanded states.
+const buildDock=document.getElementById("buildDock"),stage=document.getElementById("stage");
+new ResizeObserver(()=>stage.style.setProperty("--build-dock-clearance",buildDock.offsetHeight+"px")).observe(buildDock);
 document.querySelectorAll("button.build").forEach(button=>button.addEventListener("click",()=>{
   if(state.gameOver||state.paused)return;
   const kind=button.dataset.kind;
@@ -807,22 +882,13 @@ function updateKing(dt){
   target.hp-=KING.damage;target.flash=.15;burst(target.x,target.y,"#efe0a0",5);sound(260,.05);
   if(target.hp<=0)killEnemy(target,false);
 }
-function updatePulseTower(building,dt){
-  const pulse=building.pulseTower;pulse.cooldown=Math.max(0,pulse.cooldown-dt);pulse.flash=Math.max(0,pulse.flash-dt);
-  if(pulse.cooldown>0)return;
-  const targets=state.enemies.filter(enemy=>!isFogged(enemy.x,enemy.y)&&distance(building.x,building.y,enemy.x,enemy.y)<=BUILDING_TYPES.pulseTower.effectRadius);
-  if(!targets.length)return;
-  pulse.cooldown=BUILDING_TYPES.pulseTower.cooldown;pulse.flash=.4;
-  for(const enemy of targets){enemy.hp-=2;enemy.flash=.16;burst(enemy.x,enemy.y,"#b18be5",5);if(enemy.hp<=0)killEnemy(enemy,false);}
-  sound(125,.22);
-}
 function updateHazard(building,dt){
   const hazard=building.hazard;hazard.cooldown-=dt;hazard.flash=Math.max(0,hazard.flash-dt);
   if(hazard.cooldown>0)return;
   const enemy=state.enemies.find(item=>distance(building.x,building.y,item.x,item.y)<20);
   if(!enemy)return;
   if(building.type==="tar"){
-    hazard.cooldown=.25;hazard.flash=.12;enemy.slow=Math.max(enemy.slow,2);
+    const def=BUILDING_TYPES.tar;hazard.cooldown=.25;hazard.flash=.12;applySlow(enemy,def.slowDuration,def.slowMultiplier);
   }else if(building.type==="landmine"){
     for(const target of [...state.enemies]){if(distance(building.x,building.y,target.x,target.y)>BUILDING_TYPES.landmine.effectRadius)continue;target.hp-=8;target.flash=.2;burst(target.x,target.y,"#e09b43",7);if(target.hp<=0)killEnemy(target,false);}
     for(let i=0;i<28;i++)particles.push({x:building.x,y:building.y,vx:rand(-140,140),vy:rand(-160,20),life:rand(.3,.7),col:i%2?"#d9893d":"#6e5540"});
@@ -831,21 +897,53 @@ function updateHazard(building,dt){
     hazard.cooldown=.55;hazard.flash=.18;enemy.hp-=2;enemy.flash=.14;burst(enemy.x,enemy.y,"#c9c2b5",4);if(enemy.hp<=0)killEnemy(enemy,false);
   }
 }
-function updateTower(building,dt){
-  const tower=building.tower;tower.cooldown-=dt;tower.flash=Math.max(0,tower.flash-dt);
-  if(tower.cooldown>0)return;
-  const range=BUILDING_TYPES.tower.effectRadius+(building.upgrades.towerRange?60:0);
-  let target=null,best=range;
-  for(const enemy of state.enemies){
-    if(isFogged(enemy.x,enemy.y))continue;
-    const d=distance(building.x,building.y,enemy.x,enemy.y);
-    if(d<best){best=d;target=enemy;}
+function damageEnemy(enemy,damage,color,count=5,source=null){
+  if(!state.enemies.includes(enemy))return false;if(source?.tower&&buildings.includes(source))enemy.retaliationTower=source;enemy.hp-=damage;enemy.flash=.16;burst(enemy.x,enemy.y,color,count);if(enemy.hp<=0){killEnemy(enemy,false);return false;}return true;
+}
+function applySlow(enemy,duration,multiplier){
+  enemy.status??={burn:null,slow:null};const current=enemy.status.slow;
+  // Shared slow rule: repeated applications keep the longest remaining duration and the lowest (strongest) speed multiplier.
+  enemy.status.slow={duration:Math.max(current?.duration||0,duration),multiplier:Math.min(current?.multiplier??1,multiplier)};
+}
+function pushEnemyToSpawn(enemy,distanceAmount){
+  if(enemy.spawnSide===MAP_SIDE.WEST)enemy.x-=distanceAmount;else if(enemy.spawnSide===MAP_SIDE.EAST)enemy.x+=distanceAmount;else if(enemy.spawnSide===MAP_SIDE.NORTH)enemy.y-=distanceAmount;else if(enemy.spawnSide===MAP_SIDE.SOUTH)enemy.y+=distanceAmount;
+  enemy.x=clamp(enemy.x,8,W-8);enemy.y=clamp(enemy.y,8,H-8);
+}
+function nearestTowerTarget(building,range){
+  let target=null,best=range;for(const enemy of state.enemies){if(isFogged(enemy.x,enemy.y))continue;const d=distance(building.x,building.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}}return target;
+}
+function applyBurn(enemy,building,variant){
+  enemy.status??={burn:null};const current=enemy.status.burn,continues=current?.source===building;enemy.status.burn={remaining:variant.burnDuration,tickCooldown:continues?current.tickCooldown:variant.burnInterval,damage:variant.burnDamage,interval:variant.burnInterval,source:building};
+}
+function lineIntersectsEnemy(x1,y1,x2,y2,enemy,width){
+  // Closest point on finite beam: project enemy-center vector onto beam, clamp t to [0,1], then compare distance to beam half-width plus enemy radius.
+  const dx=x2-x1,dy=y2-y1,lengthSquared=dx*dx+dy*dy,t=clamp(((enemy.x-x1)*dx+(enemy.y-y1)*dy)/lengthSquared,0,1),closestX=x1+t*dx,closestY=y1+t*dy,enemyRadius=10*ENEMY_TYPES[enemy.type].size;
+  return distance(enemy.x,enemy.y,closestX,closestY)<=width/2+enemyRadius;
+}
+function fireTowerAttack(building,variant,target){
+  const tower=building.tower,color=variant.impactColor||variant.accent;tower.targetX=target.x;tower.targetY=target.y;tower.flash=.2;
+  if(variant.attackMode==="splash"){
+    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;for(const enemy of [...state.enemies])if(!isFogged(enemy.x,enemy.y)&&distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageEnemy(enemy,variant.damage,color,8,building);burst(impactX,impactY,color,18);
+  }else if(variant.attackMode==="line"){
+    const angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*variant.range,endY=building.y+Math.sin(angle)*variant.range;tower.targetX=endX;tower.targetY=endY;
+    for(const enemy of [...state.enemies])if(!isFogged(enemy.x,enemy.y)&&lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageEnemy(enemy,variant.damage,color,7,building);
+  }else{
+    const alive=damageEnemy(target,variant.damage,color,["burn","slow","push"].includes(variant.attackMode)?8:5,building);
+    if(alive&&variant.attackMode==="burn")applyBurn(target,building,variant);
+    else if(alive&&variant.attackMode==="slow")applySlow(target,variant.slowDuration,variant.slowMultiplier);
+    else if(alive&&variant.attackMode==="push"){pushEnemyToSpawn(target,variant.pushDistance);burst(target.x,target.y,color,10);}
   }
-  if(!target)return;
-  const damage=building.upgrades.towerDamage?2:1;
-  tower.cooldown=building.upgrades.towerSpeed ? .65 : 1.3;tower.flash=.14;tower.targetX=target.x;tower.targetY=target.y;
-  target.hp-=damage;target.flash=.12;burst(target.x,target.y,"#d7c36d",4);
-  if(target.hp<=0)killEnemy(target,false);
+  sound(variant.sound,.18);
+}
+function updateTower(building,dt){
+  if(!buildings.includes(building)&&heldBuilding()!==building)return;
+  const tower=building.tower,variant=towerVariant(building);tower.cooldown=Math.max(0,tower.cooldown-dt);tower.flash=Math.max(0,tower.flash-dt);tower.hitFlash=Math.max(0,(tower.hitFlash||0)-dt);
+  if(variant.manual||tower.cooldown>0)return;
+  if(variant.attackMode==="periodic area"){
+    const targets=state.enemies.filter(enemy=>!isFogged(enemy.x,enemy.y)&&distance(building.x,building.y,enemy.x,enemy.y)<=variant.effectRadius);if(!targets.length)return;
+    tower.cooldown=variant.cooldown;tower.flash=.4;for(const enemy of targets)damageEnemy(enemy,variant.damage,variant.accent,5,building);sound(variant.sound,.22);return;
+  }
+  const target=nearestTowerTarget(building,variant.range);if(!target)return;tower.cooldown=variant.cooldown;fireTowerAttack(building,variant,target);
 }
 
 function updateGuard(worker,dt){
@@ -947,32 +1045,63 @@ function updateNightEnemyWave(dt){
   }
 }
 
+function updateEnemyStatuses(enemy,dt){
+  enemy.status??={burn:null,slow:null};const burn=enemy.status.burn,slow=enemy.status.slow;
+  if(burn){
+    if(!buildings.includes(burn.source)||burn.source.tower?.variant!=="fire")enemy.status.burn=null;
+    else{burn.remaining-=dt;burn.tickCooldown-=dt;while(burn.tickCooldown<=0&&burn.remaining>=0){burn.tickCooldown+=burn.interval;if(!damageEnemy(enemy,burn.damage,"#ef6a32",5,burn.source))return false;}if(burn.remaining<=0)enemy.status.burn=null;}
+  }
+  if(slow){slow.duration-=dt;if(slow.duration<=0)enemy.status.slow=null;}return true;
+}
+function segmentDistance(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,lengthSquared=dx*dx+dy*dy;if(!lengthSquared)return distance(px,py,x1,y1);const t=clamp(((px-x1)*dx+(py-y1)*dy)/lengthSquared,0,1);return distance(px,py,x1+t*dx,y1+t*dy);}
+function enemyTargetResult(enemy,kind,object){return {kind,object,x:object.x,y:object.y,distance:Math.max(0,distance(enemy.x,enemy.y,object.x,object.y)-(kind==="tower"?26:0))};}
+// Enemy priority is centralized: Aggro taunt, tower retaliation, nearest worker/base, then any tower physically intersecting that route.
+function selectEnemyTarget(enemy){
+  const canDamage=ENEMY_TYPES[enemy.type].damage>0;
+  if(canDamage){
+    let aggro=null,bestAggro=Infinity;for(const building of buildings){if(!building.complete||building.type!=="tower"||building.tower.hp<=0)continue;const variant=towerVariant(building),d=distance(enemy.x,enemy.y,building.x,building.y);if(variant.tauntRadius&&d<=variant.tauntRadius&&d<bestAggro){aggro=building;bestAggro=d;}}
+    if(aggro)return enemyTargetResult(enemy,"tower",aggro);
+    const retaliation=enemy.retaliationTower;if(retaliation&&buildings.includes(retaliation)&&retaliation.complete&&retaliation.tower.hp>0)return enemyTargetResult(enemy,"tower",retaliation);
+  }
+  enemy.retaliationTower=null;
+  let kind="base",object=BASE,best=distance(enemy.x,enemy.y,BASE.x,BASE.y);for(const worker of state.workers){if(worker.downed)continue;const d=distance(enemy.x,enemy.y,worker.x,worker.y);if(d<best){best=d;kind="worker";object=worker;}}
+  if(!canDamage)return enemyTargetResult(enemy,kind,object);
+  let blocker=null,bestBlocker=Infinity;for(const building of buildings){if(!building.complete||building.type!=="tower"||building.tower.hp<=0)continue;const d=distance(enemy.x,enemy.y,building.x,building.y);if(d<bestBlocker&&segmentDistance(building.x,building.y,enemy.x,enemy.y,object.x,object.y)<=26){blocker=building;bestBlocker=d;}}
+  return blocker?enemyTargetResult(enemy,"tower",blocker):enemyTargetResult(enemy,kind,object);
+}
+function destroyTower(building){
+  const at=buildings.indexOf(building);if(at<0)return;buildings.splice(at,1);for(const enemy of state.enemies){if(enemy.retaliationTower===building)enemy.retaliationTower=null;if(enemy.status?.burn?.source===building)enemy.status.burn=null;}
+  for(const worker of state.workers)if(worker.jobTarget===building){clearWorkerTask(worker);worker.job="guard";worker.jobTarget=null;worker.postX=worker.x;worker.postY=worker.y;}
+  if(state.upgradeMenu.building===building)closeUpgradeMenu();burst(building.x,building.y,"#8f5141",22);toast(towerVariant(building).name+" destroyed");sound(70,.35);
+}
+function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
 function update(dt){
-  if(state.gameOver||state.paused)return;
-  updateClock(dt);updateDaytimeEnemySpawns(dt);updateNightEnemyWave(dt);
+  if(state.gameOver||state.paused){stopPrimaryClick();return;}
+  updateAutoClick(dt);updateClock(dt);updateDaytimeEnemySpawns(dt);updateNightEnemyWave(dt);
   const keys=state.keys,camera=state.camera;
   let panX=(keys.has("KeyD")||keys.has("ArrowRight"))-(keys.has("KeyA")||keys.has("ArrowLeft"));
   let panY=(keys.has("KeyS")||keys.has("ArrowDown"))-(keys.has("KeyW")||keys.has("ArrowUp"));
   if(panX||panY){const length=Math.hypot(panX,panY),speed=430/camera.zoom;camera.x+=panX/length*speed*dt;camera.y+=panY/length*speed*dt;clampCamera();}
   state.coinTimer-=dt;
   if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(14,22);}
-  for(const enemy of state.enemies){
+  for(const enemy of [...state.enemies]){
+    if(!updateEnemyStatuses(enemy,dt))continue;
     const def=ENEMY_TYPES[enemy.type];
-    enemy.wob+=dt*7;enemy.flash=Math.max(0,enemy.flash-dt);enemy.shotFlash=Math.max(0,enemy.shotFlash-dt);enemy.healFlash=Math.max(0,enemy.healFlash-dt);enemy.slow=Math.max(0,(enemy.slow||0)-dt);enemy.attackCooldown-=dt;enemy.healCooldown-=dt;
+    enemy.wob+=dt*7;enemy.flash=Math.max(0,enemy.flash-dt);enemy.shotFlash=Math.max(0,enemy.shotFlash-dt);enemy.healFlash=Math.max(0,enemy.healFlash-dt);enemy.attackCooldown-=dt;enemy.healCooldown-=dt;
     if(enemy.type==="healer"&&enemy.healCooldown<=0){
       let patient=null,best=150;
       for(const ally of state.enemies){if(ally===enemy||ally.hp>=ally.max)continue;const dd=distance(enemy.x,enemy.y,ally.x,ally.y);if(dd<best){best=dd;patient=ally;}}
       if(patient){patient.hp=Math.min(patient.max,patient.hp+2);enemy.healFlash=.3;enemy.healX=patient.x;enemy.healY=patient.y;burst(patient.x,patient.y,"#75c86d",5);}
       enemy.healCooldown=2.3;
     }
-    let victim=null,targetX=BASE.x,targetY=BASE.y,bestTarget=distance(enemy.x,enemy.y,BASE.x,BASE.y);
-    if(def.damage)for(const worker of state.workers){if(worker.downed)continue;const d=distance(enemy.x,enemy.y,worker.x,worker.y);if(d<bestTarget){bestTarget=d;victim=worker;targetX=worker.x;targetY=worker.y;}}
-    if(bestTarget>def.range){const angle=Math.atan2(targetY-enemy.y,targetX-enemy.x);enemy.x+=Math.cos(angle)*def.speed*(enemy.slow>0 ? .5 : 1)*dt;enemy.y+=Math.sin(angle)*def.speed*(enemy.slow>0 ? .5 : 1)*dt;}
+    const target=selectEnemyTarget(enemy);
+    if(target.distance>def.range){const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x),speedMultiplier=enemy.status.slow?.multiplier??1;enemy.x+=Math.cos(angle)*def.speed*speedMultiplier*dt;enemy.y+=Math.sin(angle)*def.speed*speedMultiplier*dt;}
     else if(def.damage&&enemy.attackCooldown<=0){
-      enemy.attackCooldown=def.rate;enemy.shotFlash=.14;enemy.shotX=targetX;enemy.shotY=targetY;
-      if(victim){victim.retaliationTarget=enemy;victim.hp=Math.max(0,victim.hp-def.damage);if(victim.hp<=0)downWorker(victim);}
+      enemy.attackCooldown=def.rate;enemy.shotFlash=.14;enemy.shotX=target.x;enemy.shotY=target.y;
+      if(target.kind==="worker"){const worker=target.object;worker.retaliationTarget=enemy;worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)downWorker(worker);}
+      else if(target.kind==="tower")damageTower(target.object,def.damage);
       else{state.baseHp=Math.max(0,state.baseHp-def.damage);state.basePulse=1;if(state.baseHp<=0){endGame();break;}}
-      toast(def.name+" hit "+(victim?"a worker":"the base"));sound(def.range>60?180:95,.09);
+      toast(def.name+" hit "+(target.kind==="worker"?"a worker":target.kind==="tower"?towerVariant(target.object).name:"the base"));sound(def.range>60?180:95,.09);
     }
   }
   if(state.gameOver)return;
@@ -1010,12 +1139,10 @@ function update(dt){
   for(const building of buildings){
     building.pulse=Math.max(0,building.pulse-dt*3);
     if(building.complete&&building.tower)updateTower(building,dt);
-    if(building.complete&&building.pulseTower)updatePulseTower(building,dt);
-    if(building.complete&&building.ability){building.ability.cooldown=Math.max(0,building.ability.cooldown-dt);building.ability.flash=Math.max(0,building.ability.flash-dt);}
     if(building.complete&&building.hazard)updateHazard(building,dt);
   }
   for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove)buildings.splice(i,1);
-  const held=heldBuilding();if(held?.ability){const ability=held.ability;ability.cooldown=Math.max(0,ability.cooldown-dt);ability.flash=Math.max(0,ability.flash-dt);}
+  const held=heldBuilding();if(held?.tower)updateTower(held,dt);
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>!worker.downed&&worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
   for(let i=state.workers.length-1;i>=0;i--)if(state.workers[i].downed&&state.workers[i].downedTimer<=0){const worker=state.workers[i];state.workers.splice(i,1);burst(worker.x,worker.y,"#55443b",8);toast("a downed worker was lost");}
@@ -1063,7 +1190,7 @@ function toast(message){
 }
 function endGame(){
   if(state.gameOver)return;
-  state.gameOver=true;state.collecting=false;state.camera.panning=false;state.keys.clear();cancelHeldObject();closeUpgradeMenu();
+  state.gameOver=true;stopGameplayInput(true);cancelHeldObject();closeDebugPanel();closeUpgradeMenu();
   document.getElementById("gameOver").classList.remove("off");sound(65,.6);
 }
 document.getElementById("restart").addEventListener("click",()=>location.reload());
@@ -1125,7 +1252,8 @@ function drawResource(resource){
 }
 function drawEnemy(enemy){
   const def=ENEMY_TYPES[enemy.type],s=def.size,x=Math.round(enemy.x),y=Math.round(enemy.y+Math.sin(enemy.wob)*2);
-  if(enemy.slow>0){ctx.fillStyle="#57432f99";ctx.beginPath();ctx.ellipse(x,y+7,13*s,5*s,0,0,Math.PI*2);ctx.fill();}
+  if(enemy.status?.slow){ctx.fillStyle=enemy.status.slow.multiplier<=.5?"#57432f99":"#8fd9ee88";ctx.beginPath();ctx.ellipse(x,y+7,13*s,5*s,0,0,Math.PI*2);ctx.fill();}
+  if(enemy.status?.burn){ctx.fillStyle="#ef6a32";ctx.beginPath();ctx.moveTo(x-6,y-12);ctx.lineTo(x-2,y-22-Math.sin(enemy.wob*1.7)*3);ctx.lineTo(x+1,y-13);ctx.lineTo(x+5,y-19+Math.sin(enemy.wob)*2);ctx.lineTo(x+7,y-10);ctx.fill();}
   if(enemy.shotFlash>0&&def.range>60){ctx.strokeStyle="#d9b65f";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(enemy.shotX??BASE.x,enemy.shotY??BASE.y);ctx.stroke();}
   if(enemy.healFlash>0){ctx.strokeStyle="#75c86d";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(enemy.healX,enemy.healY);ctx.stroke();}
   if(enemy.type==="archer"){
@@ -1162,13 +1290,48 @@ function drawKing(){
   if(king.swing>0){const angle=Math.atan2(king.targetY-y,king.targetX-x);ctx.strokeStyle="#f3e6bc";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x+Math.cos(angle)*7,y+Math.sin(angle)*7);ctx.lineTo(x+Math.cos(angle)*24,y+Math.sin(angle)*24);ctx.stroke();}
   else{rect(x+7,y-6,2,15,"#ded8c9");rect(x+5,y+6,6,2,"#77512f");}
 }
-function drawBuilding(building,ghost=false){
-  const x=building.x,y=building.y,p=building.pulse*2,def=BUILDING_TYPES[building.type||state.buildMode||"lumber"];
-  const radius=def.serviceRadius||def.effectRadius;
-  if(building.complete&&radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,x,y)<48){
-    const shownRadius=radius+(building.type==="tower"&&building.upgrades.towerRange?60:0);
-    drawZone(x,y,shownRadius);
+function towerRadius(building){const variant=towerVariant(building);return variant.range||variant.effectRadius;}
+function drawTowerVariant(building){
+  const x=building.x,y=building.y,tower=building.tower,variant=towerVariant(building);
+  if(tower.variant==="pulse"){
+    rect(x-22,y+8,44,15,"#6e6874");rect(x-17,y-7,34,17,"#8d8495");rect(x-12,y-19,24,13,"#aaa0b2");rect(x-5,y-31,10,13,"#624a86");rect(x-2,y-35,4,8,"#c09aed");rect(x-15,y-13,6,6,"#b18be5");rect(x+9,y-13,6,6,"#b18be5");
+  }else if(tower.variant==="shock"){
+    rect(x-20,y+8,40,14,"#77736d");rect(x-15,y-5,30,14,"#9c9891");rect(x-6,y-26,12,23,"#4c5d61");rect(x-3,y-32,6,9,"#79d8d1");rect(x-13,y-18,7,5,"#79d8d1");rect(x+6,y-18,7,5,"#79d8d1");
+  }else{
+    rect(x-22,y+8,44,15,"#817b72");rect(x-18,y-8,36,18,"#aaa39a");rect(x-15,y-20,30,13,"#beb7ac");rect(x-18,y-23,8,8,"#d3ccc0");rect(x-4,y-23,8,8,"#d3ccc0");rect(x+10,y-23,8,8,"#d3ccc0");rect(x-4,y-13,8,14,"#4f4941");
+    if(tower.variant==="watch"){rect(x-3,y-34,3,17,variant.accent);rect(x+4,y-34,3,17,variant.accent);}
+    else if(tower.variant==="sniper"){rect(x-2,y-40,4,23,variant.accent);rect(x,y-40,24,4,"#6f715f");}
+    else if(tower.variant==="fire"){rect(x-5,y-31,10,13,"#754331");rect(x-3,y-36,6,8,variant.accent);}
+    else if(tower.variant==="bomb"){rect(x-7,y-31,14,13,"#5c5147");rect(x+4,y-31,16,8,variant.accent);}
+    else if(tower.variant==="laser"){rect(x-6,y-32,12,14,"#426b6b");rect(x-2,y-38,5,12,variant.accent);}
+    else if(tower.variant==="turret"){rect(x-5,y-26,10,9,"#655849");rect(x+3,y-26,14,5,variant.accent);}
+    else if(tower.variant==="outpost"){rect(x-18,y-27,36,9,"#8d8578");rect(x-16,y-32,8,7,variant.accent);rect(x+8,y-32,8,7,variant.accent);rect(x+2,y-28,19,5,"#695743");}
+    else if(tower.variant==="brick"){rect(x-19,y-29,38,11,"#8f4c3e");rect(x-17,y-35,9,8,variant.accent);rect(x-4,y-35,9,8,variant.accent);rect(x+9,y-35,8,8,variant.accent);}
+    else if(tower.variant==="aggro"){rect(x-17,y-35,34,17,"#6e3934");rect(x-11,y-42,22,10,variant.accent);rect(x-3,y-39,6,17,"#f0c56c");}
+    else if(tower.variant==="freeze"){rect(x-6,y-31,12,13,"#587d8d");rect(x-2,y-40,5,15,variant.accent);rect(x-10,y-34,6,9,"#bcebf4");}
+    else if(tower.variant==="tarTower"){rect(x-9,y-29,18,11,"#3f352d");rect(x-12,y-32,24,5,variant.accent);rect(x+7,y-29,13,5,"#5b4637");}
+    else if(tower.variant==="teleport"){rect(x-7,y-33,14,15,"#4f5f8b");ctx.strokeStyle=variant.accent;ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y-31,10,0,Math.PI*2);ctx.stroke();}
+    else{rect(x-1,y-31,3,12,"#594b3b");rect(x+2,y-31,18,5,"#8b633b");}
   }
+  if(tower.hitFlash>0){ctx.strokeStyle="#f3e2bd";ctx.lineWidth=3;ctx.globalAlpha=tower.hitFlash/.22;ctx.strokeRect(x-24,y-43,48,67);ctx.globalAlpha=1;}
+  if(tower.flash>0){
+    const duration=variant.manual?.35:variant.attackMode==="periodic area"?.4:.2,progress=1-tower.flash/duration;ctx.globalAlpha=clamp(tower.flash/duration,0,1);
+    if(variant.attackMode==="periodic area"||variant.manual){ctx.strokeStyle=variant.accent;ctx.lineWidth=4;ctx.beginPath();ctx.arc(x,y,variant.effectRadius*progress,0,Math.PI*2);ctx.stroke();}
+    else{ctx.strokeStyle=variant.accent;ctx.lineWidth=variant.attackMode==="line"?variant.beamWidth:2;ctx.beginPath();ctx.moveTo(x,y-27);ctx.lineTo(tower.targetX,tower.targetY);ctx.stroke();if(variant.attackMode==="splash"){ctx.lineWidth=3;ctx.beginPath();ctx.arc(tower.impactX,tower.impactY,variant.splashRadius*progress,0,Math.PI*2);ctx.stroke();}}
+    ctx.globalAlpha=1;
+  }
+  if(variant.manual){const hover=state.mouse.inside&&manualTowerButtonHit(building,state.mouse.x,state.mouse.y),ready=tower.cooldown<=0;if(hover){rect(x-12,y-48,24,22,"#292119");rect(x-9,y-45,18,16,ready?"#3e8b70":"#66635d");ctx.fillStyle="#f4e8c6";ctx.font="bold 12px monospace";ctx.textAlign="center";ctx.fillText("↯",x,y-33);}const ratio=tower.cooldown/variant.cooldown;rect(x-20,y+26,40,7,"#292119");rect(x-18,y+28,36*(1-ratio),3,ready?"#70d8d1":"#d19b49");ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(ready?"ready":tower.cooldown.toFixed(1)+"s",x,y+42);}
+  else if(variant.attackMode==="periodic area"){const ratio=tower.cooldown/variant.cooldown;rect(x-21,y+27,42,7,"#292119");rect(x-19,y+29,38*(1-ratio),3,tower.cooldown<=0?"#b18be5":"#d19b49");ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(tower.cooldown<=0?"ready":tower.cooldown.toFixed(1)+"s",x,y+43);}
+  if(tower.variant!=="basic")return;
+  const hover=state.mouse.inside&&upgradeButtonHit(building,state.mouse.x,state.mouse.y);if(hover&&!building.activeUpgrade){rect(x-27,y+10,22,22,"#292119");rect(x-24,y+13,16,16,"#4d7892");ctx.fillStyle="#f4e8c6";ctx.font="bold 14px monospace";ctx.textAlign="center";ctx.fillText("↑",x-16,y+26);}
+  if(building.activeUpgrade){const job=building.activeUpgrade,upgrade=towerUpgradeList().find(item=>item.id===job.id);ctx.fillStyle="#f4e8c6";ctx.font="bold 9px monospace";ctx.textAlign="center";ctx.fillText(upgrade.name,x,y-48);ctx.fillText(upgradeNeedText(upgrade,job.delivered)||"complete",x,y-38);const target=hoverTarget();if(target&&target.kind==="upgrade"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(x-70,y-56,140,88);ctx.setLineDash([]);}}
+}
+function drawTowerHealth(building){
+  const tower=building.tower,hover=state.mouse.inside&&distance(state.mouse.x,state.mouse.y,building.x,building.y)<42;if(tower.hp>=tower.maxHp&&!hover)return;rect(building.x-24,building.y+48,48,6,"#292119");rect(building.x-22,building.y+50,44*clamp(tower.hp/tower.maxHp,0,1),2,"#b84b3c");
+}
+function drawBuilding(building,ghost=false){
+  const x=building.x,y=building.y,p=building.pulse*2,def=BUILDING_TYPES[building.type||state.buildMode||"lumber"],radius=building.complete&&building.type==="tower"?towerRadius(building):def.serviceRadius||def.effectRadius;
+  if(building.complete&&radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,x,y)<48){drawZone(x,y,radius);if(building.type==="tower"&&towerVariant(building).tauntRadius)drawZone(x,y,towerVariant(building).tauntRadius,"#d6534f99");}
   if(!building.complete||ghost){
     ctx.globalAlpha=ghost?.55:1;ctx.strokeStyle=ghost&&canPlace(x,y)?"#f3e5b9":ghost?"#a94634":"#ead18d";ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.strokeRect(x-28-p,y-27-p,56+p*2,54+p*2);ctx.setLineDash([]);
     rect(x-23,y+9,46,7,building.type==="quarry"?"#777775":"#83603a");rect(x-19,y-3,5,19,"#9a774d");rect(x+14,y-3,5,19,"#9a774d");
@@ -1184,14 +1347,6 @@ function drawBuilding(building,ghost=false){
     const metal=building.hazard.flash>0?"#f1dfb7":"#a9a59e";
     rect(x-18,y+10,36,5,"#65442c");rect(x-14,y-5,4,16,metal);rect(x-2,y-10,4,21,metal);rect(x+10,y-5,4,16,metal);
     rect(x-18,y+7,5,4,"#7c7872");rect(x+13,y+7,5,4,"#7c7872");
-  }else if(building.type==="beacon"){
-    rect(x-20,y+8,40,14,"#77736d");rect(x-15,y-5,30,14,"#9c9891");rect(x-6,y-26,12,23,"#4c5d61");rect(x-3,y-32,6,9,"#79d8d1");
-    rect(x-13,y-18,7,5,"#79d8d1");rect(x+6,y-18,7,5,"#79d8d1");
-    if(building.ability.flash>0){ctx.strokeStyle="#79e6de";ctx.lineWidth=4;ctx.globalAlpha=building.ability.flash/.35;ctx.beginPath();ctx.arc(x,y,BUILDING_TYPES.beacon.effectRadius*(1-building.ability.flash/.35),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
-    const hover=state.mouse.inside&&beaconButtonHit(building,state.mouse.x,state.mouse.y),ready=building.ability.cooldown<=0;
-    if(hover){rect(x-12,y-48,24,22,"#292119");rect(x-9,y-45,18,16,ready?"#3e8b70":"#66635d");ctx.fillStyle="#f4e8c6";ctx.font="bold 12px monospace";ctx.textAlign="center";ctx.fillText("↯",x,y-33);}
-    const ratio=building.ability.cooldown/BUILDING_TYPES.beacon.cooldown;rect(x-20,y+26,40,7,"#292119");rect(x-18,y+28,36*(1-ratio),3,ready?"#70d8d1":"#d19b49");
-    ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(ready?"ready":building.ability.cooldown.toFixed(1)+"s",x,y+42);
   }else if(building.type==="blast"){
     rect(x-17,y-8,34,29,"#7b5031");rect(x-14,y-11,28,7,"#a9703f");rect(x-14,y+2,28,4,"#4a3829");rect(x-4,y-16,8,8,"#292119");
     rect(x+2,y-20,3,7,"#d29a3f");rect(x+5,y-23,3,3,"#efc85e");
@@ -1211,25 +1366,8 @@ function drawBuilding(building,ghost=false){
       const target=hoverTarget();
       if(target&&target.kind==="upgrade"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(x-34,y-78,68,108);ctx.setLineDash([]);}
     }
-  }else if(building.type==="pulseTower"){
-    rect(x-22,y+8,44,15,"#6e6874");rect(x-17,y-7,34,17,"#8d8495");rect(x-12,y-19,24,13,"#aaa0b2");
-    rect(x-5,y-31,10,13,"#624a86");rect(x-2,y-35,4,8,"#c09aed");rect(x-15,y-13,6,6,"#b18be5");rect(x+9,y-13,6,6,"#b18be5");
-    const pulse=building.pulseTower;
-    if(pulse.flash>0){ctx.strokeStyle="#bc96ed";ctx.lineWidth=4;ctx.globalAlpha=pulse.flash/.4;ctx.beginPath();ctx.arc(x,y,BUILDING_TYPES.pulseTower.effectRadius*(1-pulse.flash/.4),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
-    const ratio=pulse.cooldown/BUILDING_TYPES.pulseTower.cooldown;rect(x-21,y+27,42,7,"#292119");rect(x-19,y+29,38*(1-ratio),3,pulse.cooldown<=0?"#b18be5":"#d19b49");
-    ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(pulse.cooldown<=0?"ready":pulse.cooldown.toFixed(1)+"s",x,y+43);
   }else if(building.type==="tower"){
-    rect(x-22,y+8,44,15,"#817b72");rect(x-18,y-8,36,18,"#aaa39a");rect(x-15,y-20,30,13,"#beb7ac");
-    rect(x-18,y-23,8,8,"#d3ccc0");rect(x-4,y-23,8,8,"#d3ccc0");rect(x+10,y-23,8,8,"#d3ccc0");
-    rect(x-4,y-13,8,14,"#4f4941");rect(x-1,y-31,3,12,"#594b3b");rect(x+2,y-31,18,5,"#8b633b");
-    if(building.tower&&building.tower.flash>0){ctx.strokeStyle="#f0d76f";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y-27);ctx.lineTo(building.tower.targetX,building.tower.targetY);ctx.stroke();}
-    const hover=state.mouse.inside&&upgradeButtonHit(building,state.mouse.x,state.mouse.y);
-    if(hover&&!building.activeUpgrade){rect(x-27,y+10,22,22,"#292119");rect(x-24,y+13,16,16,"#4d7892");ctx.fillStyle="#f4e8c6";ctx.font="bold 14px monospace";ctx.textAlign="center";ctx.fillText("↑",x-16,y+26);}
-    if(building.activeUpgrade){
-      const job=building.activeUpgrade,upgrade=TOWER_UPGRADES.find(item=>item.id===job.id);
-      ctx.fillStyle="#f4e8c6";ctx.font="bold 9px monospace";ctx.textAlign="center";ctx.fillText(upgrade.name,x,y-48);ctx.fillText("["+job.delivered.wood+"/"+upgrade.cost.wood+"] wood",x,y-38);ctx.fillText("["+job.delivered.stone+"/"+upgrade.cost.stone+"] stone",x,y-28);
-      const target=hoverTarget();if(target&&target.kind==="upgrade"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(x-34,y-56,68,88);ctx.setLineDash([]);}
-    }
+    drawTowerVariant(building);drawTowerHealth(building);
   }else if(building.type==="stockpile"){
     rect(x-31,y-18,4,43,"#68472c");rect(x+27,y-18,4,43,"#68472c");rect(x-31,y+21,62,4,"#8f6339");
     const wood=Math.min(12,building.storage.wood),stone=Math.min(12,building.storage.stone),dust=Math.min(4,building.storage.dust),coins=Math.min(3,building.storage.coin),gems=Math.min(3,building.storage.diamond);
@@ -1314,8 +1452,8 @@ function drawHands(){
 function drawInteractionPreviews(){
   if(state.mouse.inside&&distance(state.mouse.x,state.mouse.y,BASE.x,BASE.y)<BASE.r+16)drawZone(BASE.x,BASE.y,BASE_ZONE);
   for(const building of buildings){
-    const def=BUILDING_TYPES[building.type],radius=def.serviceRadius||def.effectRadius;
-    if(building.complete&&radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,building.x,building.y)<48)drawZone(building.x,building.y,radius+(building.type==="tower"&&building.upgrades.towerRange?60:0));
+    const def=BUILDING_TYPES[building.type],radius=building.complete&&building.type==="tower"?towerRadius(building):def.serviceRadius||def.effectRadius;
+    if(building.complete&&radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,building.x,building.y)<48){drawZone(building.x,building.y,radius);if(building.type==="tower"&&towerVariant(building).tauntRadius)drawZone(building.x,building.y,towerVariant(building).tauntRadius,"#d6534f99");}
   }
   if(heldWorker()){drawZone(BASE.x,BASE.y,BASE_ZONE,"#d8c47c66");for(const storage of buildings)if(storage.complete&&storage.type==="stockpile")drawZone(storage.x,storage.y,storageServiceRadius(storage),"#d8c47c66");}
   if(state.buildMode&&state.mouse.inside)drawBuilding({type:state.buildMode,x:state.mouse.x,y:state.mouse.y,complete:false,pulse:0},true);
@@ -1353,7 +1491,7 @@ function draw(){
   drawInteractionPreviews();drawHands();ctx.restore();
 }
 
-syncBuildHud();syncPhaseHud();setBuildDockCategory(null);
+syncBuildHud();syncPhaseHud();syncDebugUiAvailability();setBuildDockCategory(null);
 let previous=performance.now();
 function frame(now){const dt=Math.min(.033,(now-previous)/1000);previous=now;update(dt);draw();requestAnimationFrame(frame);}
 requestAnimationFrame(frame);

@@ -22,10 +22,10 @@ Living checklist for production assets. Current canvas art is placeholder art un
 - [ ] Stockpile: empty plus stacked wood/stone variants
 - [ ] House: blueprint, complete, spawning, and full-slot states
 - [ ] Obelisk: idle, upgrade available, upgrading, complete pulse
-- [ ] Basic tower: idle, firing, and upgraded variants
-- [ ] Pulse tower: idle, charging, ready, and area-pulse states
+- [ ] Basic tower chassis: idle, firing, and permanent variant states
+- [ ] Pulse tower variant: idle, charging, ready, and area-pulse states
 - [ ] Blast charge: idle, hover button, explosion
-- [ ] Shock beacon: ready, active pulse, cooldown, carried ghost
+- [ ] Shock tower variant: ready, active pulse, cooldown, carried ghost
 - [ ] Spike trap
 - [ ] Land mine: armed, triggered, explosion, spent
 - [ ] Tar puddle and slowed-enemy treatment
@@ -34,9 +34,9 @@ Living checklist for production assets. Current canvas art is placeholder art un
 
 - [ ] Basic tower body
 - [ ] Basic tower muzzle/firing frame
-- [ ] Long Sight upgrade marker or tower variant
-- [ ] Heavy Shot upgrade marker or tower variant
-- [ ] Quick Loader upgrade marker or tower variant
+- [ ] Turret and Outpost variant details
+- [ ] Watch, Sniper, Brick, and Aggro variant details
+- [ ] Fire, Freeze, Tar, Teleport, Bomb, Laser, Pulse, and Shock variant details
 - [ ] Basic projectile or shot beam
 - [ ] Projectile impact
 - [ ] Pulse-tower wave and impact
@@ -71,7 +71,7 @@ Living checklist for production assets. Current canvas art is placeholder art un
 - [ ] Enemy hit and death
 - [ ] Tower muzzle flash and impact
 - [ ] Blast-charge explosion
-- [ ] Shock-beacon pulse
+- [ ] Shock-tower pulse
 - [ ] Upgrade accepted, depositing, and completed
 - [ ] Base damage and destruction
 - [ ] Fog reveal

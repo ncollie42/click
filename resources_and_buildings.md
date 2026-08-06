@@ -8,9 +8,9 @@ Living reference for resources, building categories, and behavior tags.
 |---|---|---|
 | Wood | Trees | Construction and upgrades |
 | Stone | Stone nodes | Construction and upgrades |
-| Dust essence | 25% enemy death drop | Collectible and storable; spending use TBD |
-| Gold coin | Temporary random spawn; flashes and vanishes after about 8 seconds | Collectible and storable; spending use TBD |
-| Diamond | Five rare deposits generated more than 600px from the base | Rare mined construction/progression resource; spending use TBD |
+| Dust essence | 25% enemy death drop | Tower variant upgrades |
+| Gold coin | Temporary random spawn; flashes and vanishes after about 8 seconds | Shock tower variant upgrade |
+| Diamond | Five rare deposits generated more than 600px from the base | Advanced tower variant upgrades |
 
 Resources may exist in several states: loose on the ground, carried by the player or a hauling worker, stored at the base or stockpile, or delivered to construction/upgrade progress.
 
@@ -29,15 +29,12 @@ base
 │   └── obelisk
 ├── defense
 │   ├── towers
-│   │   ├── basic tower
-│   │   ├── pulse tower
-│   │   └── possible upgrades
-│   │       ├── turret / outpost
-│   │       ├── watch / sniper / fire / bomb
-│   │       ├── teleport / freeze / tar
-│   │       └── brick / aggro / laser
-│   ├── reusable abilities
-│   │   └── shock beacon
+│   │   └── basic tower chassis
+│   │       ├── starter: turret / outpost
+│   │       ├── ballistics: watch / sniper / brick / aggro
+│   │       ├── elemental: fire / freeze / tar tower
+│   │       ├── control: teleport
+│   │       └── special: bomb / laser / pulse / shock
 │   └── deployables / cards
 │       ├── blast charge
 │       ├── spike trap
@@ -94,9 +91,10 @@ Categories answer **what role does this building serve?** Tags answer **how does
 | Stockpile | Storage | `constructed`, `manual`, `persistent` |
 | House | Population | `constructed`, `automatic`, `cooldown`, `persistent` |
 | Obelisk | Progression | `constructed`, `manual`, `upgradeable`, `persistent` |
-| Basic tower | Defense / Tower | `constructed`, `automatic`, `single-target`, `cooldown`, `upgradeable`, `persistent` |
-| Pulse tower | Defense / Tower | `constructed`, `automatic`, `area`, `cooldown`, `persistent` |
-| Shock beacon | Defense / Ability | `constructed`, `manual`, `area`, `cooldown`, `movable`, `persistent` |
+| Basic tower chassis | Defense / Tower | `constructed`, `automatic`, `single-target`, `cooldown`, `upgradeable`, `persistent` |
+| Automatic tower variants | Defense / Tower | `automatic`, `single-target` or `area`, `cooldown`, `persistent` |
+| Pulse tower variant | Defense / Tower | `automatic`, `area`, `cooldown`, `persistent` |
+| Shock tower variant | Defense / Tower | `manual`, `area`, `cooldown`, `movable`, `persistent` |
 | Blast charge | Defense / Deployable | `free`, `manual`, `area`, `one-use` |
 | Spike trap | Defense / Deployable | `free`, `contact`, `card`, `charges`, `persistent` |
 | Land mine | Defense / Deployable | `free`, `contact`, `card`, `charges`, `area`, `one-use` |
@@ -110,48 +108,31 @@ Categories answer **what role does this building serve?** Tags answer **how does
 | Land mine | 3 | Explodes once, damaging a small enemy group |
 | Tar | 3 | Slows enemies crossing it |
 
-## Possible Tower Upgrades
+## Tower Chassis and Variants
 
-Reference concepts only; values should be rebalanced for this game.
+The basic tower is the only constructible tower. It remains a `tower` building and keeps firing while one upgrade cost is delivered. It may permanently become exactly one variant; variants cannot be switched or refunded.
 
-| Tower | Role | Reference identity / special |
-|---|---|---|
-| Turret | Cheap starter | Compact, low range, expendable single-target fire |
-| Outpost | Early generalist | More health, range, and damage than turret |
-| Watch Tower | Rapid fire | High fire rate for groups of weak enemies |
-| Sniper Tower | Long-range burst | Very high damage and range; slow firing |
-| Fire Tower | Damage over time | Burns targets; fire may deal extra damage to tarred enemies |
-| Bomb Tower | Area damage | Slow explosive shots damage clustered enemies |
-| Teleport Tower | Crowd control | Pushes or teleports enemies backward |
-| Freeze Tower | Damage and slow | Rapid shots apply chill |
-| Tar Tower | Ranged slow | Applies tar slow at range |
-| Brick Tower | Durable rapid fire | Watch-tower behavior with much higher durability |
-| Aggro Tower | Tank / taunt | Very high durability; enemies prioritize it |
-| Laser Tower | Piercing damage | Shots pass through multiple enemies |
+| Variant | Family | Upgrade cost | Role | Implementation status |
+|---|---|---:|---|---|
+| Basic | Starter | Chassis only | Automatic single target | Implemented chassis |
+| Turret | Starter | 2 wood + 2 stone | Cheap, modest single target | Implemented |
+| Outpost | Starter | 5 wood + 7 stone | Durable early generalist | Implemented |
+| Watch Tower | Ballistics | 6 wood + 8 stone | Low damage, rapid fire | Implemented |
+| Sniper Tower | Ballistics | 8 wood + 10 stone + 1 diamond | Extreme-range burst, slow reload | Implemented |
+| Brick Tower | Ballistics | 5 wood + 14 stone + 2 dust | Armored rapid fire | Implemented |
+| Aggro Tower | Ballistics | 16 stone + 2 dust | Extreme health, negligible DPS, 320px taunt | Implemented; centralized enemy targeting |
+| Fire Tower | Elemental | 5 wood + 8 stone + 2 dust | Direct hit plus timed burn | Implemented; explicit burn status |
+| Freeze Tower | Elemental | 7 wood + 9 stone + 2 dust | Rapid damage and short slow | Implemented; shared slow status |
+| Tar Tower | Elemental | 4 wood + 9 stone + 3 dust | Low damage and strong long slow | Implemented; shared slow status |
+| Teleport Tower | Control | 10 stone + 3 dust + 1 diamond | Damage and spawn-edge pushback | Implemented; recorded spawn side and world clamping |
+| Bomb Tower | Special | 8 wood + 10 stone + 2 dust | Slow target-centered splash | Implemented |
+| Laser Tower | Special | 10 stone + 3 dust + 2 diamonds | Piercing finite line | Implemented |
+| Pulse | Special | 4 wood + 6 stone + 2 dust | Automatic periodic area | Implemented |
+| Shock | Special | 2 wood + 4 stone + 1 coin + 1 diamond | Manual area, movable | Implemented; relocation preserves cooldown |
 
-### Possible Upgrade Families
+Every listed variant is immediately available; each chassis accepts exactly one. Upgrade completion preserves health percentage when registry `maxHp` changes. Damaged towers can be destroyed by enemies; no repair exists yet.
 
-```text
-basic tower
-├── rapid-fire
-│   ├── watch tower
-│   └── brick tower
-├── precision
-│   └── sniper tower
-├── elemental
-│   ├── fire tower
-│   ├── freeze tower
-│   └── tar tower
-├── explosive
-│   └── bomb tower
-├── control
-│   └── teleport tower
-├── tank
-│   ├── outpost
-│   └── aggro tower
-└── advanced
-    └── laser tower
-```
+Slow rule: repeated slows retain the longest remaining duration and lowest (strongest) speed multiplier. Freeze, Tar Tower, and tar ground deployables all use this interface.
 
 ## Worker Assignment
 
