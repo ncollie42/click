@@ -147,7 +147,7 @@ Workers have no permanent specialization. Right-dragging and dropping assigns be
 | House | Guard at that house, clearing the prior assignment |
 | Empty ground | Guard that region |
 
-The base supplies three worker slots; each completed house adds two. Empty slots refill automatically at their owning base or house. Jobs remain within the worker's home leash. Harvesting always creates physical ground drops.
+The base supplies three worker slots; each completed house adds two. A living worker held for reassignment still reserves its source slot. Worker death immediately frees the owning slot; that base or house replaces one missing worker every `WORKER_SPAWN_TIME` (12 seconds), so multiple vacancies refill sequentially. Carried resources become physical ground drops on death, while a permanent, inert corpse remains as scenery. Jobs remain within the worker's home leash. Harvesting always creates physical ground drops.
 
 ## Design Rule
 

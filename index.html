@@ -163,8 +163,8 @@ const W=1536,H=1024;                          // Larger world explored through c
 const BASE = {x:W/2,y:H/2,r:43};
 const BASE_ZONE=240;
 const BASE_SLOTS=3,HOUSE_SLOTS=2,HOUSE_COST={wood:8,stone:6},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
-const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3,WORKER_DOWNED_TIME=20;
-const DEBUG_UI_ENABLED=true,AUTO_CLICK_CPS=1.5;
+const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
+const DEBUG_UI_ENABLED=true,PLAYER_CLICK_CPS=1.2;
 const BUILDING_TYPES = {
   lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155},
   quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155},
@@ -231,6 +231,12 @@ const rocks = [];
 const diamonds = [];
 const resourceDrops = [];
 const buildings = [];
+// ── Worker corpse ownership flow ──
+// Written by: killWorker() creates one immutable visual snapshot per final death.
+// Read by:    draw() only; corpses never enter interaction, placement, targeting, or update systems.
+// Format:     death position plus compact pose/clothing values; never a mutable Worker object.
+// Lifetime:   page load until run restart; no decay or removal.
+const workerCorpses = [];
 const particles = [];
 const state = {
   mouse:{x:W/2,y:H/2,inside:false},
@@ -239,7 +245,7 @@ const state = {
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0},
   nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
-  upgradeMenu:{building:null,selected:null,kind:null},debug:{upgradeOverrides:{},selected:null},primaryClick:{held:false,repeat:0,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
+  upgradeMenu:{building:null,selected:null,kind:null},debug:{upgradeOverrides:{},selected:null},primaryClick:{held:false,actionCooldown:0,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
   king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
 };
 
@@ -333,7 +339,7 @@ canvas.addEventListener("pointermove",event=>{
   }
   pointerPosition(event);
 });
-canvas.addEventListener("pointerleave",()=>{state.mouse.inside=false;state.primaryClick.repeat=0;});
+canvas.addEventListener("pointerleave",()=>{state.mouse.inside=false;});
 canvas.addEventListener("contextmenu",event=>event.preventDefault());
 canvas.addEventListener("auxclick",event=>event.preventDefault());
 canvas.addEventListener("pointerdown",event=>{
@@ -353,8 +359,9 @@ window.addEventListener("keydown",event=>{
 });
 window.addEventListener("keyup",event=>state.keys.delete(event.code));
 
-function startPrimaryClick(){const primary=state.primaryClick;primary.held=true;primary.repeat=0;primary.audioCooldown=.25;}
-function stopPrimaryClick(){const primary=state.primaryClick;primary.held=false;primary.repeat=0;primary.audioCooldown=0;}
+function startPrimaryClick(){state.primaryClick.held=true;}
+// Release/cancel owns only held state; the shared work cooldown survives every stop/start boundary.
+function stopPrimaryClick(){state.primaryClick.held=false;}
 function stopGameplayInput(cancelPlacement=false){
   stopPrimaryClick();state.collecting=false;state.camera.panning=false;state.keys.clear();
   if(cancelPlacement){state.buildMode=null;setBuildDockCategory(null);syncBuildHud();}
@@ -410,9 +417,8 @@ function pickUpMovableAt(x,y){
   let worker=null,best=24;
   for(const candidate of state.workers){const d=distance(x,y,candidate.x,candidate.y);if(d<best){worker=candidate;best=d;}}
   if(worker){
-    if(worker.claimedBy)clearWorkerTask(worker.claimedBy);
     clearWorkerTask(worker);state.workers.splice(state.workers.indexOf(worker),1);
-    state.heldObject={kind:"worker",object:worker,originX:worker.x,originY:worker.y};state.collecting=false;toast(worker.downed?"downed worker lifted — carry to base or house":"worker lifted — release to assign");return true;
+    state.heldObject={kind:"worker",object:worker,originX:worker.x,originY:worker.y};state.collecting=false;toast("worker lifted — release to assign");return true;
   }
   const building=buildings.find(item=>item.complete&&item.type==="tower"&&towerVariant(item).movable&&manualTowerButtonHit(item,x,y));
   if(!building)return false;
@@ -426,17 +432,10 @@ function cancelHeldObject(){
   const held=state.heldObject,object=held.object;object.x=held.originX;object.y=held.originY;
   if(held.kind==="worker")state.workers.push(object);else buildings.push(object);state.heldObject=null;
 }
-function reviveWorker(worker,anchor,offset){
-  worker.downed=false;worker.downedTimer=0;worker.hp=WORKER_HP;worker.job="guard";worker.jobTarget=null;worker.taskTarget=null;worker.returning=false;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.postX=anchor.x;worker.postY=anchor.y+offset;worker.x=worker.postX;worker.y=worker.postY;
-}
 // Assignment priority is resolved once so drop behavior and held-worker preview cannot drift.
 function workerAssignmentAt(worker,x,y){
   if(x<20||y<20||x>W-20||y>H-20||isFogged(x,y))return null;
   const near=predicate=>buildings.find(item=>predicate(item)&&distance(x,y,item.x,item.y)<42);
-  if(worker.downed){
-    const house=near(item=>item.complete&&item.type==="house"),anchor=distance(x,y,BASE.x,BASE.y)<=BASE.r+18?BASE:house;
-    return anchor?{result:"revived",anchor,postX:anchor.x,postY:anchor.y+(anchor===BASE?25:23),zoneX:anchor.x,zoneY:anchor.y+(anchor===BASE?25:23),zoneRadius:WORKER_LEASH}:null;
-  }
   const blueprint=near(item=>!item.complete),node=workerNodeAt(x,y),staff=near(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")),stockpile=near(item=>item.complete&&item.type==="stockpile"),house=near(item=>item.complete&&item.type==="house");
   if(blueprint)return {job:"build",target:blueprint,postX:blueprint.x,postY:blueprint.y+20,zoneX:blueprint.x,zoneY:blueprint.y,zoneRadius:WORKER_LEASH};
   if(node)return {job:"harvest",target:node,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};
@@ -448,7 +447,6 @@ function workerAssignmentAt(worker,x,y){
 }
 function assignWorker(worker,x,y){
   const assignment=workerAssignmentAt(worker,x,y);if(!assignment)return null;
-  if(assignment.result==="revived"){reviveWorker(worker,assignment.anchor,assignment.postY-assignment.anchor.y);return assignment.result;}
   clearWorkerTask(worker);worker.x=x;worker.y=y;worker.postX=assignment.postX;worker.postY=assignment.postY;worker.job=assignment.job;worker.jobTarget=assignment.target;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.returning=false;worker.starved=false;
   if(worker.job!=="haul")for(const kind of RESOURCE_KINDS){while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,x+rand(-8,8),y+rand(-5,5));}}
   return worker.job;
@@ -457,9 +455,9 @@ function dropHeldObject(){
   const held=state.heldObject;if(!held)return false;
   if(held.kind==="worker"){
     const worker=held.object,result=state.mouse.inside&&assignWorker(worker,state.mouse.x,state.mouse.y);
-    if(result){state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):result;toast(result==="revived"?"worker revived at full health":"worker assigned: "+assignment);}
-    else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast(worker.downed?"downed worker must be dropped on the base or a house":"invalid ground — worker returned");}
-    state.heldObject=null;sound(result==="revived"?720:260,.06);return true;
+    if(result){state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):result;toast("worker assigned: "+assignment);}
+    else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast("invalid ground — worker returned");}
+    state.heldObject=null;sound(260,.06);return true;
   }
   const building=held.object;
   if(state.mouse.inside&&canPlace(state.mouse.x,state.mouse.y)){building.x=state.mouse.x;building.y=state.mouse.y;toast(towerVariant(building).name+" placed");}
@@ -497,15 +495,20 @@ function playerResourceAt(x,y){
   for(const diamond of diamonds){if(diamond.depleted>0||isFogged(diamond.x,diamond.y))continue;const d=distance(x,y,diamond.x,diamond.y);if(d<best){best=d;target=diamond;kind="diamond";}}
   return target?{target,kind}:null;
 }
-function repeatedPrimaryClick(){
-  const m=state.mouse;if(!m.inside||isFogged(m.x,m.y))return false;const primary=state.primaryClick,quiet=primary.audioCooldown>0,enemy=enemyAt(m.x,m.y);
-  if(enemy){hitEnemy(enemy,quiet);if(!quiet)primary.audioCooldown=.25;return true;}
-  const resource=playerResourceAt(m.x,m.y);if(!resource)return false;hitResource(resource.target,resource.kind,false,quiet);if(!quiet)primary.audioCooldown=.25;return true;
+// Manual presses and steady-hand hold enter this single gate; only successful player work consumes it.
+function tryPlayerWorkAction(){
+  const m=state.mouse,primary=state.primaryClick;if(primary.actionCooldown>0||!m.inside||isFogged(m.x,m.y))return false;
+  const quiet=primary.audioCooldown>0,enemy=enemyAt(m.x,m.y),resource=enemy?null:playerResourceAt(m.x,m.y);
+  if(!enemy&&!resource)return false;
+  primary.actionCooldown=1/PLAYER_CLICK_CPS;
+  if(enemy)hitEnemy(enemy,quiet);else hitResource(resource.target,resource.kind,false,quiet);
+  if(!quiet)primary.audioCooldown=.25;return true;
 }
-// Primary hold is simulation-owned: DOM input starts/stops it; this accumulator emits only safe enemy/resource actions.
-function updateAutoClick(dt){
-  const primary=state.primaryClick;if(!primary.held)return;if(modalOpen()||!globalUpgradeEnabled("autoClick")){stopPrimaryClick();return;}
-  primary.audioCooldown=Math.max(0,primary.audioCooldown-dt);if(!state.mouse.inside){primary.repeat=0;return;}const interval=1/AUTO_CLICK_CPS;primary.repeat=Math.min(interval,primary.repeat+dt);if(primary.repeat>=interval){primary.repeat-=interval;repeatedPrimaryClick();}
+// Simulation time advances one cooldown and, while held, retries current cursor work without buffering missed actions.
+function updatePrimaryClick(dt){
+  const primary=state.primaryClick;primary.actionCooldown=Math.max(0,primary.actionCooldown-dt);primary.audioCooldown=Math.max(0,primary.audioCooldown-dt);
+  if(!primary.held)return;if(modalOpen()||!globalUpgradeEnabled("autoClick")){stopPrimaryClick();return;}
+  if(state.mouse.inside)tryPlayerWorkAction();
 }
 function leftClick(){
   if(state.gameOver||state.paused)return;
@@ -516,7 +519,7 @@ function leftClick(){
     return;
   }
   const enemy=enemyAt(m.x,m.y);
-  if(enemy){hitEnemy(enemy);return;}
+  if(enemy){tryPlayerWorkAction();return;}
   if(state.buildMode){
     if(canPlace(m.x,m.y)){
       const type=state.buildMode,def=BUILDING_TYPES[type];
@@ -538,7 +541,7 @@ function leftClick(){
   if(tower){openUpgradeMenu(tower,"tower");return;}
   const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
   if(pile){unloadStockpile(pile,m.x);return;}
-  const resource=playerResourceAt(m.x,m.y);if(!resource){toast("left click a tree, rock, or diamond deposit");return;}hitResource(resource.target,resource.kind,false);
+  const resource=playerResourceAt(m.x,m.y);if(!resource){toast("left click a tree, rock, or diamond deposit");return;}tryPlayerWorkAction();
 }
 
 // Player and harvesting workers share this path: harvesting automation creates physical drops, never stored resources.
@@ -694,7 +697,7 @@ function renderDebugPanel(){
     const legitimate=legitimateGlobalUpgradeOwned(upgrade.id),forced=globalUpgradeHasOverride(upgrade.id),enabled=globalUpgradeEnabled(upgrade.id),button=document.createElement("button");button.classList.add(forced?(enabled?"forced-on":"forced-off"):(legitimate?"legitimate":"unowned"));
     const sourceLabel=forced?"debug-forced "+(enabled?"on":"off"):(legitimate?"legitimately owned":"not owned");button.innerHTML="<b>"+upgrade.icon+"</b>"+upgrade.name+"<span>"+(enabled?"enabled":"disabled")+" · "+sourceLabel+"</span>";button.addEventListener("click",()=>{state.debug.selected=upgrade.id;setGlobalUpgradeDebugOverride(upgrade.id,!globalUpgradeEnabled(upgrade.id));});options.appendChild(button);
   }
-  const selected=UPGRADES.find(upgrade=>upgrade.id===state.debug.selected);detail.innerHTML=selected?"<b>"+selected.icon+" "+selected.name+"</b><br>"+selected.description+(selected.id==="autoClick"?"<br>rate: "+AUTO_CLICK_CPS+" clicks per second":""):"click an upgrade to force its effective state.";
+  const selected=UPGRADES.find(upgrade=>upgrade.id===state.debug.selected);detail.innerHTML=selected?"<b>"+selected.icon+" "+selected.name+"</b><br>"+selected.description+(selected.id==="autoClick"?"<br>rate: "+PLAYER_CLICK_CPS+" clicks per second":""):"click an upgrade to force its effective state.";
 }
 function openDebugPanel(){
   if(!DEBUG_UI_ENABLED||state.gameOver||state.paused)return;closeUpgradeMenu();stopGameplayInput(true);state.debug.selected??=UPGRADES[0]?.id||null;renderDebugPanel();document.getElementById("debugPanel").classList.remove("off");document.getElementById("debugButton").classList.add("on");syncModalUi();
@@ -779,7 +782,7 @@ function nextHouseCost(){const count=completeHouses().length;return {wood:HOUSE_
 function sourceWorkerCount(source){const held=heldWorker();return state.workers.filter(worker=>worker.spawnSource===source).length+(held?.spawnSource===source?1:0);}
 function createWorker(source){
   const postX=source===BASE?BASE.x:source.x,postY=source===BASE?BASE.y+25:source.y+23;
-  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:source,job:"guard",jobTarget:null,taskTarget:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,downed:false,downedTimer:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false};
+  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:source,job:"guard",jobTarget:null,taskTarget:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false};
 }
 function spawnWorker(source){
   const worker=createWorker(source);state.workers.push(worker);
@@ -797,7 +800,7 @@ function resourceIsActive(node,kind){return kind==="wood"?node.stump<=0:node.dep
 function workerLoad(worker){return RESOURCE_KINDS.reduce((total,kind)=>total+worker.carried[kind],0);}
 function clearWorkerTask(worker){if(worker.taskTarget?.claimedBy===worker)delete worker.taskTarget.claimedBy;worker.taskTarget=null;}
 function targetIsClaimed(target){
-  const owner=target.claimedBy;if(owner&&(!state.workers.includes(owner)||owner.downed||owner.taskTarget!==target)){delete target.claimedBy;return false;}return !!owner;
+  const owner=target.claimedBy;if(owner&&(!state.workers.includes(owner)||owner.taskTarget!==target)){delete target.claimedBy;return false;}return !!owner;
 }
 function nearestWorkerNode(worker,kind,centerX=worker.postX,centerY=worker.postY,radius=WORKER_LEASH){
   const nodes=kind==="wood"?trees:kind==="stone"?rocks:diamonds;let choice=null,best=Infinity;
@@ -809,11 +812,15 @@ function moveWorker(worker,x,y,dt,stop=12){
   const d=distance(worker.x,worker.y,x,y);if(d<=stop+.01)return true;
   const remaining=d-stop,amount=Math.min(remaining,WORKER_SPEED*dt),angle=Math.atan2(y-worker.y,x-worker.x);worker.x+=Math.cos(angle)*amount;worker.y+=Math.sin(angle)*amount;return amount>=remaining-.01;
 }
-function downWorker(worker){
-  if(worker.downed)return;
-  clearWorkerTask(worker);worker.combatTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.downed=true;worker.downedTimer=WORKER_DOWNED_TIME;worker.hp=0;
+function workerCoatColor(worker){return worker.job==="haul"?"#4d7892":worker.job==="build"?"#d29a39":worker.job==="guard"?"#856347":"#d4b079";}
+function killWorker(worker){
+  const at=state.workers.indexOf(worker);if(at<0)return false;
+  clearWorkerTask(worker);worker.combatTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,worker.x+rand(-7,7),worker.y+rand(-5,5));}
-  burst(worker.x,worker.y,"#9d493d",9);toast("worker down — carry to base or house, or send a hauler");
+  state.workers.splice(at,1);
+  // Snapshot only rendering data: the source slot is free as soon as the mutable worker leaves state.workers.
+  workerCorpses.push(Object.freeze({x:worker.x,y:worker.y,coat:workerCoatColor(worker),flip:Math.random()<.5?-1:1,pose:rand(-2,2)}));
+  burst(worker.x,worker.y,"#9d493d",9);return true;
 }
 function workerAttack(worker,enemy){
   worker.combatTarget=enemy;if(worker.attackCooldown>0)return;
@@ -834,7 +841,7 @@ function nearestBuildStorage(building,worker){
   return {storage:choice,covered};
 }
 function buildNeed(building,kind,worker){
-  let reserved=0;for(const other of state.workers)if(other!==worker&&!other.downed&&other.job==="build"&&other.jobTarget===building)reserved+=other.carried[kind]+(other.taskTarget?.kind===kind?1:0);
+  let reserved=0;for(const other of state.workers)if(other!==worker&&other.job==="build"&&other.jobTarget===building)reserved+=other.carried[kind]+(other.taskTarget?.kind===kind?1:0);
   return Math.max(0,buildingCost(building)[kind]-building.delivered[kind]-reserved);
 }
 function inheritBuiltJob(worker,building){
@@ -953,21 +960,17 @@ function updateGuard(worker,dt){
   moveWorker(worker,worker.postX,worker.postY,dt);
 }
 function updateHauler(worker,dt){
-  const storage=worker.jobTarget,task=worker.taskTarget,body=task?.downed;
-  if(task&&((body?(!state.workers.includes(task)||!task.downed):(!resourceDrops.includes(task)||task.target))||task.claimedBy!==worker)){clearWorkerTask(worker);if(body)worker.returning=false;}
+  const storage=worker.jobTarget,task=worker.taskTarget;
+  if(task&&(!resourceDrops.includes(task)||task.target||task.claimedBy!==worker))clearWorkerTask(worker);
   if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;
   if(!worker.returning&&!worker.taskTarget){
     let nearest=null,best=Infinity;
     for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||isFogged(resource.x,resource.y)||distance(storage.x,storage.y,resource.x,resource.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
-    for(const candidate of state.workers){if(candidate===worker||!candidate.downed||targetIsClaimed(candidate)||isFogged(candidate.x,candidate.y)||distance(storage.x,storage.y,candidate.x,candidate.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,candidate.x,candidate.y);if(d<best){best=d;nearest=candidate;}}
     if(nearest){worker.taskTarget=nearest;nearest.claimedBy=worker;}else if(workerLoad(worker)>0)worker.returning=true;
   }
-  if(worker.returning){
-    const carriedBody=worker.taskTarget?.downed?worker.taskTarget:null,arrived=moveWorker(worker,worker.postX,worker.postY,dt,13);if(carriedBody){carriedBody.x=worker.x;carriedBody.y=worker.y+8;}
-    if(arrived){depositWorkerLoad(worker);if(carriedBody){reviveWorker(carriedBody,storage,storage===BASE?25:18);clearWorkerTask(worker);burst(carriedBody.x,carriedBody.y,"#73a04c",9);toast("hauler recovered a worker");}}return;
-  }
+  if(worker.returning){if(moveWorker(worker,worker.postX,worker.postY,dt,13))depositWorkerLoad(worker);return;}
   if(worker.taskTarget){
-    const target=worker.taskTarget;if(moveWorker(worker,target.x,target.y,dt,10)){if(target.downed){worker.returning=true;target.x=worker.x;target.y=worker.y+8;}else{const at=resourceDrops.indexOf(target);if(at>=0){worker.carried[target.kind]++;resourceDrops.splice(at,1);}delete target.claimedBy;worker.taskTarget=null;if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;}}return;
+    const target=worker.taskTarget;if(moveWorker(worker,target.x,target.y,dt,10)){const at=resourceDrops.indexOf(target);if(at>=0){worker.carried[target.kind]++;resourceDrops.splice(at,1);}delete target.claimedBy;worker.taskTarget=null;if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;}return;
   }
   moveWorker(worker,worker.postX,worker.postY,dt);
 }
@@ -988,7 +991,6 @@ function updateGatherer(worker,dt){
 }
 function updateWorker(worker,dt){
   worker.step+=dt;worker.hitCooldown-=dt;worker.attackCooldown-=dt;worker.combatTarget=null;
-  if(worker.downed){worker.downedTimer-=dt;return;}
   let threat=null,best=WORKER_MELEE;
   for(const enemy of state.enemies){const d=distance(worker.x,worker.y,enemy.x,enemy.y);if(d<best){best=d;threat=enemy;}}
   if(threat){clearWorkerTask(worker);workerAttack(worker,threat);return;}
@@ -1064,7 +1066,7 @@ function selectEnemyTarget(enemy){
     const retaliation=enemy.retaliationTower;if(retaliation&&buildings.includes(retaliation)&&retaliation.complete&&retaliation.tower.hp>0)return enemyTargetResult(enemy,"tower",retaliation);
   }
   enemy.retaliationTower=null;
-  let kind="base",object=BASE,best=distance(enemy.x,enemy.y,BASE.x,BASE.y);for(const worker of state.workers){if(worker.downed)continue;const d=distance(enemy.x,enemy.y,worker.x,worker.y);if(d<best){best=d;kind="worker";object=worker;}}
+  let kind="base",object=BASE,best=distance(enemy.x,enemy.y,BASE.x,BASE.y);for(const worker of state.workers){const d=distance(enemy.x,enemy.y,worker.x,worker.y);if(d<best){best=d;kind="worker";object=worker;}}
   if(!canDamage)return enemyTargetResult(enemy,kind,object);
   let blocker=null,bestBlocker=Infinity;for(const building of buildings){if(!building.complete||building.type!=="tower"||building.tower.hp<=0)continue;const d=distance(enemy.x,enemy.y,building.x,building.y);if(d<bestBlocker&&segmentDistance(building.x,building.y,enemy.x,enemy.y,object.x,object.y)<=26){blocker=building;bestBlocker=d;}}
   return blocker?enemyTargetResult(enemy,"tower",blocker):enemyTargetResult(enemy,kind,object);
@@ -1077,7 +1079,7 @@ function destroyTower(building){
 function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
 function update(dt){
   if(state.gameOver||state.paused){stopPrimaryClick();return;}
-  updateAutoClick(dt);updateClock(dt);updateDaytimeEnemySpawns(dt);updateNightEnemyWave(dt);
+  updatePrimaryClick(dt);updateClock(dt);updateDaytimeEnemySpawns(dt);updateNightEnemyWave(dt);
   const keys=state.keys,camera=state.camera;
   let panX=(keys.has("KeyD")||keys.has("ArrowRight"))-(keys.has("KeyA")||keys.has("ArrowLeft"));
   let panY=(keys.has("KeyS")||keys.has("ArrowDown"))-(keys.has("KeyW")||keys.has("ArrowUp"));
@@ -1098,10 +1100,11 @@ function update(dt){
     if(target.distance>def.range){const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x),speedMultiplier=enemy.status.slow?.multiplier??1;enemy.x+=Math.cos(angle)*def.speed*speedMultiplier*dt;enemy.y+=Math.sin(angle)*def.speed*speedMultiplier*dt;}
     else if(def.damage&&enemy.attackCooldown<=0){
       enemy.attackCooldown=def.rate;enemy.shotFlash=.14;enemy.shotX=target.x;enemy.shotY=target.y;
-      if(target.kind==="worker"){const worker=target.object;worker.retaliationTarget=enemy;worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)downWorker(worker);}
+      let workerDied=false;
+      if(target.kind==="worker"){const worker=target.object;worker.retaliationTarget=enemy;worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)workerDied=killWorker(worker);}
       else if(target.kind==="tower")damageTower(target.object,def.damage);
       else{state.baseHp=Math.max(0,state.baseHp-def.damage);state.basePulse=1;if(state.baseHp<=0){endGame();break;}}
-      toast(def.name+" hit "+(target.kind==="worker"?"a worker":target.kind==="tower"?towerVariant(target.object).name:"the base"));sound(def.range>60?180:95,.09);
+      toast(workerDied?"worker died — replacement in "+WORKER_SPAWN_TIME+"s":def.name+" hit "+(target.kind==="worker"?"a worker":target.kind==="tower"?towerVariant(target.object).name:"the base"));sound(def.range>60?180:95,.09);
     }
   }
   if(state.gameOver)return;
@@ -1144,9 +1147,7 @@ function update(dt){
   for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove)buildings.splice(i,1);
   const held=heldBuilding();if(held?.tower)updateTower(held,dt);
   for(const worker of state.workers)updateWorker(worker,dt);
-  for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>!worker.downed&&worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
-  for(let i=state.workers.length-1;i>=0;i--)if(state.workers[i].downed&&state.workers[i].downedTimer<=0){const worker=state.workers[i];state.workers.splice(i,1);burst(worker.x,worker.y,"#55443b",8);toast("a downed worker was lost");}
-  if(heldWorker()?.downed){const worker=heldWorker();worker.downedTimer-=dt;if(worker.downedTimer<=0){state.heldObject=null;toast("a downed worker was lost");}}
+  for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
   updatePrompt();syncPhaseHud();
 }
@@ -1399,13 +1400,15 @@ function workerToolKind(worker){
   if(worker.job==="build")return "build";
   return null;
 }
+function drawCorpse(corpse){
+  const x=Math.round(corpse.x+corpse.pose),y=Math.round(corpse.y+corpse.pose*.35),flip=corpse.flip;
+  ctx.save();ctx.globalAlpha=.62;ctx.translate(x,y);ctx.scale(flip,1);
+  rect(-14,-3,22,7,corpse.coat);rect(5,-4,9,8,"#b79568");rect(11,-5,4,3,"#583e2d");rect(-12,4,5,3,"#3d332d");rect(-3,4,6,3,"#3d332d");
+  ctx.restore();
+}
 function drawWorker(worker){
-  const x=Math.round(worker.x),baseY=Math.round(worker.y),bob=worker.downed?0:Math.sin(worker.step*8)*1.5,y=Math.round(baseY+bob);
-  if(worker.downed){
-    rect(x-15,y+1,28,7,"#513b32");rect(x-11,y-4,12,8,"#d4b079");rect(x+1,y-5,8,8,"#d7b586");rect(x+8,y-6,4,3,"#6f4930");
-    rect(x-16,y-11,32,4,"#292119");rect(x-15,y-10,30*worker.downedTimer/WORKER_DOWNED_TIME,2,"#b84b3c");return;
-  }
-  rect(x-5,y-9,10,11,worker.job==="haul"?"#4d7892":worker.job==="build"?"#d29a39":worker.job==="guard"?"#856347":"#d4b079");rect(x-4,y-17,8,8,"#d7b586");rect(x-5,y-18,10,3,"#6f4930");
+  const x=Math.round(worker.x),baseY=Math.round(worker.y),bob=Math.sin(worker.step*8)*1.5,y=Math.round(baseY+bob);
+  rect(x-5,y-9,10,11,workerCoatColor(worker));rect(x-4,y-17,8,8,"#d7b586");rect(x-5,y-18,10,3,"#6f4930");
   rect(x-5,y+2,4,6,"#49392d");rect(x+2,y+2,4,6,"#49392d");
   const tool=workerToolKind(worker),swing=(worker.combatTarget&&worker.attackCooldown>WORKER_ATTACK_RATE-.2)||(tool&&worker.hitCooldown>WORKER_HIT_COOLDOWN-.2);
   if(worker.job==="haul"){
@@ -1477,6 +1480,7 @@ function draw(){
   for(const rock of rocks)drawRock(rock);
   for(const diamond of diamonds)drawDiamondNode(diamond);
   for(const tree of sorted)drawTree(tree);
+  for(const corpse of workerCorpses)drawCorpse(corpse);
   for(const resource of resourceDrops)drawResource(resource);
   for(const enemy of state.enemies)drawEnemy(enemy);
   drawBase();drawKing();

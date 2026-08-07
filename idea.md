@@ -56,8 +56,7 @@ Explicitly postponed:
 
 ## Clicking
 
-- Add a click cooldown so rapid clicking cannot be spammed too quickly.
-- Increase the minimum click interval. Exact interval TBD.
+Manual clicks and steady-hand holding share one player-work cooldown, tuned by `PLAYER_CLICK_CPS`. The rate applies only to direct enemy attacks and tree, rock, or diamond gathering; other interactions remain immediate.
 
 ## Fog and Expansion
 
