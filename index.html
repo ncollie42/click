@@ -1,4 +1,17 @@
-<!-- Owns the complete Wooddrop gathering/building demo: UI, simulation, input, and canvas rendering. -->
+<!--
+  Wooddrop — one file: DOM UI, simulation, three.js render layer, view debugger.
+
+  Script layout, in order:
+    prelude      three.js import, debug-tunable feel constants, the chop timer
+    simulation   state, input, update() — thinks purely in 2D game pixels (x, y)
+    render       PALETTE, one pooled mesh group per entity, 2D overlay for
+                 bars and text that must stay camera-facing
+    debugger     the "view" panel: camera / sightlines / pickup / bars
+
+  The simulation is deliberately 2D. Game (x, y) maps to world (x/16, 0, y/16)
+  in the render layer, so targeting, ranges and hit tests never learn about the
+  camera — only draw code does.
+-->
 <!doctype html>
 <html lang="en">
 <head>
@@ -45,8 +58,6 @@
   .cost,.purpose{display:block;font-size:9px;margin-top:2px}
   .cost{color:#765f42}.purpose{opacity:.72}
   kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
-  canvas{width:100%;height:100%;display:block;background:#617738;image-rendering:pixelated;cursor:default}
-  canvas.building{cursor:crosshair}
   #toast{position:absolute;z-index:8;left:50%;bottom:calc(var(--build-dock-clearance,42px) + 16px);transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s,bottom .15s;pointer-events:none;white-space:nowrap}
   #toast.on{opacity:1}#game.modal-open #toast{opacity:0}
   #prompt{position:absolute;z-index:5;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
@@ -94,6 +105,45 @@
     .cost,.purpose{font-size:9px}#buildTabs{width:min(440px,100%);padding:2px}.dock-tab{padding:4px;font-size:10px}
     #debugOptions{grid-template-columns:repeat(2,1fr)}#upgradePanel,#debugPanel{max-height:calc(100% - 12px)}
   }
+
+  /* ── 3D layers ───────────────────────────────────────────────────── */
+  #scene,#overlay{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #scene{z-index:0;background:#1d1c29;image-rendering:auto}
+  #overlay{z-index:1;background:transparent;cursor:default;image-rendering:auto}
+  #overlay.building{cursor:crosshair}
+  #viewPanel{position:absolute;z-index:9;left:8px;top:8px;width:252px;max-height:calc(100% - 16px);
+    display:flex;flex-direction:column;padding:6px 8px 8px;background:#242919f2;color:#f1dfb7;
+    border:2px solid #d8c58f;box-shadow:var(--shadow);font-size:11px}
+  #viewPanel.collapsed{width:96px}
+  #viewPanel.collapsed #vTabs,#viewPanel.collapsed #vPanes{display:none}
+  #vToggle{margin:0;padding:4px;text-align:center;background:#4a5533;color:#f1dfb7;border-color:#8f9760}
+  #vTabs{display:flex;gap:3px;margin:6px 0 7px}
+  #vTabs button{flex:1;margin:0;padding:4px 2px;font-size:10px;text-align:center;
+    background:#354027;color:#f1dfb7;border:1px solid #69754b}
+  #vTabs button.on{background:#d4a443;color:#292119;border-color:#f1dfb7}
+  #vPanes{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
+  #vPanes .pane{display:none}
+  #vPanes .pane.on{display:block}
+  #viewPanel h4{font-size:10px;letter-spacing:.06em;opacity:.85;border-bottom:1px solid #8f9760;
+    padding-bottom:3px;margin:9px 0 5px}
+  #viewPanel h4:first-child{margin-top:0}
+  #viewPanel label{display:block;margin:5px 0}
+  #viewPanel .row{display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px}
+  #viewPanel .row span:last-child{opacity:.62}
+  #viewPanel input[type=range]{width:100%;margin:0;accent-color:#d4a443}
+  #viewPanel .chk{display:flex;gap:6px;align-items:center;margin:4px 0;cursor:pointer;font-size:10px}
+  #viewPanel .chk input{width:auto;margin:0;accent-color:#d4a443}
+  #vScan{width:100%;height:70px;display:block;margin-bottom:4px;background:#1b2013;border:1px solid #69754b}
+  #vRescan{margin:0;padding:4px;text-align:center;background:#4a5533;color:#f1dfb7;border-color:#8f9760}
+  #vReadout{margin-top:6px;padding:4px 5px;background:#1b2013;font-size:10px;line-height:1.5;
+    white-space:pre;user-select:all}
+  #vStatline{display:flex;gap:7px;font-size:10px;margin-bottom:5px}
+  #vStatline .ok{color:#8fd07a}
+  #vStatline .warn{color:#e8926f}
+  #viewPanel .hint{font-size:9px;opacity:.6;line-height:1.45;margin-top:5px}
+  #vRestart{flex:0 0 auto;margin:8px 0 0;padding:5px;text-align:center;
+    background:#8e2924;color:#fff;border-color:#d8c58f}
+  #viewPanel.collapsed #vRestart{display:none}
 </style>
 </head>
 <body>
@@ -104,7 +154,7 @@
         <button class="build" data-kind="lumber" title="staff to gather nearby wood"><b>lumber camp</b><span class="cost">8w · 2s</span><span class="purpose">gathers wood</span></button>
         <button class="build" data-kind="quarry" title="staff to gather nearby stone"><b>quarry</b><span class="cost">4w · 8s</span><span class="purpose">gathers stone</span></button>
         <button class="build" data-kind="stockpile" title="stores loose resources for haulers"><b>stockpile</b><span class="cost">2w · 0s</span><span class="purpose">local storage</span></button>
-        <button class="build" data-kind="house" title="adds two worker slots"><b>house</b><span class="cost" id="houseCost">8w · 6s</span><span class="purpose">worker capacity</span></button>
+        <button class="build" data-kind="house" title="produces up to two workers"><b>house</b><span class="cost" id="houseCost">8w · 6s</span><span class="purpose">produces workers</span></button>
         <button class="build" data-kind="obelisk" title="accepts permanent building upgrades"><b>obelisk</b><span class="cost">5w · 12s</span><span class="purpose">upgrades</span></button>
       </section>
       <section class="build-category" data-category="defense">
@@ -125,7 +175,101 @@
     </nav>
   </section>
   <main id="stage">
-    <canvas id="canvas" width="960" height="540"></canvas>
+    <canvas id="scene"></canvas>
+    <canvas id="overlay" width="960" height="540"></canvas>
+    <section id="viewPanel" aria-label="3d view debugger">
+      <button id="vToggle" type="button">view &#9662;</button>
+      <nav id="vTabs"></nav>
+      <div id="vPanes">
+
+        <section class="pane" data-tab="camera">
+          <h4>pose</h4>
+          <label><span class="row"><span>pitch</span><span id="o_vPitch"></span></span>
+            <input autocomplete="off" type="range" id="vPitch" min="15" max="89" step="1" value="40"></label>
+          <label><span class="row"><span>yaw</span><span id="o_vYaw"></span></span>
+            <input autocomplete="off" type="range" id="vYaw" min="-180" max="180" step="1" value="0"></label>
+          <label><span class="row"><span>zoom</span><span id="o_vZoom"></span></span>
+            <input autocomplete="off" type="range" id="vZoom" min="0.2" max="5" step="0.05" value="1"></label>
+          <label><span class="row"><span>fov</span><span id="o_vFov"></span></span>
+            <input autocomplete="off" type="range" id="vFov" min="12" max="70" step="1" value="38"></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vOrtho"><span>orthographic</span></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vOrbit"><span>auto-orbit yaw</span></label>
+          <div id="vReadout"></div>
+        </section>
+
+        <section class="pane" data-tab="sightlines">
+          <h4>visibility</h4>
+          <div id="vStatline"><span>clickable <b id="vStat">&mdash;</b></span><span id="vWarn"></span></div>
+          <canvas id="vScan" width="452" height="140"></canvas>
+          <button id="vRescan" type="button">re-scan</button>
+          <p class="hint">% of clickable things in the open, across every pitch.
+          taller bars = less hidden. the pale line is where you are.</p>
+          <h4>mitigations</h4>
+          <label><span class="row"><span>object height</span><span id="o_vHeight"></span></span>
+            <input autocomplete="off" type="range" id="vHeight" min="30" max="130" step="5" value="100"></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vShadow" checked><span>shadows</span></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vPins"><span>mark occluded</span></label>
+        </section>
+
+        <section class="pane" data-tab="pickup">
+          <h4>hand</h4>
+          <label><span class="row"><span>hand capacity</span><span id="o_vCap"></span></span>
+            <input autocomplete="off" type="range" id="vCap" min="1" max="14" step="1" value="5"></label>
+          <label><span class="row"><span>vacuum radius</span><span id="o_vRadius"></span></span>
+            <input autocomplete="off" type="range" id="vRadius" min="15" max="160" step="5" value="45"></label>
+          <label><span class="row"><span>suck rate</span><span id="o_vRate"></span></span>
+            <input autocomplete="off" type="range" id="vRate" min="20" max="400" step="10" value="80"></label>
+          <label><span class="row"><span>arc height</span><span id="o_vArc"></span></span>
+            <input autocomplete="off" type="range" id="vArc" min="0" max="6" step="0.25" value="2"></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vRing" checked><span>show vacuum ring</span></label>
+          <h4>click</h4>
+          <label><span class="row"><span>chop time</span><span id="o_vChopT"></span></span>
+            <input autocomplete="off" type="range" id="vChopT" min="100" max="3000" step="50" value="700"></label>
+          <label><span class="row"><span>yield per chop</span><span id="o_vYield"></span></span>
+            <input autocomplete="off" type="range" id="vYield" min="1" max="10" step="1" value="1"></label>
+          <label><span class="row"><span>damage per swing</span><span id="o_vDamage"></span></span>
+            <input autocomplete="off" type="range" id="vDamage" min="1" max="20" step="1" value="1"></label>
+          <p class="hint">hold-to-fill: the bar must complete before anything lands,
+          and releasing early banks nothing. yield and damage apply to your own
+          swings only — worker gathering still drops one per hit.</p>
+        </section>
+
+        <section class="pane" data-tab="bars">
+          <h4>scaling</h4>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vBarScale" checked><span>scale with zoom</span></label>
+          <label><span class="row"><span>min scale</span><span id="o_vBarMin"></span></span>
+            <input autocomplete="off" type="range" id="vBarMin" min="0.2" max="1.5" step="0.05" value="0.6"></label>
+          <label><span class="row"><span>max scale</span><span id="o_vBarMax"></span></span>
+            <input autocomplete="off" type="range" id="vBarMax" min="0.5" max="4" step="0.1" value="1.8"></label>
+          <h4>health bars</h4>
+          <label><span class="row"><span>width</span><span id="o_vBarW"></span></span>
+            <input autocomplete="off" type="range" id="vBarW" min="0.4" max="2.5" step="0.05" value="1"></label>
+          <label><span class="row"><span>thickness</span><span id="o_vBarH"></span></span>
+            <input autocomplete="off" type="range" id="vBarH" min="3" max="16" step="0.5" value="6"></label>
+          <h4>frame</h4>
+          <label><span class="row"><span>row gap</span><span id="o_vBarGap"></span></span>
+            <input autocomplete="off" type="range" id="vBarGap" min="0" max="8" step="0.5" value="2.5"></label>
+          <label><span class="row"><span>pad sides</span><span id="o_vBarPadX"></span></span>
+            <input autocomplete="off" type="range" id="vBarPadX" min="0" max="10" step="0.5" value="4"></label>
+          <label><span class="row"><span>pad top/bottom</span><span id="o_vBarPadY"></span></span>
+            <input autocomplete="off" type="range" id="vBarPadY" min="0" max="8" step="0.5" value="1.5"></label>
+          <h4>placement &amp; text</h4>
+          <label><span class="row"><span>height above</span><span id="o_vBarLift"></span></span>
+            <input autocomplete="off" type="range" id="vBarLift" min="0.3" max="2.5" step="0.05" value="1"></label>
+          <label><span class="row"><span>text size</span><span id="o_vBarText"></span></span>
+            <input autocomplete="off" type="range" id="vBarText" min="6" max="18" step="0.5" value="9"></label>
+          <label><span class="row"><span>text min</span><span id="o_vTextMin"></span></span>
+            <input autocomplete="off" type="range" id="vTextMin" min="4" max="14" step="0.5" value="7"></label>
+          <label><span class="row"><span>text max</span><span id="o_vTextMax"></span></span>
+            <input autocomplete="off" type="range" id="vTextMax" min="8" max="30" step="0.5" value="15"></label>
+          <p class="hint">overlay marks are screen-space, so without scaling they
+          swamp the world zoomed out and disappear zoomed in. min/max clamp how
+          far they track the camera.</p>
+        </section>
+
+      </div>
+      <button id="vRestart" type="button">restart run</button>
+    </section>
     <section id="phaseHud">
       <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
       <div id="phaseProgress"><i id="phaseProgressFill"></i></div>
@@ -152,19 +296,46 @@
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
   </main>
 </div>
-<script>
-"use strict";
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}
+</script>
+<script type="module">
+import * as THREE from "three";
+
+// Raycast scratch shared by input (defined here so the sim's handlers can use it).
+const _ndc=new THREE.Vector2(), _ray=new THREE.Raycaster(), _ghit=new THREE.Vector3();
+const _groundPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+
+// ── debug-tunable feel constants (view panel > pickup) ───────────────────────
+let CHOP_TIME=.7;          // seconds of held left-click per harvest hit
+let VACUUM_RADIUS=45;      // game px that collectDrop() sweeps
+let SUCK_RATE=.08;         // seconds between vacuum pickups
+let HAND_ARC=2;            // world units a collected drop arcs on its way in
+let SHOW_VACUUM_RING=true;
+const STEADY_HAND_RATE=1.8;  // the "steady hand" upgrade's fill multiplier
+let CHOP_YIELD=1;          // drops spawned per completed player chop
+let CLICK_DAMAGE=1;        // hp removed per completed player swing on an enemy
+
+// Harvesting is hold-to-fill rather than per-click, so it needs its own timer.
+const chopState={target:null,kind:null,t:0};
+function beginChop(hit){
+  if(chopState.target===hit.target)return;
+  chopState.target=hit.target;chopState.kind=hit.kind;chopState.t=0;
+}
+function resetChop(){chopState.target=null;chopState.kind=null;chopState.t=0;}
+function chopProgress(){return chopState.target?clamp(chopState.t/CHOP_TIME,0,1):0;}
+
 // Wooddrop's world is one explicit state object. Input mutates it; update advances it; draw only reads it.
-const canvas = document.getElementById("canvas");
+const canvas = document.getElementById("overlay");   // 2D overlay sits above the WebGL scene
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled=false;
 const VIEW_W=960,VIEW_H=540;                 // Fixed 16:9 logical frame; CSS scales both axes together.
 const W=1536,H=1024;                          // Larger world explored through camera pan/zoom.
 const BASE = {x:W/2,y:H/2,r:43};
 const BASE_ZONE=240;
-const BASE_SLOTS=3,HOUSE_SLOTS=2,HOUSE_COST={wood:8,stone:6},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
+const HOUSE_SLOTS=2,HOUSE_COST={wood:8,stone:6},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
 const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
-const DEBUG_UI_ENABLED=true,PLAYER_CLICK_CPS=1.2;
+const DEBUG_UI_ENABLED=true;
 const BUILDING_TYPES = {
   lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155},
   quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155},
@@ -184,7 +355,7 @@ const UPGRADES=[
   {id:"magnet",icon:"⌁",name:"auto collect",cost:{wood:10,stone:8},description:"placeholder: pull nearby loose resources toward you."},
   {id:"storage",icon:"▣",name:"building storage",cost:{wood:12,stone:5},description:"placeholder: increase stockpile storage and organization."},
   {id:"fuel",icon:"▰",name:"worker fuel",cost:{wood:7,stone:10},description:"placeholder: let gathering workers operate faster."},
-  {id:"autoClick",icon:"↻",name:"steady hand",cost:{wood:9,stone:7},description:"hold primary click to repeatedly gather or attack beneath the cursor."}
+  {id:"autoClick",icon:"↻",name:"steady hand",cost:{wood:9,stone:7},description:"steadier swings: gathering and attacking take 45% less time to land."}
 ];
 // Tower chassis state selects one definition here; update, input, range UI, and cooldown UI read no duplicated stats.
 const TOWER_VARIANTS={
@@ -225,7 +396,6 @@ const NIGHT_WAVE_RECIPES=[
 const DAY_DURATION=75,NIGHT_DURATION=45;
 const NIGHT_OVERLAY_ALPHA=.5,LIGHT_FADE_TIME=6;
 const KING={range:95,damage:2,rate:.85};
-const FOG_TS=32,FOG_W=W/FOG_TS,FOG_H=H/FOG_TS;
 const trees = [];
 const rocks = [];
 const diamonds = [];
@@ -240,12 +410,12 @@ const workerCorpses = [];
 const particles = [];
 const state = {
   mouse:{x:W/2,y:H/2,inside:false},
-  carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[], fog:new Uint8Array(FOG_W*FOG_H),
-  baseHp:100,baseMax:100,gameOver:false,paused:false,dayEnemyTimer:DAY_ENEMY_SPAWN.min,coinTimer:6,basePulse:0,baseSpawnTimer:WORKER_SPAWN_TIME,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
+  carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
+  baseHp:100,baseMax:100,gameOver:false,paused:false,dayEnemyTimer:DAY_ENEMY_SPAWN.min,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0},
   nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
-  upgradeMenu:{building:null,selected:null,kind:null},debug:{upgradeOverrides:{},selected:null},primaryClick:{held:false,actionCooldown:0,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
+  upgradeMenu:{building:null,selected:null,kind:null},debug:{upgradeOverrides:{},selected:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
   king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
 };
 
@@ -272,7 +442,7 @@ function chooseUpcomingNight(){
 }
 chooseUpcomingNight();
 
-// Full land map: dense resource patches surround one initial clearing, while fog controls expansion.
+// Full land map: dense resource patches surround one initial clearing.
 function seedWorld(){
   const occupied=[];
   const place=(count,minGap,make,accept=()=>true)=>{
@@ -289,16 +459,6 @@ function seedWorld(){
   place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0}));
   place(5,110,(x,y)=>diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0}),
     (x,y)=>distance(x,y,BASE.x,BASE.y)>600);
-  state.fog.fill(1);revealFog(BASE.x,BASE.y,9);
-}
-function fogIndex(x,y){return y*FOG_W+x;}
-function isFogged(x,y){return !!state.fog[fogIndex(clamp(Math.floor(x/FOG_TS),0,FOG_W-1),clamp(Math.floor(y/FOG_TS),0,FOG_H-1))];}
-function revealFog(x,y,radius){
-  const cx=Math.floor(x/FOG_TS),cy=Math.floor(y/FOG_TS),r=Math.ceil(radius);
-  for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
-    const tx=cx+dx,ty=cy+dy;if(tx<0||ty<0||tx>=FOG_W||ty>=FOG_H||Math.hypot(dx,dy)>radius)continue;
-    state.fog[fogIndex(tx,ty)]=0;
-  }
 }
 seedWorld();
 
@@ -307,13 +467,20 @@ seedWorld();
 // Read by: update() for collection/drop delivery and draw() for hover feedback.
 // Format: state.mouse is world-space pixels after fixed-frame scaling and inverse camera transform.
 // Lifetime: page load until refresh.
+// Screen pixels become world pixels by raycasting the ground plane, which is the
+// 3D equivalent of the old inverse camera transform and works at any pitch/yaw.
+function groundFromEvent(event){
+  const r=canvas.getBoundingClientRect();
+  _ndc.x=((event.clientX-r.left)/r.width)*2-1;
+  _ndc.y=-((event.clientY-r.top)/r.height)*2+1;
+  _ray.setFromCamera(_ndc,camera3);
+  if(!_ray.ray.intersectPlane(_groundPlane,_ghit))return null;
+  return {x:_ghit.x/S,y:_ghit.z/S};
+}
 function pointerPosition(event){
-  const r=canvas.getBoundingClientRect(),camera=state.camera;
-  const sx=(event.clientX-r.left)*VIEW_W/r.width,sy=(event.clientY-r.top)*VIEW_H/r.height;
-  // Screen pixels become world pixels through the inverse camera transform used by draw().
-  state.mouse.x=camera.x+(sx-VIEW_W/2)/camera.zoom;
-  state.mouse.y=camera.y+(sy-VIEW_H/2)/camera.zoom;
-  state.mouse.inside=true;
+  const g=groundFromEvent(event);
+  if(!g){state.mouse.inside=false;return;}
+  state.mouse.x=g.x;state.mouse.y=g.y;state.mouse.inside=true;
 }
 function clampCamera(){
   const camera=state.camera,halfW=VIEW_W/(2*camera.zoom),halfH=VIEW_H/(2*camera.zoom);
@@ -322,20 +489,21 @@ function clampCamera(){
 }
 canvas.addEventListener("wheel",event=>{
   event.preventDefault();
-  const r=canvas.getBoundingClientRect(),camera=state.camera;
-  const sx=(event.clientX-r.left)*VIEW_W/r.width,sy=(event.clientY-r.top)*VIEW_H/r.height;
-  const worldX=camera.x+(sx-VIEW_W/2)/camera.zoom,worldY=camera.y+(sy-VIEW_H/2)/camera.zoom;
-  const next=clamp(camera.zoom*Math.exp(-event.deltaY*.0015),.2,5);
-  camera.x=worldX-(sx-VIEW_W/2)/next;camera.y=worldY-(sy-VIEW_H/2)/next;camera.zoom=next;
-  clampCamera();pointerPosition(event);
+  const camera=state.camera;
+  // Zoom toward the cursor: remember the ground point, rescale, put it back.
+  const before=groundFromEvent(event);
+  camera.zoom=clamp(camera.zoom*Math.exp(-event.deltaY*.0015),.2,5);
+  placeCamera();
+  const after=groundFromEvent(event);
+  if(before&&after){camera.x+=before.x-after.x;camera.y+=before.y-after.y;}
+  clampCamera();placeCamera();pointerPosition(event);syncViewInputs();
 },{passive:false});
 canvas.addEventListener("pointermove",event=>{
   const camera=state.camera;
   if(camera.panning){
-    const r=canvas.getBoundingClientRect();
-    camera.x-=(event.clientX-camera.lastX)*VIEW_W/r.width/camera.zoom;
-    camera.y-=(event.clientY-camera.lastY)*VIEW_H/r.height/camera.zoom;
-    camera.lastX=event.clientX;camera.lastY=event.clientY;clampCamera();
+    // Drag keeps the grabbed ground point pinned under the cursor.
+    const g=groundFromEvent(event);
+    if(g){camera.x+=camera.dragX-g.x;camera.y+=camera.dragY-g.y;clampCamera();placeCamera();}
   }
   pointerPosition(event);
 });
@@ -344,10 +512,10 @@ canvas.addEventListener("contextmenu",event=>event.preventDefault());
 canvas.addEventListener("auxclick",event=>event.preventDefault());
 canvas.addEventListener("pointerdown",event=>{
   pointerPosition(event);
-  if(event.button===1){event.preventDefault();state.camera.panning=true;state.camera.lastX=event.clientX;state.camera.lastY=event.clientY;canvas.setPointerCapture(event.pointerId);return;}
+  if(event.button===1){event.preventDefault();const g=groundFromEvent(event);state.camera.panning=true;state.camera.dragX=g?g.x:state.camera.x;state.camera.dragY=g?g.y:state.camera.y;canvas.setPointerCapture(event.pointerId);return;}
   if(state.gameOver||state.paused||modalOpen())return;
-  if(event.button===0){leftClick();if(globalUpgradeEnabled("autoClick")&&!modalOpen())startPrimaryClick();}
-  if(event.button===2){if(cancelBuildMode())return;if(pickUpMovableAt(state.mouse.x,state.mouse.y))return;state.collecting=true;collectDrop();state.collectCooldown=.08;}
+  if(event.button===0){leftClick();if(!modalOpen())startPrimaryClick();}
+  if(event.button===2){if(cancelBuildMode())return;if(pickUpMovableAt(state.mouse.x,state.mouse.y))return;state.collecting=true;collectDrop();state.collectCooldown=SUCK_RATE;}
 });
 // Window-level release prevents collection or camera drag getting stuck outside the canvas.
 window.addEventListener("pointerup",event=>{if(event.button===0)stopPrimaryClick();if(event.button===2)releaseRightMouse();if(event.button===1)state.camera.panning=false;});
@@ -361,7 +529,7 @@ window.addEventListener("keyup",event=>state.keys.delete(event.code));
 
 function startPrimaryClick(){state.primaryClick.held=true;}
 // Release/cancel owns only held state; the shared work cooldown survives every stop/start boundary.
-function stopPrimaryClick(){state.primaryClick.held=false;}
+function stopPrimaryClick(){state.primaryClick.held=false;resetChop();}
 function stopGameplayInput(cancelPlacement=false){
   stopPrimaryClick();state.collecting=false;state.camera.panning=false;state.keys.clear();
   if(cancelPlacement){state.buildMode=null;setBuildDockCategory(null);syncBuildHud();}
@@ -386,7 +554,6 @@ function spawnEnemy(side=null,enemyType=null){
 function enemyAt(x,y){
   let target=null,best=Infinity;
   for(const enemy of state.enemies){
-    if(isFogged(enemy.x,enemy.y))continue;
     const d=distance(x,y,enemy.x,enemy.y),hitRadius=24*ENEMY_TYPES[enemy.type].size;
     if(d<hitRadius&&d<best){best=d;target=enemy;}
   }
@@ -401,7 +568,7 @@ function killEnemy(enemy,announce=true){
   burst(enemy.x,enemy.y,"#4b3b50",12);if(announce||droppedDust)toast(droppedDust?"enemy defeated — dust dropped":"enemy defeated");sound(150,.12);
 }
 function hitEnemy(enemy,quiet=false){
-  enemy.hp--;enemy.flash=.16;
+  enemy.hp-=CLICK_DAMAGE;enemy.flash=.16;
   burst(enemy.x,enemy.y,"#d25b49",5);if(!quiet)sound(610,.045);
   if(enemy.hp<=0)killEnemy(enemy);
 }
@@ -410,7 +577,7 @@ function manualTowerButtonHit(building,x,y){return x>=building.x-30&&x<=building
 function towerVariant(building){return TOWER_VARIANTS[building.tower?.variant||"basic"];}
 function workerNodeAt(x,y){
   let found=null,best=38;
-  for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){const d=distance(x,y,node.x,node.y);if(resourceIsActive(node,kind)&&!isFogged(node.x,node.y)&&d<best){found={node,kind};best=d;}}
+  for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){const d=distance(x,y,node.x,node.y);if(resourceIsActive(node,kind)&&d<best){found={node,kind};best=d;}}
   return found;
 }
 function pickUpMovableAt(x,y){
@@ -434,7 +601,7 @@ function cancelHeldObject(){
 }
 // Assignment priority is resolved once so drop behavior and held-worker preview cannot drift.
 function workerAssignmentAt(worker,x,y){
-  if(x<20||y<20||x>W-20||y>H-20||isFogged(x,y))return null;
+  if(x<20||y<20||x>W-20||y>H-20)return null;
   const near=predicate=>buildings.find(item=>predicate(item)&&distance(x,y,item.x,item.y)<42);
   const blueprint=near(item=>!item.complete),node=workerNodeAt(x,y),staff=near(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")),stockpile=near(item=>item.complete&&item.type==="stockpile"),house=near(item=>item.complete&&item.type==="house");
   if(blueprint)return {job:"build",target:blueprint,postX:blueprint.x,postY:blueprint.y+20,zoneX:blueprint.x,zoneY:blueprint.y,zoneRadius:WORKER_LEASH};
@@ -469,7 +636,7 @@ function activateManualTower(building){
   if(tower.cooldown>0){toast(variant.name+" recharging: "+tower.cooldown.toFixed(1)+"s");return;}
   tower.cooldown=variant.cooldown;tower.flash=.35;
   for(const enemy of [...state.enemies]){
-    if(isFogged(enemy.x,enemy.y)||distance(building.x,building.y,enemy.x,enemy.y)>variant.effectRadius)continue;
+    if(distance(building.x,building.y,enemy.x,enemy.y)>variant.effectRadius)continue;
     damageEnemy(enemy,variant.damage,variant.accent,7,building);
   }
   burst(building.x,building.y,variant.accent,24);toast("shock pulse fired");sound(variant.sound,.28);
@@ -490,36 +657,39 @@ function createBuilding(type,x,y){
 
 function playerResourceAt(x,y){
   let target=null,kind=null,best=34;
-  for(const tree of trees){if(tree.stump>0||isFogged(tree.x,tree.y))continue;const d=distance(x,y,tree.x,tree.y-10);if(d<best){best=d;target=tree;kind="wood";}}
-  for(const rock of rocks){if(rock.depleted>0||isFogged(rock.x,rock.y))continue;const d=distance(x,y,rock.x,rock.y);if(d<best){best=d;target=rock;kind="stone";}}
-  for(const diamond of diamonds){if(diamond.depleted>0||isFogged(diamond.x,diamond.y))continue;const d=distance(x,y,diamond.x,diamond.y);if(d<best){best=d;target=diamond;kind="diamond";}}
+  for(const tree of trees){if(tree.stump>0)continue;const d=distance(x,y,tree.x,tree.y-10);if(d<best){best=d;target=tree;kind="wood";}}
+  for(const rock of rocks){if(rock.depleted>0)continue;const d=distance(x,y,rock.x,rock.y);if(d<best){best=d;target=rock;kind="stone";}}
+  for(const diamond of diamonds){if(diamond.depleted>0)continue;const d=distance(x,y,diamond.x,diamond.y);if(d<best){best=d;target=diamond;kind="diamond";}}
   return target?{target,kind}:null;
 }
-// Manual presses and steady-hand hold enter this single gate; only successful player work consumes it.
-function tryPlayerWorkAction(){
-  const m=state.mouse,primary=state.primaryClick;if(primary.actionCooldown>0||!m.inside||isFogged(m.x,m.y))return false;
-  const quiet=primary.audioCooldown>0,enemy=enemyAt(m.x,m.y),resource=enemy?null:playerResourceAt(m.x,m.y);
-  if(!enemy&&!resource)return false;
-  primary.actionCooldown=1/PLAYER_CLICK_CPS;
-  if(enemy)hitEnemy(enemy,quiet);else hitResource(resource.target,resource.kind,false,quiet);
-  if(!quiet)primary.audioCooldown=.25;return true;
-}
+// Harvesting and attacking both run through updatePrimaryClick()'s hold timer.
 // Simulation time advances one cooldown and, while held, retries current cursor work without buffering missed actions.
 function updatePrimaryClick(dt){
-  const primary=state.primaryClick;primary.actionCooldown=Math.max(0,primary.actionCooldown-dt);primary.audioCooldown=Math.max(0,primary.audioCooldown-dt);
-  if(!primary.held)return;if(modalOpen()||!globalUpgradeEnabled("autoClick")){stopPrimaryClick();return;}
-  if(state.mouse.inside)tryPlayerWorkAction();
+  const primary=state.primaryClick;
+  primary.audioCooldown=Math.max(0,primary.audioCooldown-dt);
+  if(!primary.held){resetChop();return;}
+  if(modalOpen()||state.paused||state.gameOver){resetChop();stopPrimaryClick();return;}
+  const m=state.mouse;
+  if(!m.inside){resetChop();return;}
+  // Nodes and enemies share one hold-to-fill timer; moving off resets it.
+  const enemy=enemyAt(m.x,m.y);
+  const hit=enemy?{target:enemy,kind:"enemy"}:playerResourceAt(m.x,m.y);
+  if(!hit){resetChop();return;}
+  beginChop(hit);
+  chopState.t+=dt*(globalUpgradeEnabled("autoClick")?STEADY_HAND_RATE:1);
+  if(chopState.t<CHOP_TIME)return;
+  chopState.t=0;
+  const quiet=primary.audioCooldown>0;
+  if(hit.kind==="enemy")hitEnemy(hit.target,quiet);
+  else hitResource(hit.target,hit.kind,false,quiet);
+  if(!quiet)primary.audioCooldown=.25;
 }
 function leftClick(){
   if(state.gameOver||state.paused)return;
   const m=state.mouse;
-  if(isFogged(m.x,m.y)){
-    revealFog(m.x,m.y,1.65);sound(230,.07);
-    toast(state.buildMode?"fog cleared — click again to place":"fog cleared");
-    return;
-  }
   const enemy=enemyAt(m.x,m.y);
-  if(enemy){tryPlayerWorkAction();return;}
+  // Attacking is timed too — the press only arms the bar.
+  if(enemy){beginChop({target:enemy,kind:"enemy"});return;}
   if(state.buildMode){
     if(canPlace(m.x,m.y)){
       const type=state.buildMode,def=BUILDING_TYPES[type];
@@ -541,14 +711,17 @@ function leftClick(){
   if(tower){openUpgradeMenu(tower,"tower");return;}
   const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
   if(pile){unloadStockpile(pile,m.x);return;}
-  const resource=playerResourceAt(m.x,m.y);if(!resource){toast("left click a tree, rock, or diamond deposit");return;}tryPlayerWorkAction();
+  const resource=playerResourceAt(m.x,m.y);if(!resource){toast("left click a tree, rock, or diamond deposit");return;}
+  // Harvesting no longer resolves on the press; updatePrimaryClick() fills the timer.
+  beginChop(resource);
 }
 
 // Player and harvesting workers share this path: harvesting automation creates physical drops, never stored resources.
 function hitResource(target,kind,automatic,quiet=false){
   target.hp--;
   target.shake=1;
-  spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
+  for(let i=0;i<(automatic?1:CHOP_YIELD);i++)
+    spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
   burst(target.x,target.y-12,kind==="wood"?"#9fb351":kind==="diamond"?"#78d7e5":"#bbb7ae",5);
   if(!automatic&&!quiet)sound(kind==="wood"?350+target.hp*25:kind==="diamond"?760:170+target.hp*15,.045);
   if(target.hp<=0&&kind==="wood"){
@@ -568,7 +741,7 @@ function spawnResource(kind,x,y,ttl=null){
 function spawnCoin(){
   for(let attempt=0;attempt<300;attempt++){
     const x=rand(40,W-40),y=rand(40,H-40);
-    if(isFogged(x,y)||distance(x,y,BASE.x,BASE.y)<80)continue;
+    if(distance(x,y,BASE.x,BASE.y)<80)continue;
     spawnResource("coin",x,y,8);toast("a gold coin appeared nearby");return;
   }
 }
@@ -579,9 +752,9 @@ function collectDrop(silent=false){
   const carried=carriedTotal();
   if(carried+incoming>=state.capacity){if(!silent){toast("hands full — drop your resources");sound(110,.08);}return false;}
   const m=state.mouse;
-  let nearest=null,best=45;
+  let nearest=null,best=VACUUM_RADIUS;
   for(const drop of resourceDrops){
-    if(drop.target||isFogged(drop.x,drop.y))continue;
+    if(drop.target)continue;
     const d=distance(m.x,m.y,drop.x,drop.y);
     if(d<best){best=d;nearest=drop;}
   }
@@ -697,7 +870,7 @@ function renderDebugPanel(){
     const legitimate=legitimateGlobalUpgradeOwned(upgrade.id),forced=globalUpgradeHasOverride(upgrade.id),enabled=globalUpgradeEnabled(upgrade.id),button=document.createElement("button");button.classList.add(forced?(enabled?"forced-on":"forced-off"):(legitimate?"legitimate":"unowned"));
     const sourceLabel=forced?"debug-forced "+(enabled?"on":"off"):(legitimate?"legitimately owned":"not owned");button.innerHTML="<b>"+upgrade.icon+"</b>"+upgrade.name+"<span>"+(enabled?"enabled":"disabled")+" · "+sourceLabel+"</span>";button.addEventListener("click",()=>{state.debug.selected=upgrade.id;setGlobalUpgradeDebugOverride(upgrade.id,!globalUpgradeEnabled(upgrade.id));});options.appendChild(button);
   }
-  const selected=UPGRADES.find(upgrade=>upgrade.id===state.debug.selected);detail.innerHTML=selected?"<b>"+selected.icon+" "+selected.name+"</b><br>"+selected.description+(selected.id==="autoClick"?"<br>rate: "+PLAYER_CLICK_CPS+" clicks per second":""):"click an upgrade to force its effective state.";
+  const selected=UPGRADES.find(upgrade=>upgrade.id===state.debug.selected);detail.innerHTML=selected?"<b>"+selected.icon+" "+selected.name+"</b><br>"+selected.description+(selected.id==="autoClick"?"<br>fill rate: "+STEADY_HAND_RATE+"x while held":""):"click an upgrade to force its effective state.";
 }
 function openDebugPanel(){
   if(!DEBUG_UI_ENABLED||state.gameOver||state.paused)return;closeUpgradeMenu();stopGameplayInput(true);state.debug.selected??=UPGRADES[0]?.id||null;renderDebugPanel();document.getElementById("debugPanel").classList.remove("off");document.getElementById("debugButton").classList.add("on");syncModalUi();
@@ -728,7 +901,7 @@ function completeBuilding(building){
   if(building.type==="tower"){const variant=TOWER_VARIANTS.basic;building.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp};}
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
   burst(building.x,building.y-12,"#ead28d",18);
-  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker slots ready":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?"basic tower complete — hover it to choose one variant":def.name+" complete";
+  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?"basic tower complete — hover it to choose one variant":def.name+" complete";
   toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);syncBuildHud();
 }
 function dropToBuilding(building){
@@ -749,7 +922,7 @@ function handoffParticles(x,y,kind,count,fromX=state.mouse.x,fromY=state.mouse.y
 }
 
 function canPlace(x,y){
-  if(x<45||y<45||x>W-45||y>H-45||isFogged(x,y))return false;
+  if(x<45||y<45||x>W-45||y>H-45)return false;
   if(distance(x,y,BASE.x,BASE.y)<105)return false;
   // Depleted nodes no longer reserve ground, letting harvesting open construction sites.
   if(trees.some(t=>t.stump<=0&&distance(x,y,t.x,t.y)<55))return false;
@@ -780,19 +953,19 @@ document.querySelectorAll("button.build").forEach(button=>button.addEventListene
 function completeHouses(){return buildings.filter(building=>building.complete&&building.type==="house");}
 function nextHouseCost(){const count=completeHouses().length;return {wood:HOUSE_COST.wood+HOUSE_COST_ESCALATION.wood*count,stone:HOUSE_COST.stone+HOUSE_COST_ESCALATION.stone*count};}
 function sourceWorkerCount(source){const held=heldWorker();return state.workers.filter(worker=>worker.spawnSource===source).length+(held?.spawnSource===source?1:0);}
-function createWorker(source){
-  const postX=source===BASE?BASE.x:source.x,postY=source===BASE?BASE.y+25:source.y+23;
-  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:source,job:"guard",jobTarget:null,taskTarget:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false};
+function createHouseWorker(house){
+  if(!house.complete||house.type!=="house")return null;
+  const postX=house.x,postY=house.y+23;
+  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:house,job:"guard",jobTarget:null,taskTarget:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false};
 }
-function spawnWorker(source){
-  const worker=createWorker(source);state.workers.push(worker);
-  burst(worker.postX,worker.postY,"#ead28d",9);sound(720,.12);
+function spawnHouseWorker(house){
+  const worker=createHouseWorker(house);if(!worker)return;
+  state.workers.push(worker);burst(worker.postX,worker.postY,"#ead28d",9);sound(720,.12);
 }
 function updateWorkerSpawns(dt){
-  for(const [source,slots] of [[BASE,BASE_SLOTS],...completeHouses().map(house=>[house,HOUSE_SLOTS])]){
-    const timer=source===BASE?state.baseSpawnTimer:source.spawnTimer;
-    if(sourceWorkerCount(source)>=slots){if(source===BASE)state.baseSpawnTimer=WORKER_SPAWN_TIME;else source.spawnTimer=WORKER_SPAWN_TIME;continue;}
-    const next=timer-dt;if(source===BASE)state.baseSpawnTimer=next;else source.spawnTimer=next;if(next<=0){spawnWorker(source);if(source===BASE)state.baseSpawnTimer=WORKER_SPAWN_TIME;else source.spawnTimer=WORKER_SPAWN_TIME;}
+  for(const house of completeHouses()){
+    if(sourceWorkerCount(house)>=HOUSE_SLOTS){house.spawnTimer=WORKER_SPAWN_TIME;continue;}
+    house.spawnTimer-=dt;if(house.spawnTimer<=0){spawnHouseWorker(house);house.spawnTimer=WORKER_SPAWN_TIME;}
   }
 }
 
@@ -804,7 +977,7 @@ function targetIsClaimed(target){
 }
 function nearestWorkerNode(worker,kind,centerX=worker.postX,centerY=worker.postY,radius=WORKER_LEASH){
   const nodes=kind==="wood"?trees:kind==="stone"?rocks:diamonds;let choice=null,best=Infinity;
-  for(const node of nodes){const scopeDistance=distance(centerX,centerY,node.x,node.y),d=distance(worker.x,worker.y,node.x,node.y);if(resourceIsActive(node,kind)&&!isFogged(node.x,node.y)&&scopeDistance<=radius&&d<best){choice=node;best=d;}}
+  for(const node of nodes){const scopeDistance=distance(centerX,centerY,node.x,node.y),d=distance(worker.x,worker.y,node.x,node.y);if(resourceIsActive(node,kind)&&scopeDistance<=radius&&d<best){choice=node;best=d;}}
   return choice;
 }
 function moveWorker(worker,x,y,dt,stop=12){
@@ -881,7 +1054,6 @@ function updateKing(dt){
   if(king.cooldown>0)return;
   let target=null,best=KING.range;
   for(const enemy of state.enemies){
-    if(isFogged(enemy.x,enemy.y))continue;
     const d=distance(king.x,king.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}
   }
   if(!target)return;
@@ -917,7 +1089,7 @@ function pushEnemyToSpawn(enemy,distanceAmount){
   enemy.x=clamp(enemy.x,8,W-8);enemy.y=clamp(enemy.y,8,H-8);
 }
 function nearestTowerTarget(building,range){
-  let target=null,best=range;for(const enemy of state.enemies){if(isFogged(enemy.x,enemy.y))continue;const d=distance(building.x,building.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}}return target;
+  let target=null,best=range;for(const enemy of state.enemies){const d=distance(building.x,building.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}}return target;
 }
 function applyBurn(enemy,building,variant){
   enemy.status??={burn:null};const current=enemy.status.burn,continues=current?.source===building;enemy.status.burn={remaining:variant.burnDuration,tickCooldown:continues?current.tickCooldown:variant.burnInterval,damage:variant.burnDamage,interval:variant.burnInterval,source:building};
@@ -930,10 +1102,10 @@ function lineIntersectsEnemy(x1,y1,x2,y2,enemy,width){
 function fireTowerAttack(building,variant,target){
   const tower=building.tower,color=variant.impactColor||variant.accent;tower.targetX=target.x;tower.targetY=target.y;tower.flash=.2;
   if(variant.attackMode==="splash"){
-    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;for(const enemy of [...state.enemies])if(!isFogged(enemy.x,enemy.y)&&distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageEnemy(enemy,variant.damage,color,8,building);burst(impactX,impactY,color,18);
+    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;for(const enemy of [...state.enemies])if(distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageEnemy(enemy,variant.damage,color,8,building);burst(impactX,impactY,color,18);
   }else if(variant.attackMode==="line"){
     const angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*variant.range,endY=building.y+Math.sin(angle)*variant.range;tower.targetX=endX;tower.targetY=endY;
-    for(const enemy of [...state.enemies])if(!isFogged(enemy.x,enemy.y)&&lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageEnemy(enemy,variant.damage,color,7,building);
+    for(const enemy of [...state.enemies])if(lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageEnemy(enemy,variant.damage,color,7,building);
   }else{
     const alive=damageEnemy(target,variant.damage,color,["burn","slow","push"].includes(variant.attackMode)?8:5,building);
     if(alive&&variant.attackMode==="burn")applyBurn(target,building,variant);
@@ -947,7 +1119,7 @@ function updateTower(building,dt){
   const tower=building.tower,variant=towerVariant(building);tower.cooldown=Math.max(0,tower.cooldown-dt);tower.flash=Math.max(0,tower.flash-dt);tower.hitFlash=Math.max(0,(tower.hitFlash||0)-dt);
   if(variant.manual||tower.cooldown>0)return;
   if(variant.attackMode==="periodic area"){
-    const targets=state.enemies.filter(enemy=>!isFogged(enemy.x,enemy.y)&&distance(building.x,building.y,enemy.x,enemy.y)<=variant.effectRadius);if(!targets.length)return;
+    const targets=state.enemies.filter(enemy=>distance(building.x,building.y,enemy.x,enemy.y)<=variant.effectRadius);if(!targets.length)return;
     tower.cooldown=variant.cooldown;tower.flash=.4;for(const enemy of targets)damageEnemy(enemy,variant.damage,variant.accent,5,building);sound(variant.sound,.22);return;
   }
   const target=nearestTowerTarget(building,variant.range);if(!target)return;tower.cooldown=variant.cooldown;fireTowerAttack(building,variant,target);
@@ -955,7 +1127,7 @@ function updateTower(building,dt){
 
 function updateGuard(worker,dt){
   let target=null,best=Infinity;
-  for(const enemy of state.enemies){if(isFogged(enemy.x,enemy.y))continue;const postDistance=distance(worker.postX,worker.postY,enemy.x,enemy.y),d=distance(worker.x,worker.y,enemy.x,enemy.y);if(postDistance<=WORKER_LEASH&&d<best){best=d;target=enemy;}}
+  for(const enemy of state.enemies){const postDistance=distance(worker.postX,worker.postY,enemy.x,enemy.y),d=distance(worker.x,worker.y,enemy.x,enemy.y);if(postDistance<=WORKER_LEASH&&d<best){best=d;target=enemy;}}
   if(target){worker.combatTarget=target;if(moveWorker(worker,target.x,target.y,dt,WORKER_MELEE-2))workerAttack(worker,target);return;}
   moveWorker(worker,worker.postX,worker.postY,dt);
 }
@@ -965,7 +1137,7 @@ function updateHauler(worker,dt){
   if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;
   if(!worker.returning&&!worker.taskTarget){
     let nearest=null,best=Infinity;
-    for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||isFogged(resource.x,resource.y)||distance(storage.x,storage.y,resource.x,resource.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
+    for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||distance(storage.x,storage.y,resource.x,resource.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
     if(nearest){worker.taskTarget=nearest;nearest.claimedBy=worker;}else if(workerLoad(worker)>0)worker.returning=true;
   }
   if(worker.returning){if(moveWorker(worker,worker.postX,worker.postY,dt,13))depositWorkerLoad(worker);return;}
@@ -1115,7 +1287,7 @@ function update(dt){
   if(state.collecting&&state.mouse.inside&&state.collectCooldown<=0){
     // One pickup per short interval makes a drag vacuum nearby pieces without requiring repeated clicks.
     collectDrop(true);
-    state.collectCooldown=.08;
+    state.collectCooldown=SUCK_RATE;
   }
   if(state.toastTimer<=0)document.getElementById("toast").classList.remove("on");
   // Harvested nodes stay exhausted; only their hit-shake animation decays.
@@ -1202,237 +1374,940 @@ function sound(freq,duration){
   try{audio=audio||new(window.AudioContext||window.webkitAudioContext)();const o=audio.createOscillator(),g=audio.createGain();o.type="square";o.frequency.value=freq;g.gain.setValueAtTime(.035,audio.currentTime);g.gain.exponentialRampToValueAtTime(.0001,audio.currentTime+duration);o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+duration);}catch(_){ }
 }
 
-function rect(x,y,w,h,color){ctx.fillStyle=color;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h));}
-const groundLayer=document.createElement("canvas");groundLayer.width=W;groundLayer.height=H;
-function drawGround(){
-  if(!groundLayer.ready){
-    const c=groundLayer.getContext("2d");c.imageSmoothingEnabled=false;
-    for(let y=0;y<H;y+=8)for(let x=0;x<W;x+=8){
-      const n=(x*13+y*7)%31;
-      c.fillStyle=n%3?"#718441":"#788b46";c.fillRect(x,y,8,8);
-      if(n<6){c.fillStyle="#607638";c.fillRect(x+n,y+(n*3)%7,2,2);}
-    }
-    c.fillStyle="#83944b";c.beginPath();c.ellipse(BASE.x,BASE.y,112,86,0,0,Math.PI*2);c.fill();
-    groundLayer.ready=true;
-  }
-  ctx.drawImage(groundLayer,0,0);
-}
-function drawTree(tree){
-  const x=Math.round(tree.x+(tree.shake?Math.sin(tree.shake*28)*3:0)),y=Math.round(tree.y);
-  if(tree.stump>0){rect(x-8,y-6,16,8,"#79512e");rect(x-5,y-6,10,3,"#c08a4d");return;}
-  rect(x-6,y-31,12,35,"#634226");rect(x-4,y-29,4,30,"#8c6034");
-  const leaf=tree.variant===0?"#506b32":tree.variant===1?"#5b7437":"#48642f";
-  const hi=tree.variant===0?"#738944":"#6d843e";
-  ctx.fillStyle="#344d29";ctx.beginPath();ctx.arc(x,y-45,25,0,Math.PI*2);ctx.arc(x-17,y-33,20,0,Math.PI*2);ctx.arc(x+17,y-34,21,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle=leaf;ctx.beginPath();ctx.arc(x-4,y-49,23,0,Math.PI*2);ctx.arc(x-19,y-38,15,0,Math.PI*2);ctx.arc(x+15,y-39,18,0,Math.PI*2);ctx.fill();
-  rect(x-14,y-58,9,7,hi);rect(x+7,y-50,11,7,hi);rect(x-23,y-38,7,5,hi);
-  if(tree.hp<tree.max){rect(x-18,y+8,36,5,"#2b2119");rect(x-17,y+9,34*tree.hp/tree.max,3,"#d39a3d");}
-}
-function drawRock(rock){
-  if(rock.depleted>0){if(rock.depleted<4)rect(rock.x-5,rock.y,10,4,"#8d8c88");return;}
-  const x=Math.round(rock.x+(rock.shake?Math.sin(rock.shake*30)*3:0)),y=Math.round(rock.y);
-  rect(x-18,y-5,36,13,"#747473");rect(x-13,y-13,25,18,"#969592");rect(x-7,y-18,13,10,"#aaa9a5");rect(x-10,y-12,9,4,"#c2c0ba");rect(x+7,y-6,7,5,"#5f6061");
-  if(rock.hp<rock.max){rect(x-18,y+12,36,5,"#2b2119");rect(x-17,y+13,34*rock.hp/rock.max,3,"#bcbab3");}
-}
-function drawDiamondNode(node){
-  if(node.depleted>0){rect(node.x-4,node.y,8,3,"#557b80");return;}
-  const x=Math.round(node.x+(node.shake?Math.sin(node.shake*30)*3:0)),y=Math.round(node.y);
-  rect(x-16,y+2,32,8,"#4d6264");rect(x-11,y-7,22,11,"#557b80");rect(x-6,y-19,12,17,"#71cbd8");rect(x-2,y-22,6,9,"#c3f5f8");
-  if(node.hp<node.max){rect(x-18,y+14,36,5,"#2b2119");rect(x-17,y+15,34*node.hp/node.max,3,"#79d9e8");}
-}
-function drawResource(resource){
-  ctx.save();
-  if(resource.ttl!==null&&resource.ttl<2&&Math.floor(resource.ttl*7)%2===0)ctx.globalAlpha=.25;
-  ctx.translate(Math.round(resource.x),Math.round(resource.y));ctx.rotate(Math.sin(resource.spin)*.15);
-  if(resource.kind==="stone"){rect(-6,-5,12,10,"#777775");rect(-4,-6,8,8,"#aaa9a5");rect(-2,-5,5,3,"#cbc8c0");}
-  else if(resource.kind==="dust"){rect(-6,-6,12,12,"#624a86");rect(-4,-8,8,13,"#a783df");rect(-2,-6,5,5,"#e2c9ff");}
-  else if(resource.kind==="coin"){rect(-6,-6,12,12,"#9f7227");rect(-5,-7,10,12,"#e3b445");rect(-2,-5,4,7,"#ffe18a");}
-  else if(resource.kind==="diamond"){rect(-7,-3,14,8,"#428f9b");rect(-5,-7,10,12,"#79d9e8");rect(-2,-9,5,9,"#d0f9fb");}
-  else{rect(-9,-4,18,8,"#704728");rect(-7,-5,14,8,"#ad7340");rect(6,-4,3,7,"#d29a5a");rect(-5,-3,7,2,"#c78b50");}
-  ctx.restore();
-}
-function drawEnemy(enemy){
-  const def=ENEMY_TYPES[enemy.type],s=def.size,x=Math.round(enemy.x),y=Math.round(enemy.y+Math.sin(enemy.wob)*2);
-  if(enemy.status?.slow){ctx.fillStyle=enemy.status.slow.multiplier<=.5?"#57432f99":"#8fd9ee88";ctx.beginPath();ctx.ellipse(x,y+7,13*s,5*s,0,0,Math.PI*2);ctx.fill();}
-  if(enemy.status?.burn){ctx.fillStyle="#ef6a32";ctx.beginPath();ctx.moveTo(x-6,y-12);ctx.lineTo(x-2,y-22-Math.sin(enemy.wob*1.7)*3);ctx.lineTo(x+1,y-13);ctx.lineTo(x+5,y-19+Math.sin(enemy.wob)*2);ctx.lineTo(x+7,y-10);ctx.fill();}
-  if(enemy.shotFlash>0&&def.range>60){ctx.strokeStyle="#d9b65f";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(enemy.shotX??BASE.x,enemy.shotY??BASE.y);ctx.stroke();}
-  if(enemy.healFlash>0){ctx.strokeStyle="#75c86d";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(enemy.healX,enemy.healY);ctx.stroke();}
-  if(enemy.type==="archer"){
-    const body=enemy.flash?"#d25b49":"#76583e";rect(x-7,y-10,14,16,body);rect(x-5,y-15,10,7,"#b99468");rect(x-9,y+4,6,5,"#49392d");rect(x+3,y+4,6,5,"#49392d");
-    ctx.strokeStyle="#d1a45d";ctx.lineWidth=2;ctx.beginPath();ctx.arc(x+8,y-5,7,-1.3,1.3);ctx.stroke();rect(x+7,y-12,2,15,"#6e4930");
-  }else if(enemy.type==="healer"){
-    const body=enemy.flash?"#d25b49":"#557649";rect(x-8,y-9,16,16,body);rect(x-5,y-15,10,7,"#b9a58b");rect(x-11,y+4,7,5,"#384d34");rect(x+4,y+4,7,5,"#384d34");rect(x-1,y-7,3,10,"#e3dec5");rect(x-4,y-4,9,3,"#e3dec5");
-  }else{
-    const body=enemy.flash?"#d25b49":enemy.type==="brute"?"#674337":"#403747";
-    rect(x-9*s,y-7*s,18*s,14*s,"#29242e");rect(x-7*s,y-10*s,14*s,15*s,body);rect(x-10*s,y+3*s,6*s,5*s,"#302a35");rect(x+4*s,y+3*s,6*s,5*s,"#302a35");rect(x-5*s,y-5*s,3*s,3*s,"#e3624c");rect(x+2*s,y-5*s,3*s,3*s,"#e3624c");
-  }
-  if(enemy.hp<enemy.max){const width=22*s;rect(x-width/2,y-18*s,width,4,"#241f18");rect(x-width/2+1,y-17*s,(width-2)*enemy.hp/enemy.max,2,"#c65343");}
-}
-function drawZone(x,y,radius,color="#ead18d99"){
-  ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash([7,6]);ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
-}
-function drawBase(){
-  const p=state.basePulse*3;
-  if(state.mouse.inside&&distance(state.mouse.x,state.mouse.y,BASE.x,BASE.y)<BASE.r+16)drawZone(BASE.x,BASE.y,BASE_ZONE);
-  ctx.fillStyle="#b99e6288";ctx.beginPath();ctx.ellipse(BASE.x,BASE.y+28,52+p,20+p*.3,0,0,Math.PI*2);ctx.fill();
-  rect(BASE.x-35,BASE.y-20,70,55,"#b8afa0");rect(BASE.x-35,BASE.y-20,70,7,"#d5cdbf");
-  rect(BASE.x-41,BASE.y-28,18,18,"#aaa093");rect(BASE.x+23,BASE.y-28,18,18,"#aaa093");
-  rect(BASE.x-41,BASE.y-31,7,6,"#d5cdbf");rect(BASE.x-29,BASE.y-31,6,6,"#d5cdbf");rect(BASE.x+23,BASE.y-31,7,6,"#d5cdbf");rect(BASE.x+35,BASE.y-31,6,6,"#d5cdbf");
-  rect(BASE.x-12,BASE.y+4,24,31,"#49392d");rect(BASE.x-8,BASE.y+10,4,4,"#d0a044");
-  rect(BASE.x-28,BASE.y-5,10,13,"#52738a");rect(BASE.x+18,BASE.y-5,10,13,"#52738a");
-  rect(BASE.x-4,BASE.y-42,3,16,"#5d4935");rect(BASE.x-1,BASE.y-42,22,10,"#a94634");
-  if(state.baseHp<state.baseMax){rect(BASE.x-38,BASE.y-52,76,6,"#292119");rect(BASE.x-36,BASE.y-50,72*state.baseHp/state.baseMax,2,"#b84b3c");}
-  const target=hoverTarget();if(target&&target.kind==="base"){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(BASE.x-48,BASE.y-39,96,80);ctx.setLineDash([]);}
-}
-function drawKing(){
-  const king=state.king,x=Math.round(king.x),y=Math.round(king.y);
-  rect(x-6,y-8,12,13,"#9d3f34");rect(x-4,y-16,8,8,"#d8b083");rect(x-5,y-19,3,5,"#d6a642");rect(x-1,y-21,3,7,"#e8be55");rect(x+3,y-19,3,5,"#d6a642");
-  rect(x-6,y+5,4,6,"#3d332a");rect(x+2,y+5,4,6,"#3d332a");
-  if(king.swing>0){const angle=Math.atan2(king.targetY-y,king.targetX-x);ctx.strokeStyle="#f3e6bc";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x+Math.cos(angle)*7,y+Math.sin(angle)*7);ctx.lineTo(x+Math.cos(angle)*24,y+Math.sin(angle)*24);ctx.stroke();}
-  else{rect(x+7,y-6,2,15,"#ded8c9");rect(x+5,y+6,6,2,"#77512f");}
-}
-function towerRadius(building){const variant=towerVariant(building);return variant.range||variant.effectRadius;}
-function drawTowerVariant(building){
-  const x=building.x,y=building.y,tower=building.tower,variant=towerVariant(building);
-  if(tower.variant==="pulse"){
-    rect(x-22,y+8,44,15,"#6e6874");rect(x-17,y-7,34,17,"#8d8495");rect(x-12,y-19,24,13,"#aaa0b2");rect(x-5,y-31,10,13,"#624a86");rect(x-2,y-35,4,8,"#c09aed");rect(x-15,y-13,6,6,"#b18be5");rect(x+9,y-13,6,6,"#b18be5");
-  }else if(tower.variant==="shock"){
-    rect(x-20,y+8,40,14,"#77736d");rect(x-15,y-5,30,14,"#9c9891");rect(x-6,y-26,12,23,"#4c5d61");rect(x-3,y-32,6,9,"#79d8d1");rect(x-13,y-18,7,5,"#79d8d1");rect(x+6,y-18,7,5,"#79d8d1");
-  }else{
-    rect(x-22,y+8,44,15,"#817b72");rect(x-18,y-8,36,18,"#aaa39a");rect(x-15,y-20,30,13,"#beb7ac");rect(x-18,y-23,8,8,"#d3ccc0");rect(x-4,y-23,8,8,"#d3ccc0");rect(x+10,y-23,8,8,"#d3ccc0");rect(x-4,y-13,8,14,"#4f4941");
-    if(tower.variant==="watch"){rect(x-3,y-34,3,17,variant.accent);rect(x+4,y-34,3,17,variant.accent);}
-    else if(tower.variant==="sniper"){rect(x-2,y-40,4,23,variant.accent);rect(x,y-40,24,4,"#6f715f");}
-    else if(tower.variant==="fire"){rect(x-5,y-31,10,13,"#754331");rect(x-3,y-36,6,8,variant.accent);}
-    else if(tower.variant==="bomb"){rect(x-7,y-31,14,13,"#5c5147");rect(x+4,y-31,16,8,variant.accent);}
-    else if(tower.variant==="laser"){rect(x-6,y-32,12,14,"#426b6b");rect(x-2,y-38,5,12,variant.accent);}
-    else if(tower.variant==="turret"){rect(x-5,y-26,10,9,"#655849");rect(x+3,y-26,14,5,variant.accent);}
-    else if(tower.variant==="outpost"){rect(x-18,y-27,36,9,"#8d8578");rect(x-16,y-32,8,7,variant.accent);rect(x+8,y-32,8,7,variant.accent);rect(x+2,y-28,19,5,"#695743");}
-    else if(tower.variant==="brick"){rect(x-19,y-29,38,11,"#8f4c3e");rect(x-17,y-35,9,8,variant.accent);rect(x-4,y-35,9,8,variant.accent);rect(x+9,y-35,8,8,variant.accent);}
-    else if(tower.variant==="aggro"){rect(x-17,y-35,34,17,"#6e3934");rect(x-11,y-42,22,10,variant.accent);rect(x-3,y-39,6,17,"#f0c56c");}
-    else if(tower.variant==="freeze"){rect(x-6,y-31,12,13,"#587d8d");rect(x-2,y-40,5,15,variant.accent);rect(x-10,y-34,6,9,"#bcebf4");}
-    else if(tower.variant==="tarTower"){rect(x-9,y-29,18,11,"#3f352d");rect(x-12,y-32,24,5,variant.accent);rect(x+7,y-29,13,5,"#5b4637");}
-    else if(tower.variant==="teleport"){rect(x-7,y-33,14,15,"#4f5f8b");ctx.strokeStyle=variant.accent;ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y-31,10,0,Math.PI*2);ctx.stroke();}
-    else{rect(x-1,y-31,3,12,"#594b3b");rect(x+2,y-31,18,5,"#8b633b");}
-  }
-  if(tower.hitFlash>0){ctx.strokeStyle="#f3e2bd";ctx.lineWidth=3;ctx.globalAlpha=tower.hitFlash/.22;ctx.strokeRect(x-24,y-43,48,67);ctx.globalAlpha=1;}
-  if(tower.flash>0){
-    const duration=variant.manual?.35:variant.attackMode==="periodic area"?.4:.2,progress=1-tower.flash/duration;ctx.globalAlpha=clamp(tower.flash/duration,0,1);
-    if(variant.attackMode==="periodic area"||variant.manual){ctx.strokeStyle=variant.accent;ctx.lineWidth=4;ctx.beginPath();ctx.arc(x,y,variant.effectRadius*progress,0,Math.PI*2);ctx.stroke();}
-    else{ctx.strokeStyle=variant.accent;ctx.lineWidth=variant.attackMode==="line"?variant.beamWidth:2;ctx.beginPath();ctx.moveTo(x,y-27);ctx.lineTo(tower.targetX,tower.targetY);ctx.stroke();if(variant.attackMode==="splash"){ctx.lineWidth=3;ctx.beginPath();ctx.arc(tower.impactX,tower.impactY,variant.splashRadius*progress,0,Math.PI*2);ctx.stroke();}}
-    ctx.globalAlpha=1;
-  }
-  if(variant.manual){const hover=state.mouse.inside&&manualTowerButtonHit(building,state.mouse.x,state.mouse.y),ready=tower.cooldown<=0;if(hover){rect(x-12,y-48,24,22,"#292119");rect(x-9,y-45,18,16,ready?"#3e8b70":"#66635d");ctx.fillStyle="#f4e8c6";ctx.font="bold 12px monospace";ctx.textAlign="center";ctx.fillText("↯",x,y-33);}const ratio=tower.cooldown/variant.cooldown;rect(x-20,y+26,40,7,"#292119");rect(x-18,y+28,36*(1-ratio),3,ready?"#70d8d1":"#d19b49");ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(ready?"ready":tower.cooldown.toFixed(1)+"s",x,y+42);}
-  else if(variant.attackMode==="periodic area"){const ratio=tower.cooldown/variant.cooldown;rect(x-21,y+27,42,7,"#292119");rect(x-19,y+29,38*(1-ratio),3,tower.cooldown<=0?"#b18be5":"#d19b49");ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(tower.cooldown<=0?"ready":tower.cooldown.toFixed(1)+"s",x,y+43);}
-  if(tower.variant!=="basic")return;
-  const hover=state.mouse.inside&&upgradeButtonHit(building,state.mouse.x,state.mouse.y);if(hover&&!building.activeUpgrade){rect(x-27,y+10,22,22,"#292119");rect(x-24,y+13,16,16,"#4d7892");ctx.fillStyle="#f4e8c6";ctx.font="bold 14px monospace";ctx.textAlign="center";ctx.fillText("↑",x-16,y+26);}
-  if(building.activeUpgrade){const job=building.activeUpgrade,upgrade=towerUpgradeList().find(item=>item.id===job.id);ctx.fillStyle="#f4e8c6";ctx.font="bold 9px monospace";ctx.textAlign="center";ctx.fillText(upgrade.name,x,y-48);ctx.fillText(upgradeNeedText(upgrade,job.delivered)||"complete",x,y-38);const target=hoverTarget();if(target&&target.kind==="upgrade"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(x-70,y-56,140,88);ctx.setLineDash([]);}}
-}
-function drawTowerHealth(building){
-  const tower=building.tower,hover=state.mouse.inside&&distance(state.mouse.x,state.mouse.y,building.x,building.y)<42;if(tower.hp>=tower.maxHp&&!hover)return;rect(building.x-24,building.y+48,48,6,"#292119");rect(building.x-22,building.y+50,44*clamp(tower.hp/tower.maxHp,0,1),2,"#b84b3c");
-}
-function drawBuilding(building,ghost=false){
-  const x=building.x,y=building.y,p=building.pulse*2,def=BUILDING_TYPES[building.type||state.buildMode||"lumber"],radius=building.complete&&building.type==="tower"?towerRadius(building):def.serviceRadius||def.effectRadius;
-  if(building.complete&&radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,x,y)<48){drawZone(x,y,radius);if(building.type==="tower"&&towerVariant(building).tauntRadius)drawZone(x,y,towerVariant(building).tauntRadius,"#d6534f99");}
-  if(!building.complete||ghost){
-    ctx.globalAlpha=ghost?.55:1;ctx.strokeStyle=ghost&&canPlace(x,y)?"#f3e5b9":ghost?"#a94634":"#ead18d";ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.strokeRect(x-28-p,y-27-p,56+p*2,54+p*2);ctx.setLineDash([]);
-    rect(x-23,y+9,46,7,building.type==="quarry"?"#777775":"#83603a");rect(x-19,y-3,5,19,"#9a774d");rect(x+14,y-3,5,19,"#9a774d");
-    if(!ghost){const cost=buildingCost(building),done=building.delivered.wood+building.delivered.stone,total=cost.wood+cost.stone;rect(x-25,y+23,50,7,"#292119");rect(x-23,y+25,46*done/total,3,"#d4a443");ctx.fillStyle="#292119";ctx.font="bold 9px monospace";ctx.textAlign="center";ctx.fillText("w "+building.delivered.wood+"/"+cost.wood+"  s "+building.delivered.stone+"/"+cost.stone,x,y+43);if(building.starved){ctx.fillStyle="#a94634";ctx.textAlign="left";ctx.fillText("! starved",x+29,y+29);}}
-    ctx.globalAlpha=1;return;
-  }
-  ctx.fillStyle="#b99e6288";ctx.beginPath();ctx.ellipse(x,y+22,37,12,0,0,Math.PI*2);ctx.fill();
-  if(building.type==="landmine"){
-    rect(x-14,y+5,28,8,"#594738");rect(x-10,y,20,7,"#76614d");rect(x-4,y-4,8,5,"#a74434");rect(x-1,y-8,3,5,"#d8a343");
-  }else if(building.type==="tar"){
-    ctx.fillStyle="#382d27";ctx.beginPath();ctx.ellipse(x,y+7,22,11,0,0,Math.PI*2);ctx.fill();rect(x-13,y+2,8,3,"#554234");rect(x+6,y+7,7,2,"#211c19");
-  }else if(building.type==="spikes"){
-    const metal=building.hazard.flash>0?"#f1dfb7":"#a9a59e";
-    rect(x-18,y+10,36,5,"#65442c");rect(x-14,y-5,4,16,metal);rect(x-2,y-10,4,21,metal);rect(x+10,y-5,4,16,metal);
-    rect(x-18,y+7,5,4,"#7c7872");rect(x+13,y+7,5,4,"#7c7872");
-  }else if(building.type==="blast"){
-    rect(x-17,y-8,34,29,"#7b5031");rect(x-14,y-11,28,7,"#a9703f");rect(x-14,y+2,28,4,"#4a3829");rect(x-4,y-16,8,8,"#292119");
-    rect(x+2,y-20,3,7,"#d29a3f");rect(x+5,y-23,3,3,"#efc85e");
-    const hover=state.mouse.inside&&blastButtonHit(building,state.mouse.x,state.mouse.y);
-    if(hover){rect(x-12,y-39,24,22,"#292119");rect(x-9,y-36,18,16,"#b43e32");ctx.fillStyle="#f4e8c6";ctx.font="bold 13px monospace";ctx.textAlign="center";ctx.fillText("!",x,y-24);}
-  }else if(building.type==="obelisk"){
-    rect(x-23,y+18,46,7,"#9b6a38");rect(x-17,y+11,34,8,"#c58b49");
-    rect(x-12,y-47,24,59,"#b87a3d");rect(x-8,y-54,16,8,"#dda15b");rect(x-5,y-58,10,5,"#e3ad68");rect(x+8,y-47,5,59,"#76502f");
-    rect(x-4,y-34,8,8,"#d7a15d");rect(x-2,y-32,4,4,"#72d4cc");
-    rect(x-5,y-18,10,10,"#805832");rect(x-3,y-16,6,6,"#d29a55");rect(x-2,y-1,4,10,"#72d4cc");
-    const hover=state.mouse.inside&&upgradeButtonHit(building,state.mouse.x,state.mouse.y);
-    if(hover&&!building.activeUpgrade){rect(x-27,y+11,22,22,"#292119");rect(x-24,y+14,16,16,"#b45b48");ctx.fillStyle="#f4e8c6";ctx.font="bold 14px monospace";ctx.textAlign="center";ctx.fillText("↑",x-16,y+27);}
-    if(building.activeUpgrade){
-      const job=building.activeUpgrade,upgrade=UPGRADES.find(item=>item.id===job.id);
-      ctx.fillStyle="#f4e8c6";ctx.font="bold 9px monospace";ctx.textAlign="center";
-      ctx.fillText(upgrade.name,x,y-70);ctx.fillText("["+job.delivered.wood+"/"+upgrade.cost.wood+"] wood",x,y-60);ctx.fillText("["+job.delivered.stone+"/"+upgrade.cost.stone+"] stone",x,y-50);
-      const target=hoverTarget();
-      if(target&&target.kind==="upgrade"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeRect(x-34,y-78,68,108);ctx.setLineDash([]);}
-    }
-  }else if(building.type==="tower"){
-    drawTowerVariant(building);drawTowerHealth(building);
-  }else if(building.type==="stockpile"){
-    rect(x-31,y-18,4,43,"#68472c");rect(x+27,y-18,4,43,"#68472c");rect(x-31,y+21,62,4,"#8f6339");
-    const wood=Math.min(12,building.storage.wood),stone=Math.min(12,building.storage.stone),dust=Math.min(4,building.storage.dust),coins=Math.min(3,building.storage.coin),gems=Math.min(3,building.storage.diamond);
-    for(let i=0;i<wood;i++){const xx=x-24+(i%3)*8,yy=y+14-Math.floor(i/3)*6;rect(xx,yy,13,5,"#a9703f");rect(xx+10,yy,3,5,"#d09a5b");}
-    for(let i=0;i<stone;i++){const xx=x+7+(i%3)*7,yy=y+13-Math.floor(i/3)*7;rect(xx,yy,8,7,"#858582");rect(xx+2,yy-2,6,5,"#b1afaa");}
-    for(let i=0;i<dust;i++){const xx=x-5+(i%2)*7,yy=y-2-Math.floor(i/2)*7;rect(xx,yy,6,6,"#a783df");rect(xx+2,yy-2,3,3,"#e2c9ff");}
-    for(let i=0;i<coins;i++){rect(x-13+i*4,y-9-i*2,6,6,"#e3b445");}
-    for(let i=0;i<gems;i++){rect(x+7+i*4,y-9-i*2,6,7,"#79d9e8");}
-    ctx.fillStyle="#292119";ctx.font="bold 8px monospace";ctx.textAlign="center";
-    if(building.storage.wood>12)ctx.fillText("x"+building.storage.wood,x-18,y-15);
-    if(building.storage.stone>12)ctx.fillText("x"+building.storage.stone,x+18,y-15);
-    if(building.storage.dust>4)ctx.fillText("x"+building.storage.dust,x,y-22);
-    if(building.storage.coin>3)ctx.fillText("c"+building.storage.coin,x-12,y-25);
-    if(building.storage.diamond>3)ctx.fillText("d"+building.storage.diamond,x+13,y-25);
-    const target=hoverTarget();if(target&&target.kind==="stockpile"&&target.object===building){ctx.strokeStyle="#f5df98";ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.strokeRect(x-35,y-23,70,52);ctx.setLineDash([]);}
-  }else if(building.type==="house"){
-    rect(x-27,y-10,54,33,"#b98752");rect(x-31,y-17,62,10,"#8d3d2f");rect(x-24,y-22,48,7,"#ad4c38");rect(x-8,y+3,16,20,"#5e4028");rect(x+10,y-1,10,10,"#52738a");
-    const used=sourceWorkerCount(building),full=used>=HOUSE_SLOTS,ratio=full?0:clamp(building.spawnTimer/WORKER_SPAWN_TIME,0,1);rect(x-20,y+26,40,7,"#292119");rect(x-18,y+28,36*(1-ratio),3,full?"#70d8d1":"#d19b49");
-    ctx.fillStyle="#f4e8c6";ctx.font="bold 8px monospace";ctx.textAlign="center";ctx.fillText(full?used+"/"+HOUSE_SLOTS:Math.max(0,building.spawnTimer).toFixed(1)+"s",x,y+42);
-  }else if(building.type==="quarry"){
-    rect(x-27,y-5,54,27,"#777775");rect(x-22,y-13,18,13,"#aaa9a5");rect(x+1,y-17,22,17,"#92918e");rect(x-8,y+5,16,17,"#4f4d49");rect(x+25,y-4,7,26,"#65442c");rect(x+20,y+1,17,4,"#b1814e");
-  }else{
-    rect(x-25,y-13,50,36,"#a9703f");rect(x-25,y-13,50,5,"#c28b50");rect(x-30,y-21,60,11,"#8d3d2f");rect(x-24,y-25,48,6,"#ad4c38");rect(x-8,y+2,16,21,"#5e4028");rect(x+29,y-4,7,27,"#69462a");rect(x+24,y+2,17,5,"#bf8650");
-  }
-}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3D RENDER LAYER
+// The simulation above is untouched and still thinks in 2D game pixels.
+// Everything here is read-only over that state: game (x, y) maps to world
+// (x*S, 0, y*S), meshes are pooled per entity, and anything that must stay
+// unskewed (bars, text, carried resources) is drawn on a 2D overlay canvas
+// at projected screen positions.
+// ═══════════════════════════════════════════════════════════════════════════
+
 function workerToolKind(worker){
   if(worker.job==="harvest")return worker.jobTarget?.kind;
   if(worker.job==="staff")return BUILDING_TYPES[worker.jobTarget?.type]?.resource;
   if(worker.job==="build")return "build";
   return null;
 }
-function drawCorpse(corpse){
-  const x=Math.round(corpse.x+corpse.pose),y=Math.round(corpse.y+corpse.pose*.35),flip=corpse.flip;
-  ctx.save();ctx.globalAlpha=.62;ctx.translate(x,y);ctx.scale(flip,1);
-  rect(-14,-3,22,7,corpse.coat);rect(5,-4,9,8,"#b79568");rect(11,-5,4,3,"#583e2d");rect(-12,4,5,3,"#3d332d");rect(-3,4,6,3,"#3d332d");
-  ctx.restore();
+function towerRadius(building){const variant=towerVariant(building);return variant.range||variant.effectRadius;}
+
+const S = 1/16;                       // game pixels -> world units
+const WU = W*S, HU = H*S;             // 96 x 64
+const gx = x => x*S, gz = y => y*S;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PALETTE
+// Single source of truth for every colour in the 3D layer. Entries are hex
+// numbers for three.js; css() converts for the 2D overlay and the baked
+// ground texture. Grouped by role, not by object, so retinting a material
+// family (all timber, all arcane glow) is one edit.
+// ═══════════════════════════════════════════════════════════════════════════
+const PAL = {
+  // ── world ──────────────────────────────────────────────
+  sky:        0x1d1c29,
+  water:      0x8fb3cf,
+  cliff:      0x6a5a41,
+  grass:      0x9db97f,
+  grassAlt:   0x96b177,
+  grassSpeck: 0x8dab70,
+  dirt:       0xd9c9a3,   // base clearing, paths
+
+  // ── flora ──────────────────────────────────────────────
+  trunk:      0x6b4a2e,
+  stump:      0x79512e,
+  leaf:      [0x7fae5c, 0x6d9a4d, 0xd9a0bc],   // indexed by tree.variant
+
+  // ── minerals ───────────────────────────────────────────
+  rock:       0x9a9a94,
+  rockDark:   0x6f6f6a,
+  rubble:     0x8d8c88,
+  gem:        0x71cbd8,
+  gemBase:    0x4d6264,
+  gemSpent:   0x557b80,
+
+  // ── resources ──────────────────────────────────────────
+  wood:       0xb98a4e,
+  stone:      0xaaa9a5,
+  dust:       0xa783df,
+  coin:       0xe3b445,
+  diamond:    0x79d9e8,
+
+  // ── people ─────────────────────────────────────────────
+  skin:       0xd7b586,
+  coat:       0xd4b079,   // fallback worker coat
+  jobHaul:    0x6f96ad,
+  jobBuild:   0xd29a39,
+  jobGuard:   0x9a7a54,
+  hat:        0x6f4930,
+  kingRobe:   0x9d3f34,
+  kingCrown:  0xe8be55,
+  blade:      0xded8c9,
+
+  // ── enemies ────────────────────────────────────────────
+  raider:     0x4a4152, raiderCap: 0x2b2532,
+  archer:     0x76583e, archerCap: 0xa2814f,
+  healer:     0x557649, healerCap: 0xe3dec5,
+  brute:      0x674337, bruteCap:  0x3b2a21,
+
+  // ── structures ─────────────────────────────────────────
+  timber:     0x8a7358,
+  timberDark: 0x5c4a38,
+  plaster:    0xc0a170,
+  plasterLit: 0xc9b48a,
+  roof:       0x8e5f3c,
+  roofDark:   0x5f4527,
+  masonry:    0x8d8495,
+  masonryDark:0x6b6874,
+  quarryWall: 0x777775,
+  quarryRoof: 0x5f6061,
+  doorway:    0x49392d,
+  pole:       0x5d4935,
+  banner:     0xa94634,
+  metal:      0xbdb7ab,
+  tar:        0x3a3128,
+  arcane:     0xb18be5,
+  arcaneGlow: 0x2e1f4a,
+  fuse:       0xd8a343,
+  charge:     0xa74434,
+  chargeBody: 0x59473a,
+  blueprint:  0x9a774d,
+  scaffold:   0x83603a,
+
+  // ── tower accents (by variant) ─────────────────────────
+  towShock:   0x4c5d61,
+  towLaser:   0x78e3df,
+  towFire:    0xd9713f,
+  towFreeze:  0x8fd9ee,
+  towTeleport:0x7396e8,
+  towBomb:    0x9a5c3a,
+  towSniper:  0xd9e3c2,
+  towBrick:   0x9b7f60,
+  towOutpost: 0x7d6b52,
+
+  // ── feedback / rings ───────────────────────────────────
+  flash:      0xd25b49,   // enemy hit tint
+  hurtGlow:   0x5a1a12,   // tower damage emissive
+  emberGlow:  0x60220c,   // burning status emissive
+  ghostOk:    0x1d3312,
+  ghostBad:   0x3d1410,
+  tool:       0x65442c,
+  hpGood:     0x7fb356,   // remaining-health track, top row of a stack
+  hint:       0xead18d,
+  ok:         0xf5df98,   // swing progress, bottom row of a stack
+  bad:        0xb84b3c,
+  taunt:      0xd6534f,
+  storage:    0xd8c47c,
+  pin:        0xd4453a,
+
+  // ── lighting ───────────────────────────────────────────
+  sunDay:     0xfff2d0,
+  sunNight:   0x9fb4e8,
+  skyLight:   0xd8e8ff,
+  bounce:     0x6b6350,
+};
+/** Hex number -> css string, for the 2D overlay and canvas textures. */
+const css = n => "#" + n.toString(16).padStart(6,"0");
+
+const DROP_COLOR = {wood:PAL.wood, stone:PAL.stone, dust:PAL.dust,
+                    coin:PAL.coin, diamond:PAL.diamond};
+const JOB_COAT = {haul:PAL.jobHaul, build:PAL.jobBuild, guard:PAL.jobGuard};
+/** Tower roof accent per variant; anything unlisted falls back to timberDark. */
+const TOWER_TOP = {
+  pulse:PAL.arcane,     shock:PAL.towShock,   laser:PAL.towLaser,
+  fire:PAL.towFire,     freeze:PAL.towFreeze, tar:PAL.tar,
+  teleport:PAL.towTeleport, bomb:PAL.towBomb, sniper:PAL.towSniper,
+  watch:PAL.coin,       brick:PAL.towBrick,   aggro:PAL.taunt,
+  turret:PAL.timber,    outpost:PAL.towOutpost,
+};
+
+// ─────────────────────────────────────────────────────────── renderer & cameras
+const sceneCanvas = document.getElementById("scene");
+const renderer = new THREE.WebGLRenderer({canvas:sceneCanvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(PAL.sky);
+
+const persp = new THREE.PerspectiveCamera(38, 16/9, 0.5, 600);
+const ortho = new THREE.OrthographicCamera(-1,1,1,-1,-200,600);
+let camera3 = persp;
+
+// Debug-owned view state. pitch 90 reproduces the original top-down framing.
+const view = {pitch:40, yaw:0, fov:38, ortho:false, orbit:false,
+              heightScale:100, ghostPins:false};
+
+function placeCamera(){
+  const cam = state.camera;
+  const tx = gx(cam.x), tz = gz(cam.y);
+  const p = THREE.MathUtils.degToRad(view.pitch), y = THREE.MathUtils.degToRad(view.yaw);
+  // Ortho frustum matches the 2D game's coverage exactly, so clampCamera() and
+  // the .2-5 zoom range carry over unchanged.
+  // halfW must come from the live canvas aspect. Hardcoding 16:9 here stretches
+  // world-X against world-Y on any other shape, which reads as squashed models.
+  const halfH = VIEW_H/(2*cam.zoom)*S, halfW = halfH*viewAspect;
+  ortho.left=-halfW; ortho.right=halfW; ortho.top=halfH; ortho.bottom=-halfH;
+  ortho.updateProjectionMatrix();
+  persp.fov = view.fov; persp.updateProjectionMatrix();
+
+  const dist = camera3===ortho ? 160 : halfH/Math.tan(THREE.MathUtils.degToRad(view.fov/2));
+  const h = Math.sin(p)*dist, r = Math.cos(p)*dist;
+  camera3.position.set(tx + Math.sin(y)*r, h, tz + Math.cos(y)*r);
+  camera3.lookAt(tx, 0, tz);
+
+  // The shadow frustum has to track zoom, or zooming out drops every shadow
+  // outside it and the map goes flat.
+  const span = clamp(halfW*1.5, 14, 120);   // halfW, not halfH — the view is 16:9
+  const sc = sun.shadow.camera;
+  sc.left=-span; sc.right=span; sc.top=span; sc.bottom=-span;
+  sc.updateProjectionMatrix();
 }
-function drawWorker(worker){
-  const x=Math.round(worker.x),baseY=Math.round(worker.y),bob=Math.sin(worker.step*8)*1.5,y=Math.round(baseY+bob);
-  rect(x-5,y-9,10,11,workerCoatColor(worker));rect(x-4,y-17,8,8,"#d7b586");rect(x-5,y-18,10,3,"#6f4930");
-  rect(x-5,y+2,4,6,"#49392d");rect(x+2,y+2,4,6,"#49392d");
-  const tool=workerToolKind(worker),swing=(worker.combatTarget&&worker.attackCooldown>WORKER_ATTACK_RATE-.2)||(tool&&worker.hitCooldown>WORKER_HIT_COOLDOWN-.2);
-  if(worker.job==="haul"){
-    const load=workerLoad(worker),col=worker.carried.diamond?"#79d9e8":worker.carried.coin?"#e3b445":worker.carried.dust?"#a783df":worker.carried.stone?"#aaa9a5":"#bd8047";if(load){rect(x-10,y-10,6,13,"#8f673d");rect(x-9,y-7,3,3,col);}
-  }else{
-    ctx.save();ctx.translate(x+6,y-7);ctx.rotate(swing?-.8:.25);rect(0,-1,13,2,"#65442c");
-    if(worker.job==="guard"){rect(11,-7,3,14,"#d8d4c9");rect(8,-2,8,3,"#8b643e");}
-    else if(tool==="stone"||tool==="diamond"){rect(9,-5,9,4,"#aaa9a5");rect(13,-3,3,7,"#858582");}
-    else if(tool==="build"){rect(9,-5,9,5,"#aaa9a5");rect(12,-1,3,5,"#858582");}
-    else{rect(10,-5,5,8,"#b9b7b0");}
-    ctx.restore();
+
+// The overlay is authored in a fixed 960x540 space but displayed much larger.
+// Backing store must match real device pixels or every bar and glyph is upscaled.
+let overlayScale = 1;
+let viewAspect = 16/9;
+
+function resizeRenderer(){
+  const r = sceneCanvas.getBoundingClientRect();
+  if(!r.width||!r.height)return;
+  renderer.setSize(r.width, r.height, false);
+  viewAspect = r.width/r.height;
+  persp.aspect = viewAspect;
+
+  const dpr = Math.min(devicePixelRatio, 2);
+  canvas.width  = Math.round(r.width  * dpr);
+  canvas.height = Math.round(r.height * dpr);
+  overlayScale  = canvas.width / VIEW_W;
+
+  placeCamera();
+}
+addEventListener("resize", resizeRenderer);
+
+// ─────────────────────────────────────────────────────────── lights
+// Ambient stays low so cast shadows actually read as shadows.
+const sky = new THREE.HemisphereLight(PAL.skyLight, PAL.bounce, 0.5);
+scene.add(sky);
+const sun = new THREE.DirectionalLight(PAL.sunDay, 1.5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 400;
+sun.shadow.bias = -0.0006;
+sun.shadow.normalBias = 0.035;
+scene.add(sun, sun.target);
+
+// ─────────────────────────────────────────────────────────── ground
+const flat = (color, extra={}) => new THREE.MeshLambertMaterial({color, flatShading:true, ...extra});
+function meshOf(geo, mat, cast=true, receive=true){
+  const m = new THREE.Mesh(geo, mat); m.castShadow=cast; m.receiveShadow=receive; return m;
+}
+
+// The original pixel-art ground generator, repainted in the prototype's palette.
+const groundLayer=document.createElement("canvas");groundLayer.width=W;groundLayer.height=H;
+(function bakeGround(){
+  const c=groundLayer.getContext("2d");c.imageSmoothingEnabled=false;
+  for(let y=0;y<H;y+=8)for(let x=0;x<W;x+=8){
+    const n=(x*13+y*7)%31;
+    c.fillStyle=n%3?css(PAL.grass):css(PAL.grassAlt);c.fillRect(x,y,8,8);
+    if(n<6){c.fillStyle=css(PAL.grassSpeck);c.fillRect(x+n,y+(n*3)%7,2,2);}
   }
-  if(worker.job==="build"&&workerLoad(worker)){const col=worker.carried.stone?"#aaa9a5":"#bd8047";rect(x-10,y-9,5,11,"#8f673d");rect(x-9,y-6,3,3,col);}
-  if(worker.combatTarget&&worker.attackCooldown>WORKER_ATTACK_RATE-.2){ctx.strokeStyle="#f3dfa3";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x+5,y-7);ctx.lineTo(worker.combatTarget.x,worker.combatTarget.y);ctx.stroke();}
-  if(worker.hp<WORKER_HP){rect(x-12,y-23,24,4,"#292119");rect(x-11,y-22,22*worker.hp/WORKER_HP,2,"#73a04c");}
+  c.fillStyle=css(PAL.dirt);c.beginPath();c.ellipse(BASE.x,BASE.y,112,86,0,0,Math.PI*2);c.fill();
+})();
+const groundTex = new THREE.CanvasTexture(groundLayer);
+groundTex.magFilter = THREE.NearestFilter;
+groundTex.colorSpace = THREE.SRGBColorSpace;
+
+const ground = meshOf(new THREE.PlaneGeometry(WU,HU), flat(0xffffff,{map:groundTex}), false, true);
+ground.rotation.x = -Math.PI/2;
+ground.position.set(WU/2, 0, HU/2);
+scene.add(ground);
+
+// Slab sides so the map reads as an object rather than an infinite plane.
+// Its top must sit BELOW the ground plane — coincident faces z-fight and the
+// terrain turns into brown/green stripes.
+const slab = meshOf(new THREE.BoxGeometry(WU, 3.0, HU), flat(PAL.cliff), false, false);
+slab.position.set(WU/2, -1.53, HU/2);          // top face at y = -0.03
+scene.add(slab);
+
+// Water surrounds the slab, same as the prototype's island read.
+const water = meshOf(new THREE.PlaneGeometry(WU*5, HU*6), flat(PAL.water), false, false);
+water.rotation.x = -Math.PI/2;
+water.position.set(WU/2, -1.9, HU/2);
+scene.add(water);
+
+
+
+// ─────────────────────────────────────────────────────────── entity models
+
+function makeTree(t){
+  const g = new THREE.Group();
+  const leaf = PAL.leaf[t.variant] ?? PAL.leaf[0];
+  const trunk = meshOf(new THREE.CylinderGeometry(.16,.24,2.2,6), flat(PAL.trunk));
+  trunk.position.y = 1.1;
+  const crown = meshOf(new THREE.IcosahedronGeometry(1.35,0), flat(leaf));
+  crown.position.y = 3.0; crown.scale.set(1,.85,1);
+  const stump = meshOf(new THREE.CylinderGeometry(.26,.3,.42,6), flat(PAL.stump));
+  stump.position.y = .21; stump.visible = false;
+  g.add(trunk, crown, stump);
+  g.userData = {trunk, crown, stump};
+  return g;
 }
-function drawParticles(){for(const p of particles){ctx.globalAlpha=clamp(p.life*3,0,1);if(p.resource){if(p.kind==="wood")rect(p.x-5,p.y-2,10,5,p.col);else if(p.kind==="dust")rect(p.x-3,p.y-3,6,6,p.col);else rect(p.x-4,p.y-4,8,8,p.col);}else rect(p.x,p.y,3,3,p.col);}ctx.globalAlpha=1;}
-function drawFog(){
-  for(let y=0;y<FOG_H;y++)for(let x=0;x<FOG_W;x++){
-    if(!state.fog[fogIndex(x,y)])continue;
-    rect(x*FOG_TS,y*FOG_TS,FOG_TS,FOG_TS,"#292738");
-    const n=(x*11+y*17)%19;rect(x*FOG_TS+5+n,y*FOG_TS+7+(n*3)%18,3,3,"#37344a");
+function makeRock(){
+  const g = new THREE.Group();
+  const body = meshOf(new THREE.DodecahedronGeometry(.95,0), flat(PAL.rock));
+  body.position.y = .55; body.scale.set(1,.72,1);
+  const chip = meshOf(new THREE.DodecahedronGeometry(.42,0), flat(PAL.rockDark));
+  chip.position.set(.8,.28,.35);
+  const rubble = meshOf(new THREE.DodecahedronGeometry(.55,0), flat(PAL.rubble));
+  rubble.position.y = .14; rubble.scale.set(1,.3,1); rubble.visible = false;
+  g.add(body, chip, rubble);
+  g.userData = {live:[body,chip], rubble};
+  return g;
+}
+function makeDiamond(){
+  const g = new THREE.Group();
+  const base = meshOf(new THREE.DodecahedronGeometry(.7,0), flat(PAL.gemDark));
+  base.position.y = .35; base.scale.set(1,.5,1);
+  const gem = meshOf(new THREE.OctahedronGeometry(.55,0), flat(PAL.gem));
+  gem.position.y = 1.05;
+  const spent = meshOf(new THREE.DodecahedronGeometry(.45,0), flat(PAL.gemSpent));
+  spent.position.y = .12; spent.scale.set(1,.28,1); spent.visible = false;
+  g.add(base, gem, spent);
+  g.userData = {live:[base,gem], spent, gem};
+  return g;
+}
+function makeDrop(kind){
+  const g = new THREE.Group();
+  const col = DROP_COLOR[kind] || PAL.wood;
+  let m;
+  if(kind==="wood"){ m = meshOf(new THREE.CylinderGeometry(.16,.16,.8,6), flat(col)); m.rotation.z=Math.PI/2; }
+  else if(kind==="coin"){ m = meshOf(new THREE.CylinderGeometry(.3,.3,.09,10), flat(col)); m.rotation.x=Math.PI/2; }
+  else if(kind==="diamond") m = meshOf(new THREE.OctahedronGeometry(.32,0), flat(col));
+  else m = meshOf(new THREE.DodecahedronGeometry(.3,0), flat(col));
+  m.position.y = .3;
+  g.add(m);
+  g.userData = {body:m};
+  return g;
+}
+// Enemies borrow the prototype's unit form — capsule body, sphere head, cone
+// cap — and read apart by colour and bulk rather than by props.
+const ENEMY_LOOK = {
+  raider:{body:PAL.raider, cap:PAL.raiderCap, r:.26, len:.46},
+  archer:{body:PAL.archer, cap:PAL.archerCap, r:.22, len:.56},
+  healer:{body:PAL.healer, cap:PAL.healerCap, r:.29, len:.40},
+  brute: {body:PAL.brute, cap:PAL.bruteCap, r:.34, len:.54},
+};
+function makeEnemy(type){
+  const g = new THREE.Group();
+  const L = ENEMY_LOOK[type] || ENEMY_LOOK.raider;
+  const body = meshOf(new THREE.CapsuleGeometry(L.r, L.len, 3, 8), flat(L.body));
+  body.position.y = L.r + L.len/2;
+  const head = meshOf(new THREE.SphereGeometry(L.r*.82, 8, 6), flat(PAL.skin));
+  head.position.y = L.r*2 + L.len + .04;
+  const cap = meshOf(new THREE.ConeGeometry(L.r*1.18, L.r*1.05, 7), flat(L.cap));
+  cap.position.y = head.position.y + L.r*.86;
+  g.add(body, head, cap);
+  g.userData = {body, head, cap, baseColor:L.body};
+  return g;
+}
+function makeWorker(){
+  const g = new THREE.Group();
+  const body = meshOf(new THREE.CapsuleGeometry(.26,.42,3,7), flat(PAL.coat));
+  body.position.y = .55;
+  const head = meshOf(new THREE.SphereGeometry(.24,8,6), flat(PAL.skin));
+  head.position.y = 1.08;
+  const hat = meshOf(new THREE.ConeGeometry(.3,.26,7), flat(PAL.hat));
+  hat.position.y = 1.3;
+  const load = meshOf(new THREE.BoxGeometry(.28,.28,.28), flat(PAL.wood));
+  load.position.set(-.38,.72,0); load.visible = false;
+  const tool = meshOf(new THREE.BoxGeometry(.08,.62,.08), flat(PAL.tool));
+  tool.position.set(.36,.72,0);
+  g.add(body, head, hat, load, tool);
+  g.userData = {body, load, tool};
+  return g;
+}
+function makeCorpse(coat){
+  const g = new THREE.Group();
+  const m = meshOf(new THREE.CapsuleGeometry(.24,.4,3,6),
+    new THREE.MeshLambertMaterial({color:new THREE.Color(coat), flatShading:true,
+      transparent:true, opacity:.62}));
+  m.rotation.z = Math.PI/2; m.position.y = .24;
+  g.add(m);
+  return g;
+}
+function makeBase(){
+  const g = new THREE.Group();
+  const body = meshOf(new THREE.BoxGeometry(4.4,3.4,3.6), flat(PAL.plasterLit));
+  body.position.y = 1.7;
+  const roof = meshOf(new THREE.ConeGeometry(3.5,1.7,4), flat(PAL.plasterLitRoof));
+  roof.position.y = 4.2; roof.rotation.y = Math.PI/4;
+  const doorway = meshOf(new THREE.BoxGeometry(1.4,1.7,.2), flat(PAL.doorway));
+  doorway.position.set(0,.85,1.85);
+  const pole = meshOf(new THREE.CylinderGeometry(.06,.06,1.6,5), flat(PAL.pole));
+  pole.position.set(0,5.6,0);
+  const flagM = meshOf(new THREE.BoxGeometry(1.2,.62,.06), flat(PAL.banner));
+  flagM.position.set(.62,6.05,0);
+  for(const [dx,dz] of [[-2.5,-2.1],[2.5,-2.1],[-2.5,2.1],[2.5,2.1]]){
+    const t = meshOf(new THREE.BoxGeometry(1.1,2.4,1.1), flat(PAL.plasterLit));
+    t.position.set(dx,1.2,dz); g.add(t);
+  }
+  g.add(body, roof, doorway, pole, flagM);
+  g.position.set(gx(BASE.x), 0, gz(BASE.y));
+  g.userData = {body};
+  return g;
+}
+function makeKing(){
+  const g = new THREE.Group();
+  const body = meshOf(new THREE.CapsuleGeometry(.26,.44,3,7), flat(PAL.kingRobe));
+  body.position.y = .58;
+  const head = meshOf(new THREE.SphereGeometry(.24,8,6), flat(PAL.skin));
+  head.position.y = 1.12;
+  const crown = meshOf(new THREE.CylinderGeometry(.26,.26,.2,6), flat(PAL.kingCrown));
+  crown.position.y = 1.36;
+  const sword = meshOf(new THREE.BoxGeometry(.08,.86,.08), flat(PAL.blade));
+  sword.position.set(.38,.86,0);
+  g.add(body, head, crown, sword);
+  g.userData = {sword};
+  return g;
+}
+
+function makeBuilding(type){
+  const g = new THREE.Group();
+  const parts = [];
+  const add = (m)=>{ g.add(m); parts.push(m); return m; };
+  if(type==="tower"){
+    for(const [dx,dz] of [[-.5,-.5],[.5,-.5],[-.5,.5],[.5,.5]]){
+      const leg = add(meshOf(new THREE.BoxGeometry(.2,3.0,.2), flat(PAL.timber)));
+      leg.position.set(dx,1.5,dz);
+    }
+    const deck = add(meshOf(new THREE.BoxGeometry(1.7,.3,1.7), flat(PAL.timber)));
+    deck.position.y = 3.1;
+    const roof = add(meshOf(new THREE.ConeGeometry(1.4,1.0,4), flat(PAL.timberDark)));
+    roof.position.y = 3.8; roof.rotation.y = Math.PI/4;
+    g.userData.roof = roof;
+  } else if(type==="house"){
+    const b = add(meshOf(new THREE.BoxGeometry(2.4,1.6,2.0), flat(PAL.plaster))); b.position.y=.8;
+    const r = add(meshOf(new THREE.ConeGeometry(1.9,1.2,4), flat(PAL.roof))); r.position.y=2.2; r.rotation.y=Math.PI/4;
+  } else if(type==="lumber"){
+    const b = add(meshOf(new THREE.BoxGeometry(2.4,1.3,1.9), flat(PAL.scaffold))); b.position.y=.65;
+    const r = add(meshOf(new THREE.BoxGeometry(2.7,.28,2.2), flat(PAL.roofDark))); r.position.y=1.42;
+    const log = add(meshOf(new THREE.CylinderGeometry(.22,.22,1.8,6), flat(PAL.wood)));
+    log.rotation.x=Math.PI/2; log.position.set(1.1,.24,.9);
+  } else if(type==="quarry"){
+    const b = add(meshOf(new THREE.BoxGeometry(2.3,1.2,1.9), flat(PAL.quarryWall))); b.position.y=.6;
+    const r = add(meshOf(new THREE.ConeGeometry(1.7,.9,5), flat(PAL.quarryRoof))); r.position.y=1.6;
+    const s = add(meshOf(new THREE.DodecahedronGeometry(.45,0), flat(PAL.stone))); s.position.set(1.1,.3,.9);
+  } else if(type==="stockpile"){
+    const p = add(meshOf(new THREE.BoxGeometry(2.6,.24,2.2), flat(PAL.scaffold))); p.position.y=.12;
+    const c1 = add(meshOf(new THREE.BoxGeometry(.9,.7,.9), flat(PAL.wood))); c1.position.set(-.6,.55,0);
+    const c2 = add(meshOf(new THREE.BoxGeometry(.8,.55,.8), flat(PAL.stone))); c2.position.set(.65,.48,.2);
+  } else if(type==="obelisk"){
+    const b = add(meshOf(new THREE.BoxGeometry(1.5,.4,1.5), flat(PAL.masonryDark))); b.position.y=.2;
+    const sh = add(meshOf(new THREE.CylinderGeometry(.36,.52,3.0,5), flat(PAL.masonry))); sh.position.y=1.9;
+    const tip = add(meshOf(new THREE.OctahedronGeometry(.44,0), flat(PAL.arcane,{emissive:PAL.arcaneGlow}))); tip.position.y=3.7;
+    g.userData.tip = tip;
+  } else if(type==="blast"){
+    const b = add(meshOf(new THREE.CylinderGeometry(.55,.62,.8,8), flat(PAL.chargeBody))); b.position.y=.4;
+    const t = add(meshOf(new THREE.SphereGeometry(.28,8,6), flat(PAL.charge))); t.position.y=.95;
+  } else if(type==="landmine"){
+    const b = add(meshOf(new THREE.CylinderGeometry(.5,.55,.4,8), flat(PAL.chargeBody))); b.position.y=.2;
+    const t = add(meshOf(new THREE.CylinderGeometry(.14,.14,.3,6), flat(PAL.fuse))); t.position.y=.52;
+  } else if(type==="spikes"){
+    for(let i=0;i<5;i++){
+      const s = add(meshOf(new THREE.ConeGeometry(.16,.85,4), flat(PAL.metal)));
+      s.position.set((i%3-1)*.55, .42, (Math.floor(i/3)-.5)*.6);
+    }
+  } else if(type==="tar"){
+    const p = add(meshOf(new THREE.CylinderGeometry(1.15,1.15,.12,14), flat(PAL.tar))); p.position.y=.06;
+  } else {
+    const b = add(meshOf(new THREE.BoxGeometry(2,1.4,1.8), flat(PAL.blueprint))); b.position.y=.7;
+  }
+  g.userData.parts = parts;
+  return g;
+}
+function makeBlueprint(){
+  const g = new THREE.Group();
+  const pad = meshOf(new THREE.BoxGeometry(2.6,.14,2.4), flat(PAL.scaffold), false, true);
+  pad.position.y = .07;
+  const a = meshOf(new THREE.BoxGeometry(.18,1.1,.18), flat(PAL.blueprint)); a.position.set(-1.05,.55,-.95);
+  const b = meshOf(new THREE.BoxGeometry(.18,1.1,.18), flat(PAL.blueprint)); b.position.set(1.05,.55,-.95);
+  const c = meshOf(new THREE.BoxGeometry(.18,1.1,.18), flat(PAL.blueprint)); c.position.set(-1.05,.55,.95);
+  const d = meshOf(new THREE.BoxGeometry(.18,1.1,.18), flat(PAL.blueprint)); d.position.set(1.05,.55,.95);
+  g.add(pad,a,b,c,d);
+  return g;
+}
+
+// ─────────────────────────────────────────────────────────── pooling
+/** Keeps one group per live entity; builds on first sight, disposes when gone. */
+function makeLayer(build, update){
+  const store = new Map();
+  const seen = new Set();
+  return function sync(list){
+    seen.clear();
+    for(const e of list){
+      let g = store.get(e);
+      if(!g){
+        g = build(e);
+        g.traverse(o=>{ if(o.isMesh) o.userData.ent = e; });   // for the occlusion test
+        scene.add(g); store.set(e,g);
+      }
+      seen.add(e);
+      g.visible = true;
+      update(g,e);
+    }
+    for(const [e,g] of store){
+      if(seen.has(e))continue;
+      scene.remove(g); disposeGroup(g); store.delete(e);
+    }
+  };
+}
+function disposeGroup(g){
+  g.traverse(o=>{ if(o.isMesh){ o.geometry.dispose(); if(o.material.dispose)o.material.dispose(); } });
+}
+const setXZ = (g,e,y=0)=>g.position.set(gx(e.x), y, gz(e.y));
+const shakeOf = e => e.shake ? Math.sin(e.shake*28)*.12 : 0;
+
+const syncTrees = makeLayer(makeTree, (g,t)=>{
+  setXZ(g,t);
+  const d = g.userData, felled = t.stump>0;
+  d.trunk.visible = d.crown.visible = !felled;
+  d.stump.visible = felled;
+  g.rotation.z = felled ? 0 : shakeOf(t);
+  const wear = felled ? 1 : .78 + .22*(t.hp/t.max);
+  g.scale.set(wear, wear*view.heightScale/100, wear);
+});
+const syncRocks = makeLayer(makeRock, (g,r)=>{
+  setXZ(g,r);
+  const d = g.userData, spent = r.depleted>0;
+  for(const m of d.live) m.visible = !spent;
+  d.rubble.visible = spent;
+  g.rotation.z = spent ? 0 : shakeOf(r);
+  const wear = spent ? 1 : .8 + .2*(r.hp/r.max);
+  g.scale.set(wear, wear*view.heightScale/100, wear);
+});
+const syncDiamonds = makeLayer(makeDiamond, (g,n)=>{
+  setXZ(g,n);
+  const d = g.userData, spent = n.depleted>0;
+  for(const m of d.live) m.visible = !spent;
+  d.spent.visible = spent;
+  g.rotation.z = spent ? 0 : shakeOf(n);
+  if(!spent) d.gem.rotation.y += .02;
+  g.scale.y = view.heightScale/100;
+});
+const syncDrops = makeLayer(e=>makeDrop(e.kind), (g,r)=>{
+  if(r.target==="hand"){
+    // Flying to the cursor: parabolic hop, fast tumble, shrinking as it lands.
+    const p = clamp(r.t,0,1);
+    setXZ(g, r, Math.sin(p*Math.PI)*HAND_ARC + p*2.2);
+    g.rotation.x += .30; g.rotation.y += .22;
+    g.scale.setScalar(1 - .45*p);
+    g.userData.body.visible = true;
+    return;
+  }
+  setXZ(g, r, 0);
+  g.rotation.set(0, r.spin*.25, 0);      // sim spins at 4 rad/s; that reads far too fast
+  g.scale.setScalar(1);
+  const fading = r.ttl!==null && r.ttl<2 && Math.floor(r.ttl*7)%2===0;
+  g.userData.body.visible = !fading;
+});
+const syncEnemies = makeLayer(e=>makeEnemy(e.type), (g,e)=>{
+  const def = ENEMY_TYPES[e.type], s = def.size;
+  setXZ(g,e, Math.abs(Math.sin(e.wob))*.1);
+  g.scale.set(s, s*view.heightScale/100, s);
+  g.rotation.z = Math.sin(e.wob)*.09;                    // the wobble-walk
+  const d = g.userData;
+  d.body.material.color.setHex(e.flash ? PAL.flash : d.baseColor);
+  const burning = !!e.status?.burn;
+  d.body.material.emissive.setHex(burning ? PAL.emberGlow : 0x000000);
+});
+const syncWorkers = makeLayer(makeWorker, (g,w)=>{
+  const t = performance.now()/1000;
+  if(w===heldWorker() && state.mouse.inside){
+    // Lifted units ride the cursor, exactly like the demo's carried object.
+    g.position.set(gx(state.mouse.x), 2.2 + Math.sin(t*5)*.14, gz(state.mouse.y));
+    g.rotation.z = Math.sin(t*7)*.13;
+  } else {
+    setXZ(g,w, Math.abs(Math.sin(w.step*8))*.08);
+    g.rotation.z = Math.sin(w.step*8)*.10;
+  }
+  g.scale.y = view.heightScale/100;
+  const d = g.userData;
+  d.body.material.color.set(workerCoatColor(w));
+  const load = workerLoad(w);
+  d.load.visible = load>0;
+  if(load){
+    const k = w.carried.diamond?"diamond":w.carried.coin?"coin":w.carried.dust?"dust":w.carried.stone?"stone":"wood";
+    d.load.material.color.setHex(DROP_COLOR[k]);
+  }
+  const tool = workerToolKind(w);
+  const swinging = (w.combatTarget && w.attackCooldown>WORKER_ATTACK_RATE-.2) ||
+                   (tool && w.hitCooldown>WORKER_HIT_COOLDOWN-.2);
+  d.tool.rotation.z = swinging ? -1.1 : .25;
+});
+const syncCorpses = makeLayer(c=>makeCorpse(c.coat), (g,c)=>{
+  g.position.set(gx(c.x+c.pose), .1, gz(c.y+c.pose*.35));
+  g.rotation.y = c.flip<0 ? Math.PI : 0;
+});
+
+// Buildings swap their whole mesh when they finish or change tower variant.
+const buildingStore = new Map();
+function syncBuildings(){
+  const seen = new Set();
+  for(const b of buildings){
+    const key = b.complete ? (b.type==="tower" ? "tower:"+(b.tower?.variant||"basic") : b.type) : "blueprint";
+    let rec = buildingStore.get(b);
+    if(!rec || rec.key!==key){
+      if(rec){ scene.remove(rec.g); disposeGroup(rec.g); }
+      const g = b.complete ? makeBuilding(b.type) : makeBlueprint();
+      if(b.complete && b.type==="tower" && g.userData.roof)
+        g.userData.roof.material.color.setHex(TOWER_TOP[b.tower?.variant] ?? PAL.timberDark);
+      g.traverse(o=>{ if(o.isMesh) o.userData.ent = b; });
+      scene.add(g);
+      rec = {key, g};
+      buildingStore.set(b, rec);
+    }
+    seen.add(b);
+    rec.g.visible = true;
+    setXZ(rec.g, b);
+    rec.g.scale.y = view.heightScale/100;
+    const pulse = 1 + (b.pulse||0)*.12;
+    rec.g.scale.x = rec.g.scale.z = pulse;
+    if(b.complete && b.type==="tower" && b.tower){
+      const hurt = b.tower.hitFlash>0;
+      for(const p of rec.g.userData.parts||[]) p.material.emissive.setHex(hurt?PAL.hurtGlow:0x000000);
+    }
+    if(rec.g.userData.tip) rec.g.userData.tip.rotation.y += .02;
+  }
+  for(const [b,rec] of buildingStore){
+    if(seen.has(b))continue;
+    scene.remove(rec.g); disposeGroup(rec.g); buildingStore.delete(b);
   }
 }
+
+const baseMesh = makeBase(); scene.add(baseMesh);
+const kingMesh = makeKing(); scene.add(kingMesh);
+
+// ─────────────────────────────────────────────────────────── ground rings (zones)
+const ringGeo = new THREE.RingGeometry(.985,1,64);
+const ringPool = [];
+let ringUsed = 0;
+function ring(x, y, radiusPx, color=css(PAL.hint), opacity=.6){
+  let m = ringPool[ringUsed];
+  if(!m){
+    m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
+      transparent:true, side:THREE.DoubleSide, depthWrite:false}));
+    m.rotation.x = -Math.PI/2;
+    ringPool.push(m); scene.add(m);
+  }
+  ringUsed++;
+  m.visible = true;
+  m.position.set(gx(x), .09, gz(y));
+  m.scale.setScalar(radiusPx*S);
+  m.material.color.set(color);
+  m.material.opacity = opacity;
+  return m;
+}
+function endRings(){ for(let i=ringUsed;i<ringPool.length;i++) ringPool[i].visible=false; ringUsed=0; }
+
+// ─────────────────────────────────────────────────────────── occluded markers
+// Populated by measureNow() in the debug layer, which already computes the
+// hidden positions while it counts visibility.
+const pins = new THREE.Group();
+scene.add(pins);
+const pinGeo = new THREE.ConeGeometry(.6,1.4,4);
+const pinMat = new THREE.MeshBasicMaterial({color:PAL.pin, depthTest:false, transparent:true, opacity:.9});
+function setPins(points){
+  pins.clear();
+  if(!view.ghostPins)return;
+  for(const p of points){
+    const m = new THREE.Mesh(pinGeo, pinMat);
+    m.position.set(p.x, p.y + 3.4, p.z);
+    m.rotation.x = Math.PI;          // point down at the thing you can't see
+    m.renderOrder = 999;
+    pins.add(m);
+  }
+}
+
+// ─────────────────────────────────────────────────────────── particles
+const partGeo = new THREE.BoxGeometry(.18,.18,.18);
+const partPool = [];
+let partUsed = 0;
+function syncParticles(){
+  partUsed = 0;
+  for(const p of particles){
+    let m = partPool[partUsed];
+    if(!m){
+      m = new THREE.Mesh(partGeo, new THREE.MeshBasicMaterial({transparent:true}));
+      partPool.push(m); scene.add(m);
+    }
+    partUsed++;
+    m.visible = true;
+    m.position.set(gx(p.x), .45 + Math.max(0,p.life)*1.2, gz(p.y));
+    m.material.color.set(p.col);
+    m.material.opacity = clamp(p.life*3,0,1);
+    const s = p.resource ? 1.6 : 1;
+    m.scale.setScalar(s);
+  }
+  for(let i=partUsed;i<partPool.length;i++) partPool[i].visible=false;
+}
+
+// ─────────────────────────────────────────────────────────── the hand
+// state.carried is just counts, so the pile is rebuilt whenever those change.
+// Golden-angle stacking keeps it legible as it grows past a couple of items.
+const hand = new THREE.Group();
+scene.add(hand);
+const handItems = [];
+let handSig = "";
+
+function handMeshFor(kind){
+  const col = DROP_COLOR[kind] || PAL.wood;
+  let m;
+  if(kind==="wood"){ m = meshOf(new THREE.CylinderGeometry(.13,.13,.62,6), flat(col)); m.rotation.z = Math.PI/2; }
+  else if(kind==="coin"){ m = meshOf(new THREE.CylinderGeometry(.22,.22,.07,10), flat(col)); m.rotation.x = Math.PI/2; }
+  else if(kind==="diamond") m = meshOf(new THREE.OctahedronGeometry(.24,0), flat(col));
+  else m = meshOf(new THREE.DodecahedronGeometry(.22,0), flat(col));
+  return m;
+}
+function syncHand(){
+  const t = performance.now()/1000;
+  const want = [];
+  for(const kind of RESOURCE_KINDS)
+    for(let i=0;i<state.carried[kind];i++) want.push(kind);
+
+  const sig = want.join(",");
+  if(sig !== handSig){
+    const grew = want.length > handItems.length;
+    for(const it of handItems){ hand.remove(it.mesh); it.mesh.geometry.dispose(); it.mesh.material.dispose(); }
+    handItems.length = 0;
+    want.forEach((kind,i)=>{
+      const mesh = handMeshFor(kind);
+      hand.add(mesh);
+      const a = i*2.399, r = .26*Math.sqrt(i);
+      handItems.push({mesh, phase:Math.random()*6.28,
+        pop:(grew && i===want.length-1) ? 1 : 0,
+        home:new THREE.Vector3(Math.cos(a)*r, i*.2, Math.sin(a)*r)});
+    });
+    handSig = sig;
+  }
+
+  hand.visible = state.mouse.inside && handItems.length>0;
+  if(!hand.visible)return;
+  hand.position.set(gx(state.mouse.x), 2.5 + Math.sin(t*5)*.09, gz(state.mouse.y));
+  hand.rotation.y += .009;
+  for(const it of handItems){
+    it.mesh.position.set(it.home.x, it.home.y + Math.sin(t*3.2+it.phase)*.06, it.home.z);
+    if(it.pop>0){ it.pop = Math.max(0, it.pop-.05); it.mesh.scale.setScalar(1 + it.pop*.9); }
+  }
+}
+
+// ─────────────────────────────────────────────────────────── previews (ghosts)
+const ghostBuild = {key:null, g:null};
+function showGhostBuilding(type, x, y, ok, lift=0){
+  const key = type;
+  if(ghostBuild.key!==key){
+    if(ghostBuild.g){ scene.remove(ghostBuild.g); disposeGroup(ghostBuild.g); }
+    ghostBuild.g = makeBuilding(type);
+    ghostBuild.g.traverse(o=>{ if(o.isMesh){ o.material.transparent=true; o.material.opacity=.5; o.castShadow=false; } });
+    scene.add(ghostBuild.g);
+    ghostBuild.key = key;
+  }
+  ghostBuild.g.visible = true;
+  ghostBuild.g.position.set(gx(x), lift, gz(y));
+  ghostBuild.g.traverse(o=>{ if(o.isMesh) o.material.emissive.setHex(ok?PAL.ghostOk:PAL.ghostBad); });
+}
+function hideGhostBuilding(){ if(ghostBuild.g) ghostBuild.g.visible=false; }
+
+// Held workers are the real mesh lifted onto the cursor (see syncWorkers), so
+// there is no worker ghost — only the drop-target ring below it.
+
+// ─────────────────────────────────────────────────────────── 2D overlay
+const _pv = new THREE.Vector3();
+/** game (x,y) plus height in game px -> overlay canvas coords (960x540). */
+function project(x, y, hpx=0){
+  _pv.set(gx(x), hpx*S, gz(y)).project(camera3);
+  return {x:(_pv.x*.5+.5)*VIEW_W, y:(-_pv.y*.5+.5)*VIEW_H, depth:_pv.z};
+}
+/** Health / progress readout. Same capsule as the chop bar, dark-rimmed. */
+// ── overlay sizing (view panel > bars) ──────────────────────────────────────
+// Overlay marks are drawn in fixed screen pixels, so without scaling they
+// dwarf the world when zoomed out and vanish when zoomed in.
+const BARS = {
+  wMul:1, h:6,            // track width multiplier and thickness at zoom 1
+  gap:2.5, padX:4, padY:1.5,   // gap between tracks; frame padding, split per axis
+  lift:1,                 // multiplier on every "height above the entity"
+  scale:true,             // track camera zoom
+  minScale:.6, maxScale:1.8,
+  text:9, textMin:7, textMax:15,
+};
+const barScale = () =>
+  BARS.scale ? clamp(state.camera.zoom, BARS.minScale, BARS.maxScale) : 1;
+
+const bar = (x, y, hpx, frac, wpx, _back, fill="#d39a3d") =>
+  marks(x, y, hpx, wpx, [{frac, fill}]);
+function label(text, x, y, hpx, color="#f1dfb7", size=BARS.text){
+  const p = project(x, y, hpx*BARS.lift);
+  if(p.depth>1)return;
+  const s = clamp(size*barScale(), BARS.textMin, BARS.textMax);
+  ctx.font = "bold "+s.toFixed(1)+"px monospace"; ctx.textAlign = "center";
+  ctx.fillStyle = "#17120dcc"; ctx.fillText(text, p.x+1, p.y+1);
+  ctx.fillStyle = color; ctx.fillText(text, p.x, p.y);
+}
+
+// ── delivery readout, shared by blueprints and upgrades ─────────────────────
+const RES_ABBR = {wood:"w", stone:"s", dust:"d", coin:"◉", diamond:"◆"};
+/** "w 2/8  s 0/10  ◆ 0/1" — what's in versus what's needed. */
+function costLine(cost, delivered){
+  return RESOURCE_KINDS.filter(k=>(cost[k]||0)>0)
+    .map(k=>RES_ABBR[k]+" "+Math.min(delivered[k]||0,cost[k])+"/"+cost[k]).join("  ");
+}
+function costProgress(cost, delivered){
+  let need=0, got=0;
+  for(const k of RESOURCE_KINDS){
+    const c = cost[k]||0;
+    need += c; got += Math.min(delivered[k]||0, c);
+  }
+  return need ? got/need : 1;
+}
+/** One presentation for every "carry resources here" job: name, bar, tally. */
+function drawDelivery(x, y, name, cost, delivered, accent="#d4a443"){
+  label(name, x, y, 60);
+  bar(x, y, 47, costProgress(cost,delivered), 58, "#292119", accent);
+  label(costLine(cost,delivered), x, y, 34, "#e8dcbc", 8.5);
+}
+
+function drawOverlay(){
+  // Draw in 960x540 space; the transform scales it up to device pixels crisply.
+  ctx.setTransform(overlayScale,0,0,overlayScale,0,0);
+  ctx.clearRect(0,0,VIEW_W,VIEW_H);
+
+  // Night lighting, screen space, exactly as before.
+  if(state.clock.light>0){
+    ctx.fillStyle = "rgba(12,28,67,"+state.clock.light+")";
+    ctx.fillRect(0,0,VIEW_W,VIEW_H);
+  }
+  drawNightTelegraph();
+
+  // Health and swing progress share one frame per entity, so a node you are
+  // cutting shows both stacked rather than two marks at different heights.
+  const swinging = state.primaryClick.held ? chopState.target : null;
+  const rowsFor = (e, frac, fill) => {
+    const rows = [];
+    if(frac < 1) rows.push({frac, fill});
+    if(swinging === e) rows.push({frac: chopProgress(), fill: css(PAL.ok)});
+    return rows;
+  };
+
+  // Widths keep each track near the reference's ~9:1 ratio; the frame padding
+  // adds height, so a narrow track reads as a squat blob rather than a bar.
+  for(const t of trees)
+    if(t.stump<=0) marks(t.x,t.y,58,52, rowsFor(t, t.hp/t.max, css(PAL.hpGood)));
+  for(const r of rocks)
+    if(r.depleted<=0) marks(r.x,r.y,34,46, rowsFor(r, r.hp/r.max, "#bcbab3"));
+  for(const n of diamonds)
+    if(n.depleted<=0) marks(n.x,n.y,38,46, rowsFor(n, n.hp/n.max, css(PAL.diamond)));
+  for(const e of state.enemies){
+    const s = ENEMY_TYPES[e.type].size;
+    marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e, e.hp/e.max, "#c65343"));
+  }
+  for(const w of state.workers)
+    if(w.hp<WORKER_HP) bar(w.x,w.y,30,w.hp/WORKER_HP,40,null,css(PAL.hpGood));
+  if(state.baseHp<state.baseMax) bar(BASE.x,BASE.y,84,state.baseHp/state.baseMax,90,null,css(PAL.bad));
+
+  for(const b of buildings){
+    // Blueprints and upgrades are the same job — carry resources here — so they
+    // share one name / bar / tally stack instead of two invented formats.
+    if(!b.complete){
+      drawDelivery(b.x, b.y, BUILDING_TYPES[b.type].name, buildingCost(b), b.delivered);
+      if(b.starved) label("! starved", b.x, b.y, 22, "#e08a76");
+      continue;
+    }
+    if(b.type==="tower" && b.tower && b.tower.hp<b.tower.maxHp)
+      bar(b.x,b.y,56,b.tower.hp/b.tower.maxHp,52,null,css(PAL.hpGood));
+    if(b.activeUpgrade){
+      const job = b.activeUpgrade;
+      const up = towerUpgradeList().find(i=>i.id===job.id) || UPGRADES.find(i=>i.id===job.id);
+      if(up) drawDelivery(b.x, b.y, up.name, up.cost, job.delivered, css(PAL.arcane));
+    }
+  }
+
+  drawCarryCount();
+}
+
+/** What a held left click would hit right now — node or enemy — or null. */
+function chopTarget(){
+  const m = state.mouse;
+  if(!m.inside) return null;
+  const enemy = enemyAt(m.x,m.y);
+  if(enemy) return {target:enemy, kind:"enemy"};
+  return playerResourceAt(m.x,m.y);
+}
+// Sits ON the node (mid-canopy for a tree) rather than floating above it.
+
+function roundPath(x, y, w, h, r){
+  ctx.beginPath();
+  if(ctx.roundRect){ ctx.roundRect(x, y, w, h, r); return; }
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y,   x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x,   y+h, x,   y,   r); ctx.arcTo(x,   y,   x+w, y,  r);
+  ctx.closePath();
+}
+
+/**
+ * One rounded frame holding N stacked tracks — health above, progress below.
+ * Grouping them keeps a node's remaining yield and your current swing read as
+ * a single widget instead of two marks floating at different heights.
+ */
+function stackedBars(px, py, rows, w, k){
+  if(!rows.length) return;
+  const rowH = BARS.h*k;
+  const gap  = BARS.gap*k;
+  const padX = BARS.padX*k, padY = BARS.padY*k;
+  const innerH = rows.length*rowH + (rows.length-1)*gap;
+  const boxW = w + padX*2, boxH = innerH + padY*2;
+  const bx = px - boxW/2, by = py - boxH/2;
+
+  roundPath(bx, by, boxW, boxH, Math.min(boxH/2, rowH*1.4));
+  ctx.fillStyle = "rgba(36,31,22,.86)"; ctx.fill();
+  ctx.lineWidth = Math.max(1, 1.5*k);
+  ctx.strokeStyle = "#efe6cd"; ctx.stroke();
+
+  rows.forEach((row, i)=>{
+    const ry = by + padY + i*(rowH+gap);
+    roundPath(bx+padX, ry, w, rowH, rowH/2);
+    ctx.fillStyle = "rgba(12,10,7,.5)"; ctx.fill();
+    const fw = w*clamp(row.frac, 0, 1);
+    if(fw > rowH*0.35){
+      roundPath(bx+padX, ry, fw, rowH, rowH/2);
+      ctx.fillStyle = row.fill; ctx.fill();
+    }
+  });
+}
+
+/** Project an entity and draw its stacked marks above it. */
+function marks(x, y, hpx, wpx, rows){
+  if(!rows.length) return;
+  const p = project(x, y, hpx*BARS.lift);
+  if(p.depth>1) return;
+  const k = barScale();
+  stackedBars(p.x, p.y, rows, wpx*BARS.wMul*k, k);
+}
+
+/** The pile itself is 3D; only the "n/5" readout stays flat. */
+function drawCarryCount(){
+  const total = carriedTotal();
+  if(!total || !state.mouse.inside) return;
+  const p = project(state.mouse.x, state.mouse.y, 0);
+  if(p.depth>1) return;
+  const full = total >= state.capacity;
+  ctx.font = "bold 10px monospace"; ctx.textAlign = "center";
+  ctx.fillStyle = "#17120dcc"; ctx.fillText(total+"/"+state.capacity, p.x+1, p.y+15);
+  ctx.fillStyle = full ? "#e8926f" : "#f1dfb7";
+  ctx.fillText(total+"/"+state.capacity, p.x, p.y+14);
+}
+
 function drawWarningEdge(side,alpha){
   const thickness=18;ctx.fillStyle="rgba(202,72,48,"+alpha+")";
   if(side===MAP_SIDE.NORTH)ctx.fillRect(0,0,VIEW_W,thickness);
@@ -1446,60 +2321,302 @@ function drawNightTelegraph(){
   const alpha=.42+Math.sin(clock.remaining*5)*.14,secondary=recipe.id==="twoFront"?oppositeMapSide(side):null;
   drawWarningEdge(side,alpha);if(secondary)drawWarningEdge(secondary,alpha);
 }
-function drawHands(){
-  const kinds=[];for(const kind of RESOURCE_KINDS)for(let i=0;i<state.carried[kind];i++)kinds.push(kind);
-  if(!state.mouse.inside||!kinds.length)return;
-  const shown=Math.min(kinds.length,7);
-  for(let i=0;i<shown;i++){const a=-Math.PI*.85+i/(Math.max(1,shown-1))*Math.PI*.7,r=19+(i%2)*5;ctx.save();ctx.translate(state.mouse.x+Math.cos(a)*r,state.mouse.y+Math.sin(a)*r);ctx.rotate(a+.6);if(kinds[i]==="wood"){rect(-6,-3,12,6,"#b67b43");rect(3,-3,3,6,"#e0a35d");}else if(kinds[i]==="dust"){rect(-5,-5,10,10,"#684e91");rect(-3,-7,7,9,"#b18be5");}else if(kinds[i]==="coin"){rect(-5,-6,10,11,"#e3b445");rect(-2,-5,4,7,"#ffe18a");}else if(kinds[i]==="diamond"){rect(-5,-6,10,11,"#79d9e8");rect(-2,-8,5,8,"#d0f9fb");}else{rect(-5,-5,10,10,"#888784");rect(-3,-6,7,7,"#bbb9b3");}ctx.restore();}
-}
-function drawInteractionPreviews(){
-  if(state.mouse.inside&&distance(state.mouse.x,state.mouse.y,BASE.x,BASE.y)<BASE.r+16)drawZone(BASE.x,BASE.y,BASE_ZONE);
-  for(const building of buildings){
-    const def=BUILDING_TYPES[building.type],radius=building.complete&&building.type==="tower"?towerRadius(building):def.serviceRadius||def.effectRadius;
-    if(building.complete&&radius&&state.mouse.inside&&distance(state.mouse.x,state.mouse.y,building.x,building.y)<48){drawZone(building.x,building.y,radius);if(building.type==="tower"&&towerVariant(building).tauntRadius)drawZone(building.x,building.y,towerVariant(building).tauntRadius,"#d6534f99");}
+
+// ─────────────────────────────────────────────────────────── interaction rings
+function drawZones(){
+  const m = state.mouse, t = performance.now()/1000;
+
+  // Vacuum reach while right-drag is collecting — the real collectDrop() radius.
+  if(SHOW_VACUUM_RING && state.collecting && m.inside)
+    ring(m.x, m.y, VACUUM_RADIUS, css(PAL.ok), .45 + Math.sin(t*6)*.18);
+
+  // What a left click is about to hit.
+  if(m.inside && !modalOpen() && !state.heldObject && !state.buildMode){
+    const node = chopTarget();
+    if(node) ring(node.target.x, node.target.y, 24, css(PAL.ok), .5);
   }
-  if(heldWorker()){drawZone(BASE.x,BASE.y,BASE_ZONE,"#d8c47c66");for(const storage of buildings)if(storage.complete&&storage.type==="stockpile")drawZone(storage.x,storage.y,storageServiceRadius(storage),"#d8c47c66");}
-  if(state.buildMode&&state.mouse.inside)drawBuilding({type:state.buildMode,x:state.mouse.x,y:state.mouse.y,complete:false,pulse:0},true);
-  if(!state.heldObject||!state.mouse.inside)return;
-  const worker=heldWorker();
-  if(worker){
-    drawWorker({...worker,x:state.mouse.x,y:state.mouse.y});
-    // Preview consumes the same assignment result that release will commit.
-    const assignment=workerAssignmentAt(worker,state.mouse.x,state.mouse.y);
-    if(assignment)drawZone(assignment.zoneX,assignment.zoneY,assignment.zoneRadius,"#f5df98");else drawZone(state.mouse.x,state.mouse.y,WORKER_LEASH,"#b84b3c");
-  }else{const held={...heldBuilding(),x:state.mouse.x,y:state.mouse.y};drawBuilding(held);ctx.strokeStyle=canPlace(state.mouse.x,state.mouse.y)?"#f5df98":"#b84b3c";ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.strokeRect(state.mouse.x-32,state.mouse.y-48,64,88);ctx.setLineDash([]);}
-}
-function draw(){
-  const camera=state.camera;
-  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle="#1d1c29";ctx.fillRect(0,0,VIEW_W,VIEW_H);
-  ctx.save();
-  // Camera transform owns zoom; pointerPosition() applies its exact inverse for interaction.
-  ctx.translate(VIEW_W/2,VIEW_H/2);ctx.scale(camera.zoom,camera.zoom);ctx.translate(-camera.x,-camera.y);
-  drawGround();
-  const sorted=[...trees].sort((a,b)=>a.y-b.y);
-  for(const rock of rocks)drawRock(rock);
-  for(const diamond of diamonds)drawDiamondNode(diamond);
-  for(const tree of sorted)drawTree(tree);
-  for(const corpse of workerCorpses)drawCorpse(corpse);
-  for(const resource of resourceDrops)drawResource(resource);
-  for(const enemy of state.enemies)drawEnemy(enemy);
-  drawBase();drawKing();
-  for(const building of buildings)drawBuilding(building);
-  for(const worker of state.workers)drawWorker(worker);
-  drawParticles();drawFog();
-  ctx.restore();
-  // Lighting is screen-space and precedes interaction/HUD layers so feedback stays readable at night.
-  if(state.clock.light>0){ctx.fillStyle="rgba(12,28,67,"+state.clock.light+")";ctx.fillRect(0,0,VIEW_W,VIEW_H);}
-  drawNightTelegraph();
-  ctx.save();ctx.translate(VIEW_W/2,VIEW_H/2);ctx.scale(camera.zoom,camera.zoom);ctx.translate(-camera.x,-camera.y);
-  drawInteractionPreviews();drawHands();ctx.restore();
+
+  if(m.inside && distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16) ring(BASE.x,BASE.y,BASE_ZONE);
+  for(const b of buildings){
+    const def=BUILDING_TYPES[b.type];
+    const radius = b.complete && b.type==="tower" ? towerRadius(b) : def.serviceRadius||def.effectRadius;
+    if(b.complete && radius && m.inside && distance(m.x,m.y,b.x,b.y)<48){
+      ring(b.x,b.y,radius);
+      const taunt = b.type==="tower" && towerVariant(b).tauntRadius;
+      if(taunt) ring(b.x,b.y,taunt,css(PAL.taunt),.6);
+    }
+  }
+  if(heldWorker()){
+    ring(BASE.x,BASE.y,BASE_ZONE,css(PAL.storage),.4);
+    for(const s of buildings) if(s.complete && s.type==="stockpile")
+      ring(s.x,s.y,storageServiceRadius(s),css(PAL.storage),.4);
+  }
+
+  hideGhostBuilding();
+  if(state.buildMode && m.inside) showGhostBuilding(state.buildMode, m.x, m.y, canPlace(m.x,m.y));
+  if(state.heldObject && m.inside){
+    const worker = heldWorker();
+    if(worker){
+      // The worker itself is already floating on the cursor; show where it lands.
+      const a = workerAssignmentAt(worker, m.x, m.y);
+      if(a) ring(a.zoneX,a.zoneY,a.zoneRadius,css(PAL.ok),.85);
+      else  ring(m.x,m.y,WORKER_LEASH,css(PAL.bad),.7);
+      ring(m.x, m.y, 16, a?css(PAL.ok):css(PAL.bad), .8);
+    } else {
+      const b = heldBuilding();
+      if(b){
+        const ok = canPlace(m.x,m.y);
+        showGhostBuilding(b.type, m.x, m.y, ok, 1.6 + Math.sin(t*5)*.12);
+        ring(m.x, m.y, 30, ok?css(PAL.ok):css(PAL.bad), .8);
+      }
+    }
+  }
+  endRings();
 }
 
+// ─────────────────────────────────────────────────────────── frame
+function draw(){
+  if(view.orbit){ view.yaw = (view.yaw + .25) % 360; syncViewInputs(); }
+  placeCamera();
+
+  const cam = state.camera;
+  sun.position.set(gx(cam.x)-26, 46, gz(cam.y)+20);
+  sun.target.position.set(gx(cam.x), 0, gz(cam.y));
+  sun.target.updateMatrixWorld();
+  // Night dims and cools the key light; day/night already lives in state.clock.
+  const night = state.clock.light;
+  sun.intensity = 1.1 - night*.75;
+  sun.color.setHex(night>.25 ? PAL.sunNight : PAL.sunDay);
+
+  syncTrees(trees); syncRocks(rocks); syncDiamonds(diamonds);
+  syncDrops(resourceDrops); syncCorpses(workerCorpses);
+  syncEnemies(state.enemies); syncWorkers(state.workers);
+  syncBuildings(); syncParticles(); syncHand();
+
+  baseMesh.scale.set(1+state.basePulse*.1, view.heightScale/100, 1+state.basePulse*.1);
+  const king = state.king;
+  kingMesh.position.set(gx(king.x), 0, gz(king.y));
+  kingMesh.scale.y = view.heightScale/100;
+  kingMesh.userData.sword.rotation.z = king.swing>0 ? -1.2 : 0;
+
+  drawZones();
+  // Visibility stat + occluded pins. Throttled: it raycasts every clickable thing.
+  if(++frameTick % 15 === 0) measureNow();
+  renderer.render(scene, camera3);
+  drawOverlay();
+  if(scanPending){ scanPending=false; runScan(); }
+}
+let frameTick = 0;
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VIEW DEBUGGER
+// Ported from prototype-3d. Tabs are generated from the panes, so adding a
+// section means adding a <section class="pane" data-tab="..."> and nothing else.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const $v = id => document.getElementById(id);
+let scanData = [], scanTimer = 0, scanPending = false;
+
+const vPanes = [...document.querySelectorAll("#vPanes .pane")];
+function showVTab(name){
+  for(const p of vPanes) p.classList.toggle("on", p.dataset.tab===name);
+  for(const b of $v("vTabs").children) b.classList.toggle("on", b.dataset.tab===name);
+  $v("vPanes").scrollTop = 0;
+  try{ localStorage.setItem("wd3d.tab", name); }catch{}
+}
+vPanes.forEach((p,i)=>{
+  const b = document.createElement("button");
+  b.textContent = p.dataset.tab; b.dataset.tab = p.dataset.tab; b.title = "shift+"+(i+1);
+  b.addEventListener("click", ()=>showVTab(p.dataset.tab));
+  $v("vTabs").appendChild(b);
+});
+(function initTab(){
+  let first = vPanes[0]?.dataset.tab;
+  try{ const s = localStorage.getItem("wd3d.tab"); if(vPanes.some(p=>p.dataset.tab===s)) first = s; }catch{}
+  showVTab(first);
+})();
+
+$v("vToggle").addEventListener("click", ()=>{
+  const on = $v("viewPanel").classList.toggle("collapsed");
+  $v("vToggle").textContent = on ? "view ▸" : "view ▾";
+});
+
+function bindV(id, apply, fmt){
+  const el = $v(id), out = $v("o_"+id);
+  // Browsers restore form-control values across a reload, so a slider left at
+  // some test value keeps applying it while the markup still reads its default.
+  // Markup wins on load; that is the only way these stay predictable.
+  if(el.type === "checkbox") el.checked = el.hasAttribute("checked");
+  else if(el.hasAttribute("value")) el.value = el.getAttribute("value");
+  const run = ()=>{
+    const v = el.type==="checkbox" ? el.checked : +el.value;
+    apply(v);
+    if(out) out.textContent = fmt ? fmt(v) : v;
+  };
+  el.addEventListener(el.type==="checkbox"?"change":"input", run);
+  run();
+}
+
+bindV("vPitch", v=>{ view.pitch=v; placeCamera(); drawScan(); updateReadout(); }, v=>v+"°");
+bindV("vYaw",   v=>{ view.yaw=v; placeCamera(); scheduleScan(); updateReadout(); }, v=>v+"°");
+bindV("vZoom",  v=>{ state.camera.zoom=v; clampCamera(); placeCamera(); updateReadout(); }, v=>v.toFixed(2));
+bindV("vFov",   v=>{ view.fov=v; placeCamera(); updateReadout(); }, v=>v+"°");
+bindV("vOrtho", v=>{ view.ortho=v; camera3 = v?ortho:persp; resizeRenderer(); scheduleScan(); updateReadout(); });
+bindV("vOrbit", v=>{ view.orbit=v; });
+bindV("vHeight",v=>{ view.heightScale=v; scheduleScan(); updateReadout(); }, v=>v+"%");
+bindV("vShadow",v=>{ renderer.shadowMap.enabled=v; scene.traverse(o=>{ if(o.isMesh) o.material.needsUpdate=true; }); });
+bindV("vPins",  v=>{ view.ghostPins=v; });
+
+// ── pickup / harvest: these drive real simulation constants, not just visuals ──
+bindV("vCap",   v=>{ state.capacity=v; },      v=>v);
+bindV("vRadius",v=>{ VACUUM_RADIUS=v; },       v=>v+"px");
+bindV("vRate",  v=>{ SUCK_RATE=v/1000; },      v=>v+"ms");
+bindV("vArc",   v=>{ HAND_ARC=v; },            v=>v.toFixed(1));
+bindV("vRing",  v=>{ SHOW_VACUUM_RING=v; });
+bindV("vChopT", v=>{ CHOP_TIME=v/1000; },      v=>(v/1000).toFixed(2)+"s");
+bindV("vYield", v=>{ CHOP_YIELD=v; },          v=>v+"x");
+bindV("vDamage",v=>{ CLICK_DAMAGE=v; },        v=>v+" hp");
+
+// ── overlay bar sizing / placement ──
+bindV("vBarScale",v=>{ BARS.scale=v; });
+bindV("vBarMin",  v=>{ BARS.minScale=v; }, v=>v.toFixed(2)+"x");
+bindV("vBarMax",  v=>{ BARS.maxScale=v; }, v=>v.toFixed(1)+"x");
+bindV("vBarW",    v=>{ BARS.wMul=v; },     v=>v.toFixed(2)+"x");
+bindV("vBarH",    v=>{ BARS.h=v; },        v=>v.toFixed(1)+"px");
+bindV("vBarGap",  v=>{ BARS.gap=v; },      v=>v.toFixed(1)+"px");
+bindV("vBarPadX", v=>{ BARS.padX=v; },     v=>v.toFixed(1)+"px");
+bindV("vBarPadY", v=>{ BARS.padY=v; },     v=>v.toFixed(1)+"px");
+bindV("vBarLift", v=>{ BARS.lift=v; },     v=>v.toFixed(2)+"x");
+bindV("vBarText", v=>{ BARS.text=v; },     v=>v.toFixed(1)+"px");
+bindV("vTextMin", v=>{ BARS.textMin=v; },  v=>v.toFixed(1)+"px");
+bindV("vTextMax", v=>{ BARS.textMax=v; },  v=>v.toFixed(1)+"px");
+
+$v("vRescan").addEventListener("click", ()=>runScan());
+
+/** Push programmatic camera changes (orbit, wheel zoom) back into the sliders. */
+function syncViewInputs(){
+  $v("vYaw").value = Math.round(view.yaw);  $v("o_vYaw").textContent = Math.round(view.yaw)+"°";
+  $v("vZoom").value = state.camera.zoom;    $v("o_vZoom").textContent = state.camera.zoom.toFixed(2);
+}
+
+// ─────────────────────────────────────────────── visibility measurement
+const occRay = new THREE.Raycaster();
+const _sp = new THREE.Vector3();
+
+/** Every live thing the player can click, with the height to sight to. */
+function subjects(){
+  const out = [];
+  for(const t of trees)    if(t.stump<=0)    out.push([t,1.7]);
+  for(const r of rocks)    if(r.depleted<=0) out.push([r,.6]);
+  for(const n of diamonds) if(n.depleted<=0) out.push([n,.9]);
+  for(const d of resourceDrops) out.push([d,.3]);
+  for(const w of state.workers) out.push([w,.8]);
+  for(const e of state.enemies) out.push([e,.8]);
+  for(const b of buildings)     out.push([b,1.0]);
+  return out;
+}
+function blockerMeshes(){
+  const out = [];
+  scene.traverse(o=>{ if(o.isMesh && o.visible && o.castShadow) out.push(o); });
+  return out;
+}
+function countVisible(list, blockers){
+  let vis = 0;
+  const hidden = [];
+  for(const [e,h] of list){
+    _sp.set(gx(e.x), h*view.heightScale/100, gz(e.y));
+    const dir = _sp.clone().sub(camera3.position);
+    const dist = dir.length();
+    occRay.set(camera3.position, dir.normalize());
+    occRay.far = dist;
+    let blocked = false;
+    for(const hit of occRay.intersectObjects(blockers,false)){
+      const owner = hit.object.userData.ent;
+      if(owner === e) continue;                 // its own body doesn't count
+      if(hit.distance < dist - .15){ blocked = true; break; }
+    }
+    if(blocked) hidden.push(_sp.clone()); else vis++;
+  }
+  return {vis, total:list.length, hidden};
+}
+
+function measureNow(){
+  const r = countVisible(subjects(), blockerMeshes());
+  setPins(r.hidden);
+  const pct = r.total ? Math.round(r.vis/r.total*100) : 100;
+  $v("vStat").textContent = r.vis+"/"+r.total;
+  const w = $v("vWarn");
+  w.textContent = pct>=95 ? "✓" : "⚠ "+(100-pct)+"% hidden";
+  w.className = pct>=95 ? "ok" : "warn";
+}
+
+function runScan(){
+  scene.updateMatrixWorld(true);
+  const list = subjects(), blockers = blockerMeshes(), saved = view.pitch;
+  scanData = [];
+  for(let p=15;p<=89;p+=3){
+    view.pitch = p; placeCamera();
+    const r = countVisible(list, blockers);
+    scanData.push({p, pct: r.total ? r.vis/r.total : 1});
+  }
+  view.pitch = saved; placeCamera();
+  drawScan(); updateReadout(); measureNow();
+}
+function scheduleScan(){ clearTimeout(scanTimer); scanTimer = setTimeout(()=>{scanPending=true;}, 260); }
+
+function drawScan(){
+  const c = $v("vScan"), g = c.getContext("2d"), Wd = c.width, Hd = c.height;
+  const pad = 8, floor = Hd - pad - 16;
+  g.clearRect(0,0,Wd,Hd);
+  if(!scanData.length)return;
+  const bw = (Wd-pad*2)/scanData.length;
+  g.strokeStyle="#7d7458"; g.lineWidth=1;
+  for(const f of [0,.5]){ const y = pad+(floor-pad)*f; g.beginPath(); g.moveTo(pad,y); g.lineTo(Wd-pad,y); g.stroke(); }
+  scanData.forEach((d,i)=>{
+    const h = (floor-pad)*d.pct;
+    g.fillStyle = d.pct>=.999 ? "#6fa04f" : d.pct>=.92 ? "#d4a443" : "#c25a44";
+    g.fillRect(pad+i*bw, floor-h, Math.max(bw-1.5,1), h);
+  });
+  const mx = pad + ((view.pitch-15)/3)*bw + bw/2;
+  g.strokeStyle="#f1dfb7"; g.lineWidth=2;
+  g.beginPath(); g.moveTo(mx,2); g.lineTo(mx,floor); g.stroke();
+  g.fillStyle="#b3a684"; g.font="700 15px monospace"; g.textBaseline="top";
+  g.fillText("15°",pad,floor+4);
+  g.textAlign="right"; g.fillText("89°",Wd-pad,floor+4);
+  g.textAlign="center"; g.fillStyle="#f1dfb7";
+  g.fillText(Math.round(view.pitch)+"°", Math.min(Math.max(mx,30),Wd-34), floor+4);
+  g.textAlign="left";
+}
+function updateReadout(){
+  const clean = scanData.find(d=>d.pct>=.999);
+  const here = scanData.find(d=>d.p>=view.pitch);
+  $v("vReadout").textContent =
+    "pitch  "+Math.round(view.pitch)+"°    yaw "+Math.round(view.yaw)+"°\n"+
+    "zoom   "+state.camera.zoom.toFixed(2)+"   "+(view.ortho?"orthographic":"fov "+view.fov+"°")+"\n"+
+    "height "+view.heightScale+"%"+(here?"   visible "+Math.round(here.pct*100)+"%":"")+"\n"+
+    (clean ? "clean from "+clean.p+"° up" : "never fully clean");
+}
+
+// shift+digit switches tabs; plain digits stay free for the game.
+addEventListener("keydown", e=>{
+  if(!e.shiftKey)return;
+  const n = "!@#$%^&*("./* shifted digits */indexOf(e.key);
+  if(n>=0 && vPanes[n]){ showVTab(vPanes[n].dataset.tab); e.preventDefault(); }
+});
+
+// measureNow() is driven from draw() so the pins track moving things.
+$v("vRestart").addEventListener("click", ()=>location.reload());
+requestAnimationFrame(()=>{ resizeRenderer(); runScan(); });
+
+
+// ── boot ──────────────────────────────────────────────────────────────
+resizeRenderer();
 syncBuildHud();syncPhaseHud();syncDebugUiAvailability();setBuildDockCategory(null);
 let previous=performance.now();
 function frame(now){const dt=Math.min(.033,(now-previous)/1000);previous=now;update(dt);draw();requestAnimationFrame(frame);}
 requestAnimationFrame(frame);
-toast("click the dark fog to explore");
+toast("left-hold a tree or rock to gather");
 </script>
 </body>
 </html>
