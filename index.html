@@ -42,6 +42,8 @@
   #phaseProgress{height:5px;margin:6px 0;background:#17120d;border:1px solid #0008}
   #phaseProgressFill{display:block;height:100%;background:var(--gold)}
   #phaseHud.night #phaseProgressFill{background:#c65b4d}
+  #runTimeRow{display:flex;justify-content:space-between;font-size:9px;opacity:.72;margin-bottom:5px}
+  #runTime{font-variant-numeric:tabular-nums}
   #forecastLabel{font-size:9px;opacity:.72;margin-bottom:3px}
   #forecastSides{font-weight:bold;margin-bottom:4px}
   #forecastRemaining{font-size:9px;color:#d98b75;margin-bottom:3px}
@@ -51,7 +53,9 @@
   #buildCards.open{display:block}
   .build-category{display:none;gap:5px;overflow-x:auto;padding-bottom:2px}
   .build-category.open{display:flex}
-  #buildTabs{display:grid;grid-template-columns:repeat(4,1fr);width:min(520px,100%);margin:auto;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
+  /* One equal column per tab, counted from the markup rather than hardcoded — a fixed count left a
+     dead slot behind when the debug button moved into the view debugger. */
+  #buildTabs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:min(520px,100%);margin:auto;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
   button{width:100%;font:inherit;text-transform:lowercase;text-align:left;color:var(--ink);cursor:pointer;background:#e6d09f;border:2px solid #b99f6c;padding:7px;margin:2px 0}
   button:hover{border-color:var(--ink);background:#f7e8c5}
   button.on,.dock-tab.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
@@ -69,11 +73,9 @@
   #prompt{position:absolute;z-index:5;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
   #prompt.on{opacity:1}
   #prompt kbd{margin-right:5px}
-  #upgradePanel,#debugPanel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,calc(100% - 20px));max-height:calc(100% - 20px);overflow:auto;padding:9px;background:#242919;color:var(--paper);border:2px solid #d8c58f;box-shadow:5px 5px 0 #17120daa}
-  #upgradePanel{z-index:6}#debugPanel{z-index:7;border-color:#d77a62}
-  #upgradePanel.off,#debugPanel.off{display:none}
-  #upgradePanel h3,#debugPanel h3{text-align:center;font-size:14px;border-bottom:1px solid #8f9760;padding-bottom:5px;margin-bottom:7px}
-  #debugPanel h3::before{content:"debug · ";color:#ed8a70}
+  #upgradePanel{position:absolute;z-index:6;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,calc(100% - 20px));max-height:calc(100% - 20px);overflow:auto;padding:9px;background:#242919;color:var(--paper);border:2px solid #d8c58f;box-shadow:5px 5px 0 #17120daa}
+  #upgradePanel.off{display:none}
+  #upgradePanel h3{text-align:center;font-size:14px;border-bottom:1px solid #8f9760;padding-bottom:5px;margin-bottom:7px}
   #upgradeOptions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
   #upgradeOptions button{height:58px;text-align:center;padding:4px;background:#354027;color:var(--paper);border-color:#69754b;font-size:9px}
   #upgradeOptions button.on{border-color:#78d7d4;background:#425339}
@@ -87,13 +89,6 @@
   #upgradeActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}
   #upgradeActions button{text-align:center;margin:0}
   #upgradeAccept{background:#557a35;color:#fff}#upgradeDecline{background:#8e2924;color:#fff}
-  #debugButton{margin:0;padding:6px;text-align:center;background:#4d2f2b;color:#f1dfb7;border-color:#a75a4d}#debugButton.on{background:#8e3e34}
-  #debugOptions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
-  #debugOptions button{height:68px;text-align:center;padding:4px;background:#354027;color:var(--paper);border-color:#69754b;font-size:9px}
-  #debugOptions b{display:block;font-size:17px;line-height:1.1}#debugOptions span{display:block;margin-top:2px}
-  #debugOptions button.legitimate{border-color:#d4b95f}#debugOptions button.forced-on{border-color:#78d7d4;background:#425339}#debugOptions button.forced-off{border-color:#d56b5b;background:#51312c}#debugOptions button.unowned{opacity:.72}
-  #debugDetail{min-height:42px;margin-top:7px;padding:6px;border-top:1px solid #8f9760;border-bottom:1px solid #8f9760}
-  #debugActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}#debugActions button{text-align:center;margin:0}#debugClear{background:#725b32;color:#fff}#debugClose{background:#8e2924;color:#fff}
   #gameOver{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:#17120dcc}
   #gameOver.off{display:none}
   #gameOver .endcard{width:280px;padding:18px;text-align:center;background:var(--paper);border:2px solid var(--ink);box-shadow:5px 5px 0 #0008}
@@ -105,11 +100,11 @@
   @container game-frame (max-width:799px){
     #phaseHud{right:6px;top:6px;width:50%;padding:5px 6px;font-size:10px}
     #phaseHeader{font-size:11px}#phaseProgress{margin:4px 0}
-    #forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
+    #runTimeRow,#forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
     #buildDock{bottom:6px;width:calc(100% - 12px)}#buildCards{padding:3px;margin-bottom:3px}
     .build-category{gap:3px}.build-category .build{flex-basis:126px;min-height:58px;padding:5px;font-size:10px}
     .cost,.purpose{font-size:9px}#buildTabs{width:min(440px,100%);padding:2px}.dock-tab{padding:4px;font-size:10px}
-    #debugOptions{grid-template-columns:repeat(2,1fr)}#upgradePanel,#debugPanel{max-height:calc(100% - 12px)}
+    #upgradePanel{max-height:calc(100% - 12px)}
   }
 
   /* ── 3D layers ───────────────────────────────────────────────────── */
@@ -123,9 +118,12 @@
   #viewPanel.collapsed{width:96px}
   #viewPanel.collapsed #vTabs,#viewPanel.collapsed #vPanes{display:none}
   #vToggle{margin:0;padding:4px;text-align:center;background:#4a5533;color:#f1dfb7;border-color:#8f9760}
-  #vTabs{display:flex;gap:3px;margin:6px 0 7px}
-  #vTabs button{flex:1;margin:0;padding:4px 2px;font-size:10px;text-align:center;
-    background:#354027;color:#f1dfb7;border:1px solid #69754b}
+  /* six labels never fit one 252px row at 10px, so the row wraps. A third-width
+     basis lays them out 3+3 at both widths; the flex-grow still lets a long
+     label ("visibility") take the slack from a short one on its row. */
+  #vTabs{display:flex;flex-wrap:wrap;gap:3px;margin:6px 0 7px}
+  #vTabs button{flex:1 1 calc(33.333% - 2px);width:auto;margin:0;padding:4px 3px;font-size:10px;text-align:center;
+    white-space:nowrap;background:#354027;color:#f1dfb7;border:1px solid #69754b}
   #vTabs button.on{background:#d4a443;color:#292119;border-color:#f1dfb7}
   #vPanes{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
   #vPanes .pane{display:none}
@@ -137,8 +135,16 @@
   #viewPanel .row{display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px}
   #viewPanel .row span:last-child{opacity:.62}
   #viewPanel input[type=range]{width:100%;margin:0;accent-color:#d4a443}
+  #viewPanel select{width:100%;margin:0;padding:3px;font:inherit;font-size:10px;
+    background:#354027;color:#f1dfb7;border:1px solid #69754b}
   #viewPanel .chk{display:flex;gap:6px;align-items:center;margin:4px 0;cursor:pointer;font-size:10px}
   #viewPanel .chk input{width:auto;margin:0;accent-color:#d4a443}
+  /* action buttons inside a pane (gameplay tab). Same slate as #vRescan so the
+     panel keeps one button language; they wrap like the tab row does. */
+  #viewPanel .btnrow{display:flex;flex-wrap:wrap;gap:3px;margin:5px 0}
+  #viewPanel .btnrow button{flex:1 1 calc(50% - 2px);width:auto;margin:0;padding:4px 3px;font-size:10px;
+    text-align:center;white-space:nowrap;background:#4a5533;color:#f1dfb7;border:1px solid #8f9760}
+  #viewPanel .btnrow button:hover{background:#5a6740}
   #vScan{width:100%;height:70px;display:block;margin-bottom:4px;background:#1b2013;border:1px solid #69754b}
   #vRescan{margin:0;padding:4px;text-align:center;background:#4a5533;color:#f1dfb7;border-color:#8f9760}
   #vReadout{margin-top:6px;padding:4px 5px;background:#1b2013;font-size:10px;line-height:1.5;
@@ -147,10 +153,19 @@
   #vStatline .ok{color:#8fd07a}
   #vStatline .warn{color:#e8926f}
   #viewPanel .hint{font-size:9px;opacity:.6;line-height:1.45;margin-top:5px}
-  #vSpeedRow{flex:0 0 auto;margin:8px 0 0;padding-top:7px;border-top:1px solid #8f9760}
+  /* #vSpeedRow now lives inside the gameplay pane, so it needs no footer rules —
+     the generic #viewPanel label styling covers it and #vPanes hides it when
+     the panel collapses. restart stays in the footer, away from the controls. */
   #vRestart{flex:0 0 auto;margin:7px 0 0;padding:5px;text-align:center;
     background:#8e2924;color:#fff;border-color:#d8c58f}
-  #viewPanel.collapsed #vRestart,#viewPanel.collapsed #vSpeedRow{display:none}
+  #viewPanel.collapsed #vRestart{display:none}
+  /* Must come after the rules above: a container query adds no specificity, so
+     the earlier @container block up top cannot override them. */
+  @container game-frame (max-width:799px){
+    #viewPanel{width:230px;padding:5px 6px 6px}
+    #vTabs{gap:2px}
+    #vTabs button{flex:1 1 calc(33.333% - 2px);padding:3px 2px;font-size:9px}
+  }
 </style>
 </head>
 <body>
@@ -178,7 +193,6 @@
       <button class="dock-tab" data-category="economy">economy</button>
       <button class="dock-tab" data-category="defense">defense</button>
       <button class="dock-tab" data-category="deployables">deployables</button>
-      <button id="debugButton" type="button" hidden>debug</button>
     </nav>
   </section>
   <main id="stage">
@@ -188,6 +202,25 @@
       <button id="vToggle" type="button">view &#9662;</button>
       <nav id="vTabs"></nav>
       <div id="vPanes">
+        <!-- One pane per concern; tabs and shift+N shortcuts are generated from
+             this order, so camera must stay first (it is the fallback tab).
+             camera     — where the eye sits: pose, projection, orbit.
+             visibility — can you see/click it: scan, mitigations, outlines.
+             input      — what a click does: hand, harvest, shots.
+             overlays   — screen-space marks: health bars, text, action badge.
+             selectors  — ground marks under the hovered/selected thing, plus
+                          the render-only sample preview for tuning them.
+             gameplay   — the one pane that drives the SIM rather than the view:
+                          economy shortcuts, phase/clock, spawns, population.
+                          Its flags live in DBG and its buttons call the same
+                          entry points play does; it authors nothing itself.
+             Ownership is one-way and exclusive: the five view panes write only
+             their own presentation bag (selectors -> IND / SEL_PREVIEW,
+             overlays -> BARS / BADGE, and so on) and never a simulation value;
+             gameplay is the deliberate exception and is confined to DBG plus
+             the documented entry-point calls. The bindV()/bindBtn() calls are
+             grouped in the same order and carry the matching comments; see
+             "ground selectors" there for that pane's half. -->
 
         <section class="pane" data-tab="camera">
           <h4>pose</h4>
@@ -204,8 +237,8 @@
           <div id="vReadout"></div>
         </section>
 
-        <section class="pane" data-tab="sightlines">
-          <h4>visibility</h4>
+        <section class="pane" data-tab="visibility">
+          <h4>sightline scan</h4>
           <div id="vStatline"><span>clickable <b id="vStat">&mdash;</b></span><span id="vWarn"></span></div>
           <canvas id="vScan" width="452" height="140"></canvas>
           <button id="vRescan" type="button">re-scan</button>
@@ -217,14 +250,14 @@
           <label class="chk"><input autocomplete="off" type="checkbox" id="vShadow" checked><span>shadows</span></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vPins"><span>mark occluded</span></label>
           <h4>readability</h4>
-          <label class="chk"><input autocomplete="off" type="checkbox" id="vOutline"><span>mesh outlines</span></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vOutline" checked><span>mesh outlines</span></label>
           <label><span class="row"><span>outline weight</span><span id="o_vOutlineW"></span></span>
             <input autocomplete="off" type="range" id="vOutlineW" min="0.01" max="0.2" step="0.005" value="0.05"></label>
           <p class="hint">inverted-hull ink. thickness is in world units, so it
           thins out as you zoom away — and box corners can show a seam.</p>
         </section>
 
-        <section class="pane" data-tab="pickup">
+        <section class="pane" data-tab="input">
           <h4>hand</h4>
           <label><span class="row"><span>hand capacity</span><span id="o_vCap"></span></span>
             <input autocomplete="off" type="range" id="vCap" min="1" max="14" step="1" value="5"></label>
@@ -254,7 +287,7 @@
           swings only — worker gathering still drops one per hit.</p>
         </section>
 
-        <section class="pane" data-tab="bars">
+        <section class="pane" data-tab="overlays">
           <h4>scaling</h4>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vBarScale" checked><span>scale with zoom</span></label>
           <label><span class="row"><span>min scale</span><span id="o_vBarMin"></span></span>
@@ -285,16 +318,119 @@
           <p class="hint">overlay marks are screen-space, so without scaling they
           swamp the world zoomed out and disappear zoomed in. min/max clamp how
           far they track the camera.</p>
+          <h4>action badge</h4>
+          <label><span class="row"><span>badge size</span><span id="o_vBadgeBox"></span></span>
+            <input autocomplete="off" type="range" id="vBadgeBox" min="12" max="34" step="1" value="19"></label>
+          <label><span class="row"><span>drop below target</span><span id="o_vBadgeDrop"></span></span>
+            <input autocomplete="off" type="range" id="vBadgeDrop" min="0" max="36" step="1" value="15"></label>
+          <label><span class="row"><span>fill opacity</span><span id="o_vBadgeFill"></span></span>
+            <input autocomplete="off" type="range" id="vBadgeFill" min="0.15" max="0.9" step="0.01" value="0.3"></label>
+          <p class="hint">presentation only — the badge previews what a held left
+          click would hit and doubles as its fill bar, but these never touch
+          targeting or swing timing. size carries the silhouette with it, drop
+          slides the badge down from the target's ground point, and it rides the
+          same zoom scaling as the bars above.</p>
+        </section>
+
+        <section class="pane" data-tab="selectors">
+          <h4>ground selectors</h4>
+          <label><span class="row"><span>pulse amount</span><span id="o_vSelPulse"></span></span>
+            <input autocomplete="off" type="range" id="vSelPulse" min="0" max="0.2" step="0.005" value="0.07"></label>
+          <label><span class="row"><span>pulse speed</span><span id="o_vSelSpeed"></span></span>
+            <input autocomplete="off" type="range" id="vSelSpeed" min="0" max="10" step="0.1" value="4"></label>
+          <label><span class="row"><span>corner thickness</span><span id="o_vSelThick"></span></span>
+            <input autocomplete="off" type="range" id="vSelThick" min="0.04" max="0.22" step="0.01" value="0.1"></label>
+          <label><span class="row"><span>corner opacity</span><span id="o_vSelOpacity"></span></span>
+            <input autocomplete="off" type="range" id="vSelOpacity" min="0.3" max="1" step="0.01" value="0.85"></label>
+          <label><span class="row"><span>ring opacity</span><span id="o_vRingOpacity"></span></span>
+            <input autocomplete="off" type="range" id="vRingOpacity" min="0.15" max="0.9" step="0.01" value="0.42"></label>
+          <label><span class="row"><span>cursor follow</span><span id="o_vSelFollow"></span></span>
+            <input autocomplete="off" type="range" id="vSelFollow" min="0.05" max="1" step="0.01" value="0.28"></label>
+          <p class="hint">presentation only — corners mark the target or footprint,
+          arcs mark the real gameplay radius, and nothing here moves either.
+          pulse breathes the corners' offsets and the rings' opacity (never a
+          ring's radius) off one clock, so every live mark stays in phase.
+          thickness is world units like the mesh outlines under visibility, so a
+          bracket keeps the same weight as the footprint it frames at any zoom.
+          buildings with no gameplay radius draw no ring at all. follow is how
+          much of the gap the cursor bracket closes each frame as it glides to
+          whatever it is framing next — 1 is an instant snap, low values trail.</p>
+          <h4>preview</h4>
+          <label><span class="row"><span>sample mark</span></span>
+            <select autocomplete="off" id="vSelPreview">
+              <option value="0" selected>off</option>
+              <option value="1">one-cell action</option>
+              <option value="2">valid 1x1</option>
+              <option value="3">valid 3x3</option>
+              <option value="4">invalid 3x3</option>
+              <option value="5">building + radius</option>
+            </select></label>
+          <p class="hint">debug aid, not a game feature — draws a sample mark on
+          the camera's centre cell so states play never shows together (valid vs
+          invalid, ring vs no ring) can be compared while tuning. it places
+          nothing and changes no game value; sizes are the real footprints and
+          the ring is the basic tower's real range. live marks keep drawing
+          alongside it, so the sample is a fixed reference next to them.</p>
+        </section>
+
+        <section class="pane" data-tab="gameplay">
+          <h4>economy</h4>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vFreeCosts"><span>free costs</span></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vUnlimitedCharges"><span>unlimited charges</span></label>
+          <div class="btnrow">
+            <button id="vGrantAll" type="button">+25 all</button>
+            <button id="vGrantDust" type="button">+25 dust</button>
+            <button id="vGrantCoin" type="button">+25 coin</button>
+            <button id="vGrantDiamond" type="button">+25 diamond</button>
+          </div>
+          <p class="hint">free costs bypasses the delivery pipeline: a placed
+          blueprint and an accepted upgrade finish through the same completion
+          calls a full delivery makes. It never edits an authored cost and never
+          writes to the base store — the grant buttons are the only thing here
+          that adds resources, and they add nothing else.</p>
+          <h4>time</h4>
+          <label id="vSpeedRow"><span class="row"><span>game speed</span><span id="o_vSpeed"></span></span>
+            <input autocomplete="off" type="range" id="vSpeed" min="1" max="6" step="1" value="1"></label>
+          <div class="btnrow">
+            <button id="vStartDay" type="button">start day</button>
+            <button id="vStartNight" type="button">start night</button>
+            <button id="vAdvancePhase" type="button">advance phase</button>
+          </div>
+          <p class="hint">every phase button runs transitionPhase(), so wave
+          setup, the next-night roll and the forecast reset happen exactly as
+          they do when the clock runs out on its own.</p>
+          <h4>combat</h4>
+          <label><span class="row"><span>enemy type</span></span>
+            <select autocomplete="off" id="vEnemyType"></select></label>
+          <label><span class="row"><span>night wave</span></span>
+            <select autocomplete="off" id="vWaveRecipe"></select></label>
+          <div class="btnrow">
+            <button id="vSpawnEnemy" type="button">spawn enemy</button>
+            <button id="vStartWave" type="button">start wave</button>
+            <button id="vClearEnemies" type="button">clear enemies</button>
+          </div>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vInvulnBase"><span>invulnerable base</span></label>
+          <p class="hint">spawn picks a random edge. start wave forces night if
+          it is day, then hands the chosen recipe to the live wave schedule with
+          its first spawn due immediately. invulnerability is checked where the
+          hit lands, so base hp never gets inflated.</p>
+          <h4>population</h4>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vInstantWorkers"><span>instant workers</span></label>
+          <div class="btnrow">
+            <button id="vHealAll" type="button">heal all</button>
+          </div>
+          <p class="hint">instant workers skips the house spawn timer only; the
+          two-per-house slot limit still applies. heal restores the base, every
+          tower to its own variant's max, and every worker to full.</p>
         </section>
 
       </div>
-      <label id="vSpeedRow"><span class="row"><span>game speed</span><span id="o_vSpeed"></span></span>
-        <input autocomplete="off" type="range" id="vSpeed" min="1" max="6" step="1" value="1"></label>
       <button id="vRestart" type="button">restart run</button>
     </section>
     <section id="phaseHud">
       <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
       <div id="phaseProgress"><i id="phaseProgressFill"></i></div>
+      <div id="runTimeRow"><span>run time</span><span id="runTime">0:00</span></div>
       <div id="forecastLabel">next attack</div>
       <div id="forecastSides"></div>
       <div id="forecastRemaining"></div>
@@ -308,12 +444,6 @@
       <div id="upgradeOptions"></div>
       <div id="upgradeDetail">select an upgrade</div>
       <div id="upgradeActions"><button id="upgradeAccept">accept</button><button id="upgradeDecline">decline</button></div>
-    </section>
-    <section id="debugPanel" class="off" aria-label="debug global upgrades" hidden>
-      <h3>global upgrades</h3>
-      <div id="debugOptions"></div>
-      <div id="debugDetail">click an upgrade to force its effective state.</div>
-      <div id="debugActions"><button id="debugClear">clear overrides</button><button id="debugClose">close</button></div>
     </section>
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
   </main>
@@ -423,7 +553,6 @@ function footprintInWorldBounds(cx,cy,footprint=FOOTPRINT_1x1){
 }
 const HOUSE_SLOTS=2,HOUSE_COST={wood:8,stone:6},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
 const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
-const DEBUG_UI_ENABLED=true;
 // Every entry carries an explicit `footprint` (odd cells, anchor-centered). The tower chassis is the
 // only 3x3; every other building and deployable is 1x1. Tower VARIANTS inherit the chassis footprint -
 // upgrading never resizes an already-placed tower, so variants deliberately declare no footprint.
@@ -503,10 +632,13 @@ const state = {
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
   baseHp:100,baseMax:100,gameOver:false,paused:false,dayEnemyTimer:DAY_ENEMY_SPAWN.min,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
-  clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0},
+  // elapsed: total simulated seconds this run. It accumulates the same dt the phase countdown
+  // spends, so it is game time, not wall time — it does not advance while paused or after a loss,
+  // and a raised game speed makes it run as fast as the phases do.
+  clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
   nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
-  upgradeMenu:{building:null,selected:null,kind:null},debug:{upgradeOverrides:{},selected:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
+  upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
   king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
 };
 
@@ -515,16 +647,26 @@ const distance = (a,b,c,d) => Math.hypot(a-c,b-d);
 const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
 const RESOURCE_KINDS=["wood","stone","dust","coin","diamond"];
 const carriedTotal=()=>RESOURCE_KINDS.reduce((total,kind)=>total+state.carried[kind],0);
+// ── Gameplay debug flags (view panel > gameplay) ──────────────────────────────
+// THE single home for every debug switch that the simulation is allowed to read.
+// HARD RULE: no debug flag may ever mutate authored data — building/upgrade cost
+// tables, tower or enemy stats, and wave recipes stay exactly as written, and no
+// flag writes state.stored. A flag only ever short-circuits a *pipeline* (skip the
+// delivery, skip the spawn timer, skip the damage subtraction); the buttons below
+// call the same entry points play does. The sim treats DBG as read-only: the only
+// writers are the gameplay pane's own bindings.
+const DBG={
+  freeCosts:false,          // blueprints + accepted upgrades finish on placement/accept
+  unlimitedCharges:false,   // stack:true deployables never decrement state.buildStacks
+  invulnBase:false,         // enemy hits on the base subtract nothing
+  instantWorkers:false      // houses ignore their spawn timer
+};
+
 // ── Global upgrade ownership flow ──
 // Legitimate writes: completed obelisks set building.upgrades[id] in dropToUpgrade().
-// Debug writes:      helpers below mutate only state.debug.upgradeOverrides; missing means no override.
-// Gameplay reads:    globalUpgradeEnabled() resolves explicit true/false first, then legitimate ownership.
+// Gameplay reads:    globalUpgradeEnabled() is pure obelisk ownership; there is no override map.
 function legitimateGlobalUpgradeOwned(id){return buildings.some(building=>building.complete&&building.type==="obelisk"&&building.upgrades[id]);}
-function globalUpgradeHasOverride(id){return Object.hasOwn(state.debug.upgradeOverrides,id);}
-function globalUpgradeEnabled(id){return globalUpgradeHasOverride(id)?state.debug.upgradeOverrides[id]:legitimateGlobalUpgradeOwned(id);}
-function setGlobalUpgradeDebugOverride(id,enabled){if(!UPGRADES.some(upgrade=>upgrade.id===id))return;state.debug.upgradeOverrides[id]=!!enabled;if(id==="autoClick"&&!globalUpgradeEnabled(id))stopPrimaryClick();if(debugPanelOpen())renderDebugPanel();}
-function clearGlobalUpgradeDebugOverride(id){delete state.debug.upgradeOverrides[id];if(id==="autoClick"&&!globalUpgradeEnabled(id))stopPrimaryClick();if(debugPanelOpen())renderDebugPanel();}
-function clearGlobalUpgradeDebugOverrides(){state.debug.upgradeOverrides={};if(!globalUpgradeEnabled("autoClick"))stopPrimaryClick();if(debugPanelOpen())renderDebugPanel();}
+function globalUpgradeEnabled(id){return legitimateGlobalUpgradeOwned(id);}
 function oppositeMapSide(side){return side===MAP_SIDE.NORTH?MAP_SIDE.SOUTH:side===MAP_SIDE.SOUTH?MAP_SIDE.NORTH:side===MAP_SIDE.EAST?MAP_SIDE.WEST:MAP_SIDE.EAST;}
 function chooseUpcomingNight(){
   const wave=state.nightWave,choices=MAP_SIDES.filter(side=>!wave.lastSides.includes(side));
@@ -643,7 +785,7 @@ window.addEventListener("pointerup",event=>{if(event.button===0)stopPrimaryClick
 window.addEventListener("pointercancel",()=>{stopPrimaryClick();state.collecting=false;state.camera.panning=false;cancelHeldObject();});
 window.addEventListener("blur",()=>{stopPrimaryClick();state.collecting=false;state.camera.panning=false;state.keys.clear();cancelHeldObject();});
 window.addEventListener("keydown",event=>{
-  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeDebugPanel())return;if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
+  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
   if(["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowLeft","ArrowDown","ArrowRight"].includes(event.code)){event.preventDefault();state.keys.add(event.code);}
 });
 window.addEventListener("keyup",event=>state.keys.delete(event.code));
@@ -658,7 +800,7 @@ function stopGameplayInput(cancelPlacement=false){
 function togglePause(){
   if(state.gameOver)return;
   state.paused=!state.paused;stopGameplayInput();
-  if(state.paused){closeDebugPanel();closeUpgradeMenu();}
+  if(state.paused)closeUpgradeMenu();
   document.getElementById("pauseBadge").classList.toggle("off",!state.paused);sound(state.paused?180:360,.06);
 }
 function cancelBuildMode(){
@@ -786,6 +928,45 @@ function playerResourceAt(x,y){
   for(const diamond of diamonds){if(diamond.depleted>0)continue;const d=distance(x,y,diamond.x,diamond.y);if(d<best){best=d;target=diamond;kind="diamond";}}
   return target?{target,kind}:null;
 }
+
+// ── primary-action resolver ──────────────────────────────────────────────────
+// Presentation identity per resolved thing: what the swing IS and what tool draws it.
+// Resource keys match hitResource()'s kind argument, so the resolver can carry both
+// the simulation kind and the display kind without a second lookup table.
+const PRIMARY_ACTIONS={
+  wood:   {kind:"chop",   icon:"axe"},
+  stone:  {kind:"mine",   icon:"pickaxe"},
+  diamond:{kind:"mine",   icon:"pickaxe"},
+  enemy:  {kind:"attack", icon:"sword"}
+};
+/**
+ * THE authority for direct timed left-click work at a world point.
+ *
+ * Data flow: everything that needs to know "what would a held left click do here?"
+ * reads this one answer — leftClick() (press arms the bar), updatePrimaryClick()
+ * (hold fills and resolves it), and chopTarget() (hover preview ring, and any
+ * later cursor/HUD tool icon). Because all three consume the same resolution,
+ * the highlighted target and the target that actually takes damage can never
+ * disagree, and a future icon preview needs no parallel selection logic.
+ *
+ * Pure: reads the world lists, mutates nothing, returns a fresh descriptor.
+ * Priority is enemies before resources — a foe standing on a tree gets swung at.
+ * Felled trees, depleted rocks/diamonds and dead-or-removed enemies never resolve.
+ *
+ * @returns {null|{target:object,kind:"chop"|"mine"|"attack",resource:null|"wood"|"stone"|"diamond",icon:"axe"|"pickaxe"|"sword"}}
+ */
+function resolvePrimaryAction(x,y){
+  const enemy=enemyAt(x,y);
+  // enemyAt() only walks the live roster; the hp guard also rejects a corpse
+  // still referenced mid-frame before killEnemy() splices it out.
+  if(enemy&&enemy.hp>0&&state.enemies.includes(enemy))
+    return {target:enemy,kind:PRIMARY_ACTIONS.enemy.kind,resource:null,icon:PRIMARY_ACTIONS.enemy.icon};
+  const node=playerResourceAt(x,y);   // already skips stumps and depleted nodes
+  if(!node)return null;
+  const action=PRIMARY_ACTIONS[node.kind];
+  return {target:node.target,kind:action.kind,resource:node.kind,icon:action.icon};
+}
+
 // Harvesting and attacking both run through updatePrimaryClick()'s hold timer.
 // Simulation time advances one cooldown and, while held, retries current cursor work without buffering missed actions.
 function updatePrimaryClick(dt){
@@ -796,34 +977,47 @@ function updatePrimaryClick(dt){
   const m=state.mouse;
   if(!m.inside){resetChop();return;}
   // Nodes and enemies share one hold-to-fill timer; moving off resets it.
-  const enemy=enemyAt(m.x,m.y);
-  const hit=enemy?{target:enemy,kind:"enemy"}:playerResourceAt(m.x,m.y);
+  // Re-resolved every tick through the one authority, so a target that dies,
+  // depletes, or is swapped under the cursor drops or restarts the fill here.
+  const hit=resolvePrimaryAction(m.x,m.y);
   if(!hit){resetChop();return;}
   beginChop(hit);
   chopState.t+=dt*(globalUpgradeEnabled("autoClick")?STEADY_HAND_RATE:1);
   if(chopState.t<CHOP_TIME)return;
   chopState.t=0;
   const quiet=primary.audioCooldown>0;
-  if(hit.kind==="enemy")hitEnemy(hit.target,quiet);
-  else hitResource(hit.target,hit.kind,false,quiet);
+  if(hit.kind==="attack")hitEnemy(hit.target,quiet);
+  else hitResource(hit.target,hit.resource,false,quiet);
   if(!quiet)primary.audioCooldown=.25;
 }
 function leftClick(){
   if(state.gameOver||state.paused)return;
   const m=state.mouse;
-  const enemy=enemyAt(m.x,m.y);
+  // Same resolver the hover ring and the hold timer read, so the press arms
+  // exactly what was previewed. Resolved once up front; it is pure, and every
+  // branch between here and the harvest fall-through returns before using it.
+  const action=resolvePrimaryAction(m.x,m.y);
   // Attacking is timed too — the press only arms the bar.
-  if(enemy){beginChop({target:enemy,kind:"enemy"});return;}
+  if(action&&action.kind==="attack"){beginChop(action);return;}
   if(state.buildMode){
     // Commit uses the same snap the ghost preview drew with, so what you see is what lands.
     const type=state.buildMode,anchor=snapToCellCenter(m.x,m.y);
     if(canPlace(anchor.x,anchor.y,type)){
-      const def=BUILDING_TYPES[type];
-      buildings.push(createBuilding(type,anchor.x,anchor.y));
-      if(def.stack){state.buildStacks[type]--;state.buildMode=state.buildStacks[type]>0?type:null;}else state.buildMode=null;
+      const def=BUILDING_TYPES[type],placed=createBuilding(type,anchor.x,anchor.y);
+      buildings.push(placed);
+      // free costs (debug): the blueprint is created exactly as authored (its own cost
+      // snapshot intact) and then finished through completeBuilding() — the same call a
+      // satisfied delivery makes. Nothing is deducted from state.stored, and because the
+      // completion is unconditional a free-cost placement can never leave a stuck blueprint.
+      const freed=DBG.freeCosts&&!placed.complete;
+      if(freed)completeBuilding(placed);
+      // unlimited charges (debug): the stack counter is simply never decremented, so the
+      // authored starting counts and the "n left" HUD stay honest the moment it is off.
+      if(def.stack){if(!DBG.unlimitedCharges)state.buildStacks[type]--;state.buildMode=DBG.unlimitedCharges||state.buildStacks[type]>0?type:null;}else state.buildMode=null;
       setBuildDockCategory(null);syncBuildHud();
       sound(240,.06);
-      toast(def.stack?def.name+" placed — "+state.buildStacks[type]+" stacks remain":def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
+      // completeBuilding() already announced a freed blueprint's own ready message.
+      if(!freed)toast(def.stack?def.name+" placed — "+(DBG.unlimitedCharges?"unlimited":state.buildStacks[type]+" stacks remain"):def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
     }else toast("needs clear ground away from the base");
     return;
   }
@@ -837,9 +1031,9 @@ function leftClick(){
   if(tower){openUpgradeMenu(tower,"tower");return;}
   const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
   if(pile){unloadStockpile(pile,m.x);return;}
-  const resource=playerResourceAt(m.x,m.y);if(!resource){toast("left click a tree, rock, or diamond deposit");return;}
+  if(!action){toast("left click a tree, rock, or diamond deposit");return;}
   // Harvesting no longer resolves on the press; updatePrimaryClick() fills the timer.
-  beginChop(resource);
+  beginChop(action);
 }
 
 // Player and harvesting workers share this path: harvesting automation creates physical drops, never stored resources.
@@ -949,6 +1143,18 @@ function upgradeList(kind){return kind==="tower"?towerUpgradeList():UPGRADES;}
 function resourceCounts(){return Object.fromEntries(RESOURCE_KINDS.map(kind=>[kind,0]));}
 function costText(cost){return RESOURCE_KINDS.filter(kind=>(cost[kind]||0)>0).map(kind=>cost[kind]+" "+kind).join(" + ")||"free";}
 function upgradeNeedText(upgrade,delivered){return RESOURCE_KINDS.filter(kind=>(upgrade.cost[kind]||0)>delivered[kind]).map(kind=>(upgrade.cost[kind]-delivered[kind])+" "+kind).join(" + ");}
+// THE one place an accepted upgrade job turns into a permanent effect. Extracted so the
+// satisfied branch of dropToUpgrade() and the free-costs debug shortcut are literally the
+// same code — a debug completion cannot drift from a legitimate one. Reads the authored
+// cost/stat tables, writes only this building.
+function applyFinishedUpgrade(building){
+  const job=building.activeUpgrade;if(!job)return false;
+  const upgrade=upgradeList(job.kind).find(item=>item.id===job.id);if(!upgrade)return false;
+  if(job.kind==="tower"){const tower=building.tower,healthRatio=tower.maxHp?clamp(tower.hp/tower.maxHp,0,1):1;tower.variant=job.id;tower.maxHp=upgrade.maxHp;tower.hp=upgrade.maxHp*healthRatio;}
+  else building.upgrades[job.id]=true;
+  building.activeUpgrade=null;burst(building.x,building.y-25,"#72d4cc",22);toast(upgrade.name+" complete");sound(820,.2);
+  return true;
+}
 function dropToUpgrade(building){
   const job=building.activeUpgrade,upgrade=upgradeList(job.kind).find(item=>item.id===job.id),kinds=job.kind==="tower"?RESOURCE_KINDS:["wood","stone"];
   let total=0;
@@ -959,24 +1165,21 @@ function dropToUpgrade(building){
   }
   if(!total){toast("upgrade does not need those resources");return;}
   building.pulse=1;
-  if(kinds.every(kind=>job.delivered[kind]>=(upgrade.cost[kind]||0))){
-    if(job.kind==="tower"){const tower=building.tower,healthRatio=tower.maxHp?clamp(tower.hp/tower.maxHp,0,1):1;tower.variant=job.id;tower.maxHp=upgrade.maxHp;tower.hp=upgrade.maxHp*healthRatio;}
-    else building.upgrades[job.id]=true;
-    building.activeUpgrade=null;burst(building.x,building.y-25,"#72d4cc",22);toast(upgrade.name+" complete");sound(820,.2);
-  }else toast("upgrade needs "+upgradeNeedText(upgrade,job.delivered));
+  if(kinds.every(kind=>job.delivered[kind]>=(upgrade.cost[kind]||0)))applyFinishedUpgrade(building);
+  else toast("upgrade needs "+upgradeNeedText(upgrade,job.delivered));
 }
 
 function upgradeButtonHit(building,x,y){const top=building.type==="obelisk"?building.y-66:building.y-48;return x>=building.x-30&&x<=building.x+30&&y>=top&&y<=building.y+38;}
 function upgradePanelOpen(){return !document.getElementById("upgradePanel").classList.contains("off");}
-function debugPanelOpen(){return DEBUG_UI_ENABLED&&!document.getElementById("debugPanel").classList.contains("off");}
-function modalOpen(){return upgradePanelOpen()||debugPanelOpen();}
+// The upgrade panel is the only modal left; the old debug modal is gone, and the view
+// debugger is a non-modal side panel that deliberately does NOT suppress gameplay input.
+function modalOpen(){return upgradePanelOpen();}
 function syncModalUi(){document.getElementById("game").classList.toggle("modal-open",modalOpen());}
 function closeUpgradeMenu(){const wasOpen=upgradePanelOpen();state.upgradeMenu.building=null;state.upgradeMenu.selected=null;state.upgradeMenu.kind=null;document.getElementById("upgradePanel").classList.add("off");syncModalUi();return wasOpen;}
-function closeDebugPanel(){const wasOpen=debugPanelOpen();document.getElementById("debugPanel").classList.add("off");document.getElementById("debugButton").classList.remove("on");syncModalUi();return wasOpen;}
 function openUpgradeMenu(building,kind){
   if(building.activeUpgrade){toast("finish the active upgrade by depositing resources");return;}
   if(kind==="tower"&&building.tower.variant!=="basic"){toast("this tower already has a permanent variant");return;}
-  closeDebugPanel();stopGameplayInput();const list=upgradeList(kind);
+  stopGameplayInput();const list=upgradeList(kind);
   state.upgradeMenu.building=building;state.upgradeMenu.kind=kind;state.upgradeMenu.selected=list.find(item=>!building.upgrades[item.id])?.id||null;
   renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");syncModalUi();
 }
@@ -990,27 +1193,16 @@ function renderUpgradeMenu(){
   }
   const selected=list.find(item=>item.id===menu.selected);detail.innerHTML=selected?"<b>"+(towerMenu?selected.icon+" ":"")+selected.name+"</b>"+(towerMenu?"<div class=\"detail-meta\">"+selected.family+" · "+selected.attackMode+"</div>":"")+selected.description+"<br>cost: "+costText(selected.cost):"all upgrades complete";
 }
-function renderDebugPanel(){
-  const options=document.getElementById("debugOptions"),detail=document.getElementById("debugDetail");options.replaceChildren();
-  for(const upgrade of UPGRADES){
-    const legitimate=legitimateGlobalUpgradeOwned(upgrade.id),forced=globalUpgradeHasOverride(upgrade.id),enabled=globalUpgradeEnabled(upgrade.id),button=document.createElement("button");button.classList.add(forced?(enabled?"forced-on":"forced-off"):(legitimate?"legitimate":"unowned"));
-    const sourceLabel=forced?"debug-forced "+(enabled?"on":"off"):(legitimate?"legitimately owned":"not owned");button.innerHTML="<b>"+upgrade.icon+"</b>"+upgrade.name+"<span>"+(enabled?"enabled":"disabled")+" · "+sourceLabel+"</span>";button.addEventListener("click",()=>{state.debug.selected=upgrade.id;setGlobalUpgradeDebugOverride(upgrade.id,!globalUpgradeEnabled(upgrade.id));});options.appendChild(button);
-  }
-  const selected=UPGRADES.find(upgrade=>upgrade.id===state.debug.selected);detail.innerHTML=selected?"<b>"+selected.icon+" "+selected.name+"</b><br>"+selected.description+(selected.id==="autoClick"?"<br>fill rate: "+STEADY_HAND_RATE+"x while held":""):"click an upgrade to force its effective state.";
-}
-function openDebugPanel(){
-  if(!DEBUG_UI_ENABLED||state.gameOver||state.paused)return;closeUpgradeMenu();stopGameplayInput(true);state.debug.selected??=UPGRADES[0]?.id||null;renderDebugPanel();document.getElementById("debugPanel").classList.remove("off");document.getElementById("debugButton").classList.add("on");syncModalUi();
-}
-function syncDebugUiAvailability(){document.getElementById("debugButton").hidden=!DEBUG_UI_ENABLED;document.getElementById("debugPanel").hidden=!DEBUG_UI_ENABLED;if(!DEBUG_UI_ENABLED)closeDebugPanel();}
-document.getElementById("debugButton").addEventListener("click",()=>{if(debugPanelOpen())closeDebugPanel();else openDebugPanel();});
-document.getElementById("debugClear").addEventListener("click",clearGlobalUpgradeDebugOverrides);
-document.getElementById("debugClose").addEventListener("click",closeDebugPanel);
 document.getElementById("upgradeDecline").addEventListener("click",closeUpgradeMenu);
 document.getElementById("upgradeAccept").addEventListener("click",()=>{
-  const menu=state.upgradeMenu,upgrade=upgradeList(menu.kind).find(item=>item.id===menu.selected);
-  if(!menu.building||!upgrade)return;
-  menu.building.activeUpgrade={id:upgrade.id,kind:menu.kind,delivered:resourceCounts()};
-  const destination=menu.kind;closeUpgradeMenu();toast("accepted "+upgrade.name+" — deposit resources at the "+destination);sound(590,.1);
+  const menu=state.upgradeMenu,building=menu.building,upgrade=upgradeList(menu.kind).find(item=>item.id===menu.selected);
+  if(!building||!upgrade)return;
+  building.activeUpgrade={id:upgrade.id,kind:menu.kind,delivered:resourceCounts()};
+  const destination=menu.kind;closeUpgradeMenu();
+  // free costs (debug): the job is accepted normally, then satisfied through the same
+  // applyFinishedUpgrade() a full delivery reaches. Nothing is deducted or granted.
+  if(DBG.freeCosts&&applyFinishedUpgrade(building))return;
+  toast("accepted "+upgrade.name+" — deposit resources at the "+destination);sound(590,.1);
 });
 
 function dropToBase(){
@@ -1100,7 +1292,7 @@ new ResizeObserver(()=>stage.style.setProperty("--build-dock-clearance",buildDoc
 document.querySelectorAll("button.build").forEach(button=>button.addEventListener("click",()=>{
   if(state.gameOver||state.paused)return;
   const kind=button.dataset.kind;
-  if(BUILDING_TYPES[kind].stack&&state.buildStacks[kind]<=0){toast("no "+BUILDING_TYPES[kind].name+" stacks remaining");return;}
+  if(BUILDING_TYPES[kind].stack&&!DBG.unlimitedCharges&&state.buildStacks[kind]<=0){toast("no "+BUILDING_TYPES[kind].name+" stacks remaining");return;}
   state.buildMode=state.buildMode===kind?null:kind;
   syncBuildHud();
   toast(state.buildMode?"click explored, clear ground to place the blueprint":"build cancelled");
@@ -1120,7 +1312,8 @@ function spawnHouseWorker(house){
 function updateWorkerSpawns(dt){
   for(const house of completeHouses()){
     if(sourceWorkerCount(house)>=HOUSE_SLOTS){house.spawnTimer=WORKER_SPAWN_TIME;continue;}
-    house.spawnTimer-=dt;if(house.spawnTimer<=0){spawnHouseWorker(house);house.spawnTimer=WORKER_SPAWN_TIME;}
+    // instant workers (debug) skips only the timer; the slot check above still gates it.
+    house.spawnTimer-=dt;if(DBG.instantWorkers||house.spawnTimer<=0){spawnHouseWorker(house);house.spawnTimer=WORKER_SPAWN_TIME;}
   }
 }
 
@@ -1350,6 +1543,7 @@ function transitionPhase(){
 }
 function updateClock(dt){
   const clock=state.clock;
+  clock.elapsed+=dt;   // same dt the countdown spends, so the two can never drift apart
   clock.remaining-=dt;
   while(clock.remaining<=0){const overflow=-clock.remaining;transitionPhase();clock.remaining-=overflow;}
   const target=clock.phase==="night"?NIGHT_OVERLAY_ALPHA:0,step=dt*NIGHT_OVERLAY_ALPHA/LIGHT_FADE_TIME;
@@ -1406,7 +1600,7 @@ function destroyTower(building){
 function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
 function update(dt){
   if(state.gameOver||state.paused){stopPrimaryClick();return;}
-  updatePrimaryClick(dt);updateClock(dt);updateDaytimeEnemySpawns(dt);updateNightEnemyWave(dt);
+  updatePrimaryClick(dt);updateClock(dt);updateNightEnemyWave(dt);
   const keys=state.keys,camera=state.camera;
   let panX=(keys.has("KeyD")||keys.has("ArrowRight"))-(keys.has("KeyA")||keys.has("ArrowLeft"));
   let panY=(keys.has("KeyS")||keys.has("ArrowDown"))-(keys.has("KeyW")||keys.has("ArrowUp"));
@@ -1430,7 +1624,9 @@ function update(dt){
       let workerDied=false;
       if(target.kind==="worker"){const worker=target.object;worker.retaliationTarget=enemy;worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)workerDied=killWorker(worker);}
       else if(target.kind==="tower")damageTower(target.object,def.damage);
-      else{state.baseHp=Math.max(0,state.baseHp-def.damage);state.basePulse=1;if(state.baseHp<=0){endGame();break;}}
+      // invulnerable base (debug) is checked at the damage site: the hit still lands,
+      // flashes and toasts, it just subtracts nothing. baseHp/baseMax are never inflated.
+      else{if(!DBG.invulnBase)state.baseHp=Math.max(0,state.baseHp-def.damage);state.basePulse=1;if(state.baseHp<=0){endGame();break;}}
       toast(workerDied?"worker died — replacement in "+WORKER_SPAWN_TIME+"s":def.name+" hit "+(target.kind==="worker"?"a worker":target.kind==="tower"?towerVariant(target.object).name:"the base"));sound(def.range>60?180:95,.09);
     }
   }
@@ -1479,6 +1675,13 @@ function update(dt){
   updatePrompt();syncPhaseHud();
 }
 
+// Whole seconds as M:SS, rolling over to H:MM:SS only once a run passes an hour — so the common
+// case stays as short as the phase countdown beside it and a long run never silently wraps.
+function formatDuration(totalSeconds){
+  const s=Math.max(0,Math.floor(totalSeconds)),hours=Math.floor(s/3600),minutes=Math.floor(s/60)%60;
+  const pad=n=>String(n).padStart(2,"0");
+  return hours?hours+":"+pad(minutes)+":"+pad(s%60):minutes+":"+pad(s%60);
+}
 function syncPhaseHud(){
   const clock=state.clock,wave=state.nightWave,isDay=clock.phase==="day",duration=isDay?DAY_DURATION:NIGHT_DURATION;
   const recipeState=isDay?wave.upcomingRecipe:wave.activeRecipe,recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===recipeState?.id),side=isDay?wave.upcomingSide:wave.activeSide;
@@ -1486,6 +1689,7 @@ function syncPhaseHud(){
   const setText=(id,text)=>{const element=document.getElementById(id);if(element.textContent!==text)element.textContent=text;};
   const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber;
   setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"));
+  setText("runTime",formatDuration(clock.elapsed));
   panel.classList.toggle("night",!isDay);
   document.getElementById("phaseProgressFill").style.width=(100*clamp((duration-clock.remaining)/duration,0,1)).toFixed(2)+"%";
   setText("forecastLabel",isDay?"next attack":"current wave");setText("forecastRemaining",isDay?"":wave.remainingSpawns+" scheduled spawns remaining");
@@ -1502,8 +1706,8 @@ function syncPhaseHud(){
 function syncBuildHud(){
   document.querySelectorAll("button.build").forEach(button=>button.classList.toggle("on",button.dataset.kind===state.buildMode));
   for(const [kind,label] of [["spikes","spikeStack"],["landmine","landmineStack"],["tar","tarStack"]]){
-    const unavailable=state.buildStacks[kind]<=0,button=document.querySelector('button.build[data-kind="'+kind+'"]');
-    document.getElementById(label).textContent="free · "+state.buildStacks[kind]+" left";button.disabled=unavailable;
+    const unavailable=!DBG.unlimitedCharges&&state.buildStacks[kind]<=0,button=document.querySelector('button.build[data-kind="'+kind+'"]');
+    document.getElementById(label).textContent="free · "+(DBG.unlimitedCharges?"∞":state.buildStacks[kind]+" left");button.disabled=unavailable;
   }
   const houseCost=nextHouseCost();document.getElementById("houseCost").textContent=houseCost.wood+"w · "+houseCost.stone+"s";
   canvas.classList.toggle("building",state.buildMode);
@@ -1518,7 +1722,7 @@ function toast(message){
 }
 function endGame(){
   if(state.gameOver)return;
-  state.gameOver=true;stopGameplayInput(true);cancelHeldObject();closeDebugPanel();closeUpgradeMenu();
+  state.gameOver=true;stopGameplayInput(true);cancelHeldObject();closeUpgradeMenu();
   document.getElementById("gameOver").classList.remove("off");sound(65,.6);
 }
 document.getElementById("restart").addEventListener("click",()=>location.reload());
@@ -1618,6 +1822,10 @@ const PAL = {
   quarryWall: 0x777775,
   quarryRoof: 0x5f6061,
   doorway:    0x49392d,
+  // the keep: pale dressed stone, deliberately cooler and lighter than masonry (the obelisk) so
+  // the base reads as the one landmark on the map. keepTrim is the plinth/crown/prop course.
+  keepWall:   0xb9b6b0,
+  keepTrim:   0x93908a,
   pole:       0x5d4935,
   banner:     0xa94634,
   metal:      0xbdb7ab,
@@ -1653,7 +1861,8 @@ const PAL = {
   tool:       0x65442c,
   hpGood:     0x7fb356,   // remaining-health track, top row of a stack
   hint:       0xead18d,
-  ok:         0xf5df98,   // swing progress, bottom row of a stack
+  ok:         0xf5df98,   // affirmative highlight: hover rings, default impact flash
+  cursor:     0xc8cbb8,   // idle cursor bracket: cool and quiet, so a real target still reads warmer
   bad:        0xb84b3c,
   taunt:      0xd6534f,
   storage:    0xd8c47c,
@@ -1764,7 +1973,7 @@ const flat = (color, extra={}) => new THREE.MeshLambertMaterial({color, flatShad
 // Inverted hull: a back-faced copy of each prop pushed out along its normals,
 // so only the shell behind the object survives depth testing and reads as ink.
 // Costs one extra draw per prop; hidden meshes are skipped, so the toggle is free.
-let OUTLINE_ON = false;
+let OUTLINE_ON = true;
 const outlineMat = new THREE.ShaderMaterial({
   side: THREE.BackSide,
   uniforms: {thickness:{value:.05}, tint:{value:new THREE.Color(0x1d1712)}},
@@ -1963,25 +2172,94 @@ function makeCorpse(coat){
   g.add(m);
   return g;
 }
+// ── the keep ────────────────────────────────────────────────────────────────
+// A compact square watchtower: a stone shaft whose walls taper inward, a slightly projecting open
+// crown with chunky crenellations, and one small dark entrance. No pitched roof, no flag, no
+// corner towers - the silhouette is meant to read as a single tall block, not a house.
+//
+// The VISUAL MASS IS INTENTIONALLY 1x1 (about 2.0 x 2.0 world units, the centre cell) while
+// GAMEPLAY OCCUPANCY REMAINS 3x3 (BASE.footprint = FOOTPRINT_3x3). The outer ring of the pad is
+// courtyard: an entrance path and a couple of low props, everything kept below doorway height so
+// nothing competes with the tower. canPlace(), enemy targeting and BASE.r read the footprint and
+// BASE.r, never the model, so shrinking the mesh changes nothing in the simulation.
 function makeBase(){
   const g = new THREE.Group();
-  const body = meshOf(new THREE.BoxGeometry(4.4,3.4,3.6), flat(PAL.plasterLit));
-  body.position.y = 1.7;
-  const roof = meshOf(new THREE.ConeGeometry(3.5,1.7,4), flat(PAL.plasterLitRoof));
-  roof.position.y = 4.2; roof.rotation.y = Math.PI/4;
-  const doorway = meshOf(new THREE.BoxGeometry(1.4,1.7,.2), flat(PAL.doorway));
-  doorway.position.set(0,.85,1.85);
-  const pole = meshOf(new THREE.CylinderGeometry(.06,.06,1.6,5), flat(PAL.pole));
-  pole.position.set(0,5.6,0);
-  const flagM = meshOf(new THREE.BoxGeometry(1.2,.62,.06), flat(PAL.banner));
-  flagM.position.set(.62,6.05,0);
-  for(const [dx,dz] of [[-2.5,-2.1],[2.5,-2.1],[-2.5,2.1],[2.5,2.1]]){
-    const t = meshOf(new THREE.BoxGeometry(1.1,2.4,1.1), flat(PAL.plasterLit));
-    t.position.set(dx,1.2,dz); g.add(t);
+  const Y0 = FLOOR_TOP;               // the footprint pad's top face; every course stacks off it
+  const LAP = .03;                    // each course sinks this far into the one below, so no two
+                                      // solid faces ever end up coplanar and z-fighting
+  // Square prisms come from a 4-segment cylinder turned 45deg, which lands flat faces on the X and
+  // Z axes. Width across those faces is r*sqrt(2), so sq() converts a wall width into the radius
+  // three.js wants. A frustum (bottom wider than top) is what gives the walls their taper.
+  const sq = w => w/Math.SQRT2;
+  const prism = (wBottom, wTop, h, mat) => {
+    const m = meshOf(new THREE.CylinderGeometry(sq(wTop), sq(wBottom), h, 4), mat);
+    m.rotation.y = Math.PI/4;
+    return m;
+  };
+  const PLINTH_H = .30, SHAFT_H = 3.5, CORBEL_H = .22, MERLON_H = .48;
+  const PLINTH_TOP = Y0 + PLINTH_H;                       // .396
+  const SHAFT_BOT  = PLINTH_TOP - LAP;
+  const SHAFT_TOP  = SHAFT_BOT + SHAFT_H;                 // 3.866
+  const CROWN_TOP  = SHAFT_TOP - LAP + CORBEL_H;          // 4.056 - walkway level
+
+  const plinth = meshOf(new THREE.BoxGeometry(2.0,PLINTH_H,2.0), flat(PAL.keepTrim));
+  plinth.position.y = Y0 + PLINTH_H/2;
+  // 1.86 -> 1.42 across 3.5 of height: a taper you can read in silhouette without the tower
+  // looking like a cone. Widest point (1.86) still sits inside the 2.0 plinth.
+  const body = prism(1.86, 1.42, SHAFT_H, flat(PAL.keepWall));
+  body.position.y = SHAFT_BOT + SHAFT_H/2;
+  // The crown flares back OUT past the shaft top (1.42 -> 1.84), so it overhangs by ~.21 a side.
+  const corbel = prism(1.46, 1.84, CORBEL_H, flat(PAL.keepTrim));
+  corbel.position.y = SHAFT_TOP - LAP + CORBEL_H/2;
+  // Shadowed interior, glimpsed through the gaps between merlons and from above: this is what
+  // makes the crown read as open rather than as a solid capstone.
+  // 1.04 wide keeps it just inside the merlon ring's inner edge (+-.52), so it fills the gaps
+  // between the teeth without clipping into them.
+  const well = meshOf(new THREE.BoxGeometry(1.04,.12,1.04), flat(PAL.doorway));
+  well.position.y = CROWN_TOP + .02;
+  g.add(plinth, body, corbel, well);
+  // Crenellations: four corners plus one merlon at the middle of each side. .40 blocks with .32
+  // gaps around a 1.84 crown, so at gameplay zoom they read as separate teeth, not a serrated rim.
+  for(const [mx,mz] of [[-.72,-.72],[.72,-.72],[-.72,.72],[.72,.72],[0,-.72],[0,.72],[-.72,0],[.72,0]]){
+    const merlon = meshOf(new THREE.BoxGeometry(.40,MERLON_H,.40), flat(PAL.keepWall));
+    merlon.position.set(mx, CROWN_TOP - LAP + MERLON_H/2, mz);
+    g.add(merlon);
   }
-  g.add(makeFootprintFloor(BASE.footprint), body, roof, doorway, pole, flagM);
+  // Entrance faces the king. gz() maps sim y straight to world z, and the king stands at
+  // BASE.y+18, so "toward the king" is +Z. The dark block stands slightly proud of the plinth
+  // (front face z=1.05 vs the plinth's 1.0) so it never z-fights the wall it sits in.
+  const door = meshOf(new THREE.BoxGeometry(.58,1.00,.30), flat(PAL.doorway));
+  door.position.set(0, PLINTH_TOP - .02 + .50, .90);
+  // The king never moves off BASE.y+18, i.e. z=+1.125 with a .26 body radius, so he occupies
+  // z .865-1.385 right where a slab tucked against the plinth would go. The step therefore sits at
+  // the HEAD OF THE PATH (back face z=1.405) and the king stands on the pad between it and the
+  // door; anything nearer the wall would be drawn through his legs.
+  const step = meshOf(new THREE.BoxGeometry(.90,.14,.55), flat(PAL.keepTrim));
+  step.position.set(0, Y0 + .07, 1.68);
+  // One arrow slit high on the same face, so the tower still has an eye when the king is standing
+  // in the doorway. The wall has drawn back to z=.78 by this height, so .87 clears it.
+  const slit = meshOf(new THREE.BoxGeometry(.20,.42,.14), flat(PAL.doorway));
+  slit.position.set(0, 2.80, .80);
+  // Worn approach across the courtyard. cast=false, exactly like the pad: no outline shell, no
+  // shadow, and invisible to blockerMeshes() so it can never occlude a unit.
+  // Reaches z=2.70, so even at the store pulse's peak 1.1x group scale it stays inside the pad.
+  const path = meshOf(new THREE.BoxGeometry(.60,.05,1.60), flat(PAL.dirt), false, true);
+  path.position.set(0, Y0 + .02, 1.90);
+  g.add(door, step, slit, path);
+  // Three low props, all well under the doorway's 1.38 and well inside the pad: two gate posts
+  // flanking the path and a small stack of cut stone in a back corner. The rest stays open.
+  for(const px of [-.62, .62]){
+    const post = meshOf(new THREE.BoxGeometry(.28,.36,.28), flat(PAL.keepTrim));
+    post.position.set(px, Y0 + .18, 2.45); g.add(post);
+  }
+  const block = meshOf(new THREE.BoxGeometry(.52,.30,.52), flat(PAL.stone));
+  block.position.set(-1.85, Y0 + .15, -1.95);
+  const blockTop = meshOf(new THREE.BoxGeometry(.34,.24,.34), flat(PAL.stone));
+  blockTop.position.set(-1.78, Y0 + .30 - LAP + .12, -2.02);
+  const floor = makeFootprintFloor(BASE.footprint);
+  g.add(floor, block, blockTop);
   g.position.set(gx(BASE.x), 0, gz(BASE.y));
-  g.userData = {body};
+  g.userData = {body, floor};
   return g;
 }
 function makeKing(){
@@ -2605,6 +2883,270 @@ function hideFootprint(){
   if(footprintEdge) footprintEdge.visible=false;
 }
 
+// ── selection indicators ────────────────────────────────────────────────────
+// Two reusable ground marks — a four-cornered selector bracket and a segmented radius ring — built
+// here. drawZones() aims both: the selector at the primary-action target, at the footprint of a
+// building being placed or relocated, and at the footprint of the completed building under the
+// cursor; the radius ring at that building's real coverage.
+//
+// Data flow (render-only): every call is (where, how big, what colour). Neither function reads or
+// writes simulation state, keeps a reference to an entity, or remembers a selection between frames,
+// so the sim stays the only owner of positions, footprints and radii. Claim-per-frame like the ring
+// pool above: show*() claims the next free slot, end*() hides whatever went unclaimed, and hide*()
+// drops the whole set — so callers never track slot indices.
+//
+// Dimensions: showSelector() takes the SAME rect shape footprintWorldRect() returns ({x,y,w,h}, sim
+// pixels, top-left anchored). A selector around a placed building therefore reuses the exact rect
+// its pad covers, cellWorldRect() supplies the one-CELL case out of the same lattice, and
+// pointWorldRect() supplies it off-lattice for things that move continuously. No size is restated
+// here — the footprint table stays the single source of dimensions.
+//
+// Ownership / geometry lifetime: both pools grow on demand and never shrink. A slot's group, meshes,
+// materials and (for the radius ring) its position buffer live from first use until the page
+// unloads. They are added straight to the scene, never parented into a group disposeGroup() visits,
+// so nothing here is ever disposed and a redraw only rewrites transforms and colours — no mesh,
+// geometry or material is allocated per frame. The selector arms share cellGeo, the unit quad the
+// footprint preview above already owns. The radius ring cannot share one unit geometry because a
+// uniform scale would fatten its band with the circle, so each slot owns one buffer that is
+// REWRITTEN IN PLACE (same Float32Array, same mesh) only when that slot's radius actually changes.
+//
+// Depth: both ride above GHOST_Y, so they clear pads (FLOOR_TOP), previews and the footprint border
+// without z-fighting; depthTest stays on so towers and trees still occlude them, with depthWrite off
+// and a negative polygon offset so nothing coplanar can flicker against them.
+//
+// Exclusion: castShadow=false on every mesh keeps them out of blockerMeshes() (`isMesh && visible &&
+// castShadow`) and therefore out of both the occlusion scan and the sun's shadow map — the same
+// technique the footprint quads use. They are built with `new THREE.Mesh`, never meshOf(), so no
+// outline shell is registered and setOutlines() cannot reach them. Hover picking raycasts the math
+// ground plane (groundFromEvent), never scene objects, so they are unpickable by construction.
+//
+// Night: unlit MeshBasicMaterial, so they hold the same readable value under the night sun tint
+// instead of going black, and low default opacity keeps them from dominating the frame.
+const SELECT_Y = GHOST_Y + .016;      // above the footprint quads (GHOST_Y) and their border (+.004)
+const RADIUS_Y = GHOST_Y + .010;
+const NO_OPTS = Object.freeze({});    // shared default so an omitted opts bag allocates nothing
+
+/** One-CELL rect, same shape as footprintWorldRect(), around the cell containing a world point. */
+function cellWorldRect(x, y){
+  const c = worldToCell(x, y);
+  return footprintWorldRect(c.cx, c.cy, FOOTPRINT_1x1);
+}
+/**
+ * Same rect shape and same footprint-derived size, but centred on the point itself instead of on the
+ * cell containing it. For things that live off the lattice — enemies walk continuously, so snapping
+ * their mark would make it jump a whole cell at a time while they slide.
+ */
+function pointWorldRect(x, y, footprint=FOOTPRINT_1x1){
+  const w = footprint.w*CELL, h = footprint.h*CELL;
+  return {x:x - w/2, y:y - h/2, w, h};
+}
+
+// ── shared indicator tunables ──
+// PRESENTATION ONLY. Every field here changes how a mark is drawn and nothing else: no footprint is
+// measured from these, no gameplay radius is derived from them, and indicatorRadius() never reads
+// them. A ring's RADIUS in particular is always the simulation's own number — the breath below moves
+// its opacity, never its size, so an indicator can never advertise coverage the sim does not have.
+//
+// All three call sites (the one-cell action bracket, the placement/relocation preview and the
+// building-hover mark) go through indicatorPulse()/indicatorRingOpacity(), so one knob retimes or
+// restyles the whole language at once and two marks alive on the same frame stay in phase.
+const IND = {
+  pulseAmt: .07,      // corner breath: half-amplitude as a fraction of the resting half-extent
+  pulseSpeed: 4,      // rad/s, shared by corners and rings so they never beat against each other
+  thick: .10,         // corner stroke width, world units
+  cornerOpacity: .85, // corner brackets' base opacity, before the per-site weight below
+  ringOpacity: .42,   // segmented ring's mid opacity, the centre of its breath
+  follow: .28,        // cursor bracket glide: fraction of the remaining gap closed per 60Hz frame
+};
+// Hard ceiling on the breath, applied AFTER the per-site weight. The tightest case is a 1x1 bracket,
+// where the arms are cut at .68 of a 1.0 half-extent: at .20 the corners pull in to .80 and still
+// leave a .12 gap either side of the centre, so opposite brackets can never cross or fuse, and they
+// never push out far enough to read as detached from the thing they frame. The slider is capped to
+// the same number, so the clamp is a floor under a bad value rather than a surprise.
+const IND_PULSE_MAX = .20;
+// Per-site weights on IND.pulseAmt, written as ratios of the amplitudes this shipped with so the
+// defaults reproduce the original look exactly while a single knob still scales all of them together.
+const IND_PULSE_ACTION = 9/7;    // the one-cell action bracket breathes a touch deeper (.09 vs .07)
+const IND_RING_PULSE   = 13/7;   // rings breathe in opacity, not size (.13 against the corners' .07)
+// Same ratio trick for corner opacity: a placement/relocation verdict is the one mark the player is
+// about to COMMIT to, so its corners sit a shade firmer than the informational ones (.90 vs .85).
+const IND_OPACITY_PLACEMENT = 18/17;
+// The idle bracket is the quietest state there is — nothing is under the pointer, it is only saying
+// "the grid is here and this is the cell you are on" — so it sits well under the informational marks.
+const IND_OPACITY_IDLE = .55;
+
+/** Multiplier on a selector rect's half-extents at time t. weight scales the shared amplitude. */
+function indicatorPulse(t, weight=1){
+  return 1 + Math.sin(t*IND.pulseSpeed)*clamp(IND.pulseAmt*weight, 0, IND_PULSE_MAX);
+}
+/**
+ * Opacity for a selector's corner brackets. weight scales the shared base the same way the pulse
+ * weights do, and the clamp keeps a weighted site legal when the slider is pushed to 1.
+ */
+function indicatorCornerOpacity(weight=1){
+  return clamp(IND.cornerOpacity*weight, 0, 1);
+}
+/**
+ * Opacity for a segmented radius ring at time t. Amplitude is capped at three quarters of the base,
+ * so a ring turned down to the slider's dimmest setting breathes SHALLOWER rather than blinking out
+ * of existence at the bottom of every cycle — a coverage claim that vanishes is worse than a faint
+ * one. The cap is far above the default amplitude (.315 vs .13), so it never bites at rest.
+ */
+function indicatorRingOpacity(t){
+  const amp = Math.min(IND.pulseAmt*IND_RING_PULSE, IND.ringOpacity*.75);
+  return clamp(IND.ringOpacity + Math.sin(t*IND.pulseSpeed)*amp, 0, 1);
+}
+
+// ── corner selector ──
+// Four independent L brackets, one per corner of the rect, each made of two axis-aligned quads that
+// meet without overlapping (an overlap would double-blend at the corner). Arm length tracks the
+// rect's shorter side so a 1x1 and a 3x3 stay proportionate; stroke width (IND.thick) is a constant
+// in world units so both read at the same weight — and, being a world measure, it grows and shrinks
+// with the footprint it frames under camera zoom instead of drifting away from it.
+const SEL_ARM_FRAC = .34;             // arm length as a share of the shorter side
+const SEL_ARM_MIN = .35, SEL_ARM_MAX = 1.4;
+const SEL_CORNERS = [[-1,-1],[1,-1],[1,1],[-1,1]];   // sign pairs, (x,z), in arm order
+const selectorPool = [];
+let selectorUsed = 0;
+
+function makeSelector(){
+  const g = new THREE.Group();
+  // One material per slot (like the ring pool), so two live selectors can carry different colours.
+  const mat = new THREE.MeshBasicMaterial({
+    transparent:true, side:THREE.DoubleSide, depthWrite:false,
+    polygonOffset:true, polygonOffsetFactor:-3, polygonOffsetUnits:-3});
+  const arms = [];
+  for(let i=0;i<SEL_CORNERS.length*2;i++){     // 4 corners x 2 arms
+    const m = new THREE.Mesh(cellGeo, mat);    // shared unit quad, owned by the footprint block
+    m.rotation.x = -Math.PI/2;                 // plane XY -> ground XZ, so it lies on the ground
+    m.castShadow = m.receiveShadow = false;    // never a shadow caster => never an occlusion blocker
+    m.renderOrder = 5;
+    g.add(m); arms.push(m);
+  }
+  g.userData.arms = arms; g.userData.mat = mat;
+  scene.add(g);
+  return g;
+}
+
+/**
+ * rect: {x,y,w,h} in sim pixels (footprintWorldRect / cellWorldRect / pointWorldRect).
+ * opts: {color,opacity,pulse}.
+ *
+ * pulse is a multiplier on the rect's HALF-EXTENTS only — the four corners breathe outward and back
+ * while stroke width and arm length hold still. Scaling the group instead would scale the stroke with
+ * it, so a breathing selector would read as a thickening one; the group therefore stays at scale 1
+ * and every arm keeps the size it was measured at from the resting rect.
+ */
+function showSelector(rect, opts=NO_OPTS){
+  let g = selectorPool[selectorUsed];
+  if(!g){ g = makeSelector(); selectorPool.push(g); }
+  selectorUsed++;
+  const hw0 = rect.w*S/2, hh0 = rect.h*S/2;    // resting half-extents: the size the strokes are cut from
+  // Cap the arm at the half-extent so opposite brackets can never meet and close into an outline.
+  const arm = Math.min(clamp(Math.min(hw0,hh0)*2*SEL_ARM_FRAC, SEL_ARM_MIN, SEL_ARM_MAX), hw0, hh0);
+  const t = Math.min(IND.thick, arm*.5);       // keeps the second arm's length (arm-t) positive
+  // Only the corner OFFSETS breathe; arm and t above were measured before this and are not touched.
+  const pulse = opts.pulse ?? 1;
+  const hw = hw0*pulse, hh = hh0*pulse;
+  const arms = g.userData.arms;
+  for(let c=0;c<SEL_CORNERS.length;c++){
+    const sx = SEL_CORNERS[c][0], sz = SEL_CORNERS[c][1], cx = sx*hw, cz = sz*hh;
+    const along = arms[c*2], across = arms[c*2+1];
+    along.position.set(cx - sx*arm/2, 0, cz - sz*t/2);          // x-arm: full length, one stroke deep
+    along.scale.set(arm, t, 1);
+    across.position.set(cx - sx*t/2, 0, cz - sz*(t + (arm-t)/2)); // z-arm: starts where the x-arm ends
+    across.scale.set(t, arm-t, 1);
+  }
+  g.visible = true;
+  g.position.set(gx(rect.x + rect.w/2), SELECT_Y, gz(rect.y + rect.h/2));
+  const mat = g.userData.mat;
+  mat.color.set(opts.color ?? css(PAL.ok));
+  mat.opacity = opts.opacity ?? .8;
+  return g;
+}
+function endSelectors(){ for(let i=selectorUsed;i<selectorPool.length;i++) selectorPool[i].visible=false; selectorUsed=0; }
+function hideSelectors(){ for(const g of selectorPool) g.visible=false; selectorUsed=0; }
+
+// ── segmented radius ring ──
+// Exactly 12 arcs: three per quadrant, hairline gaps between the three, and a wider break centred on
+// each cardinal axis so the four groups read as separate. The four spans tile a full circle exactly:
+// 3*span + 2*SEG_GAP + QUAD_GAP == PI/2 by construction.
+const RING_SEGS = 12, RING_PER_QUAD = 3, RING_STEPS = 6;   // 3 per quadrant x 4 quadrants
+const RING_QUAD_GAP = .17, RING_SEG_GAP = .055;            // radians: group break, in-group gap
+const RING_BAND = .22;                                     // band width in world units, radius-independent
+// Angles are fixed; only the radii change, so cos/sin are precomputed once for the whole ring.
+const RING_ANGLES = (()=>{
+  const span = (Math.PI/2 - RING_QUAD_GAP - (RING_PER_QUAD-1)*RING_SEG_GAP)/RING_PER_QUAD;
+  const out = [];
+  for(let q=0;q<4;q++){
+    const start = q*Math.PI/2 + RING_QUAD_GAP/2;           // half the break sits either side of the axis
+    for(let s=0;s<RING_PER_QUAD;s++){
+      const a0 = start + s*(span + RING_SEG_GAP);
+      for(let k=0;k<=RING_STEPS;k++) out.push(a0 + span*k/RING_STEPS);
+    }
+  }
+  return out;                                              // RING_SEGS*(RING_STEPS+1) angles, draw order
+})();
+const RING_COS = RING_ANGLES.map(a=>Math.cos(a)), RING_SIN = RING_ANGLES.map(a=>Math.sin(a));
+// Vertex i of RING_ANGLES contributes an inner vertex (2i) and an outer vertex (2i+1); each arc is a
+// strip of RING_STEPS quads. Index order is constant, so one shared array seeds every slot.
+const RING_INDEX = (()=>{
+  const idx = [];
+  for(let s=0;s<RING_SEGS;s++){
+    const base = s*(RING_STEPS+1)*2;
+    for(let k=0;k<RING_STEPS;k++){
+      const v = base + k*2;
+      idx.push(v, v+1, v+3, v, v+3, v+2);
+    }
+  }
+  return idx;
+})();
+function writeRadiusRing(arr, rIn, rOut){
+  for(let i=0;i<RING_COS.length;i++){
+    const c = RING_COS[i], s = RING_SIN[i], o = i*6;
+    arr[o]   = c*rIn;  arr[o+1] = 0; arr[o+2] = s*rIn;
+    arr[o+3] = c*rOut; arr[o+4] = 0; arr[o+5] = s*rOut;
+  }
+}
+const radiusPool = [];
+let radiusUsed = 0;
+
+/** Centre in sim pixels, radius in sim pixels. opts: {color, opacity, pulse}. */
+function showRadiusRing(x, y, radiusPx, opts=NO_OPTS){
+  let rec = radiusPool[radiusUsed];
+  if(!rec){
+    const geo = new THREE.BufferGeometry();
+    // BufferAttribute (not Float32BufferAttribute) so the array is kept by reference and can be
+    // rewritten in place; setIndex() builds this slot's own index attribute from the shared list.
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(RING_COS.length*6), 3));
+    geo.setIndex(RING_INDEX);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      transparent:true, side:THREE.DoubleSide, depthWrite:false,
+      polygonOffset:true, polygonOffsetFactor:-3, polygonOffsetUnits:-3}));
+    mesh.castShadow = mesh.receiveShadow = false;   // keeps it out of blockerMeshes()/shadow map
+    mesh.renderOrder = 4;
+    scene.add(mesh);
+    rec = {mesh, arr:geo.attributes.position.array, radius:-1};
+    radiusPool.push(rec);
+  }
+  radiusUsed++;
+  const r = Math.max(RING_BAND, radiusPx*S);
+  if(rec.radius !== r){                             // rebuild only when this slot's radius moves
+    writeRadiusRing(rec.arr, r - RING_BAND, r);
+    rec.mesh.geometry.attributes.position.needsUpdate = true;
+    rec.mesh.geometry.computeBoundingSphere();
+    rec.radius = r;
+  }
+  rec.mesh.visible = true;
+  rec.mesh.position.set(gx(x), RADIUS_Y, gz(y));
+  rec.mesh.scale.setScalar(opts.pulse ?? 1);
+  rec.mesh.material.color.set(opts.color ?? css(PAL.hint));
+  rec.mesh.material.opacity = opts.opacity ?? .55;
+  return rec.mesh;
+}
+function endRadiusRings(){ for(let i=radiusUsed;i<radiusPool.length;i++) radiusPool[i].mesh.visible=false; radiusUsed=0; }
+function hideRadiusRings(){ for(const rec of radiusPool) rec.mesh.visible=false; radiusUsed=0; }
+
 // Held workers are the real mesh lifted onto the cursor (see syncWorkers), so
 // there is no worker ghost — only the drop-target ring below it.
 
@@ -2675,27 +3217,23 @@ function drawOverlay(){
   }
   drawNightTelegraph();
 
-  // Health and swing progress share one frame per entity, so a node you are
-  // cutting shows both stacked rather than two marks at different heights.
-  const swinging = state.primaryClick.held ? chopState.target : null;
-  const rowsFor = (e, frac, fill) => {
-    const rows = [];
-    if(frac < 1) rows.push({frac, fill});
-    if(swinging === e) rows.push({frac: chopProgress(), fill: css(PAL.ok)});
-    return rows;
-  };
+  // Health only. Swing progress lives in the action badge now (drawActionBadge),
+  // so a node you are cutting shows its remaining yield here and the fill of the
+  // current hit down on the badge — one piece of feedback each, never both.
+  // Auto-hide is unchanged: a full-health thing carries no mark at all.
+  const rowsFor = (frac, fill) => frac < 1 ? [{frac, fill}] : [];
 
   // Widths keep each track near the reference's ~9:1 ratio; the frame padding
   // adds height, so a narrow track reads as a squat blob rather than a bar.
   for(const t of trees)
-    if(t.stump<=0) marks(t.x,t.y,58,52, rowsFor(t, t.hp/t.max, css(PAL.hpGood)));
+    if(t.stump<=0) marks(t.x,t.y,58,52, rowsFor(t.hp/t.max, css(PAL.hpGood)));
   for(const r of rocks)
-    if(r.depleted<=0) marks(r.x,r.y,34,46, rowsFor(r, r.hp/r.max, "#bcbab3"));
+    if(r.depleted<=0) marks(r.x,r.y,34,46, rowsFor(r.hp/r.max, "#bcbab3"));
   for(const n of diamonds)
-    if(n.depleted<=0) marks(n.x,n.y,38,46, rowsFor(n, n.hp/n.max, css(PAL.diamond)));
+    if(n.depleted<=0) marks(n.x,n.y,38,46, rowsFor(n.hp/n.max, css(PAL.diamond)));
   for(const e of state.enemies){
     const s = ENEMY_TYPES[e.type].size;
-    marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e, e.hp/e.max, "#c65343"));
+    marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e.hp/e.max, "#c65343"));
   }
   for(const w of state.workers)
     if(w.hp<WORKER_HP) bar(w.x,w.y,30,w.hp/WORKER_HP,40,null,css(PAL.hpGood));
@@ -2718,16 +3256,22 @@ function drawOverlay(){
     }
   }
 
+  // Last world-anchored mark, so the badge sits over the bars it shares a target
+  // with; the cursor's carry count still draws on top of everything.
+  drawActionBadge();
   drawCarryCount();
 }
 
-/** What a held left click would hit right now — node or enemy — or null. */
+/**
+ * Preview read of what a held left click would hit right now — or null.
+ * Pure pass-through to resolvePrimaryAction(), the single authority the
+ * simulation swings with, so the ring (and any later tool icon, via the
+ * returned .kind / .icon) can never point at something the sim would not hit.
+ */
 function chopTarget(){
   const m = state.mouse;
   if(!m.inside) return null;
-  const enemy = enemyAt(m.x,m.y);
-  if(enemy) return {target:enemy, kind:"enemy"};
-  return playerResourceAt(m.x,m.y);
+  return resolvePrimaryAction(m.x,m.y);
 }
 // Sits ON the node (mid-canopy for a tree) rather than floating above it.
 
@@ -2741,9 +3285,10 @@ function roundPath(x, y, w, h, r){
 }
 
 /**
- * One rounded frame holding N stacked tracks — health above, progress below.
- * Grouping them keeps a node's remaining yield and your current swing read as
- * a single widget instead of two marks floating at different heights.
+ * One rounded frame holding N stacked tracks. Callers today pass a single
+ * health row (see drawOverlay's rowsFor); the stack stays generic so any second
+ * per-entity track lands inside the same frame rather than as a loose mark
+ * floating at its own height.
  */
 function stackedBars(px, py, rows, w, k){
   if(!rows.length) return;
@@ -2780,6 +3325,159 @@ function marks(x, y, hpx, wpx, rows){
   stackedBars(p.x, p.y, rows, wpx*BARS.wMul*k, k);
 }
 
+// ── primary-action badge ────────────────────────────────────────────────────
+// A tool silhouette pinned under whatever a held left click would work on, so
+// "what does clicking here do?" is answered before the swing starts. Drawn on
+// the screen-facing overlay like every other mark, so no camera pitch or yaw
+// can skew it, and purely decorative: hit-testing is world-space (groundFromEvent)
+// and never consults the canvas, so the badge cannot swallow a click.
+// box / drop / icon / fill alpha below are debugger-owned presentation state:
+// the view panel's "bars > action badge" sliders write them live (see bindV
+// calls near vBarScale). Nothing here feeds targeting, cadence, or the resolver.
+const BADGE = {
+  box:19,       // frame side, overlay px at zoom 1            [slider vBadgeBox]
+  drop:15,      // px below the target's ground point — its lower/front edge on screen
+                //                                             [slider vBadgeDrop]
+  icon:15,      // silhouettes are authored in a 20x20 box, drawn at this size.
+                // Rides vBadgeBox at the authored 15:19 ratio so resizing the
+                // frame never leaves the tool rattling around or spilling out.
+  edgePad:5,    // margin kept when a badge is clamped against the viewport
+  // Held-action fill: the badge IS the swing bar now, rising bottom-to-top.
+  // Cool and translucent on purpose — it reads as clearly "not empty" against the
+  // badge's dark ground while staying darker than both tool inks (steel #bdb7ab,
+  // haft #9a774d), so the silhouette on top of it never loses contrast. Drawn
+  // above the night tint like every other overlay mark, so day and night look
+  // identical rather than the fill dimming out after dusk.
+  fillRGB:"84,170,214",             // hue is fixed art direction, alpha is tunable
+  fill:"rgba(84,170,214,.3)",       // rebuilt from fillRGB [slider vBadgeFill]
+};
+// Authored icon:frame ratio, captured before any slider can move either one.
+const BADGE_ICON_RATIO = BADGE.icon / BADGE.box;
+// Zoom scaling follows BARS exactly (barScale()), so the badge grows and shrinks
+// in step with the bars above it and the debug sliders steer both.
+
+const ICON_STEEL = css(PAL.metal), ICON_WOOD = css(PAL.blueprint);
+/**
+ * Tool silhouettes keyed by resolvePrimaryAction()'s icon id — the resolver
+ * names the tool, this table draws it, and nothing else decides which is which.
+ * Each entry paints inside a 20x20 box centred on the current origin (y down);
+ * drawBadge() supplies the translate/scale so one path set serves any size.
+ * Canvas primitives only: no glyphs, no fonts, no external art to load.
+ */
+const ACTION_ICONS = {
+  axe(){                                        // trees
+    ctx.lineCap="round"; ctx.lineJoin="round";
+    ctx.strokeStyle=ICON_WOOD; ctx.lineWidth=2.6;
+    ctx.beginPath(); ctx.moveTo(2.2,-6.4); ctx.lineTo(-3.0,8.6); ctx.stroke();   // haft
+    ctx.fillStyle=ICON_STEEL;                                                    // bit, drawn over the haft top
+    ctx.beginPath();
+    ctx.moveTo(0.6,-8.2);
+    ctx.quadraticCurveTo(5.4,-8.8, 8.0,-5.8);       // shoulder
+    ctx.quadraticCurveTo(9.6,-2.0, 6.4,1.6);        // cutting edge, bulged out
+    ctx.quadraticCurveTo(4.0,-1.8, 0.0,-2.2);       // concave underside back to the haft
+    ctx.closePath(); ctx.fill();
+  },
+  pickaxe(){                                    // rocks and diamond deposits
+    ctx.lineCap="round"; ctx.lineJoin="round";
+    ctx.strokeStyle=ICON_WOOD; ctx.lineWidth=2.6;
+    ctx.beginPath(); ctx.moveTo(0,-5.4); ctx.lineTo(0,8.8); ctx.stroke();        // haft
+    ctx.fillStyle=ICON_STEEL;                                                    // head: one crescent tapering to two points
+    ctx.beginPath();
+    ctx.moveTo(-9.4,0.8);
+    ctx.quadraticCurveTo(-6.2,-8.0, 0,-8.4);
+    ctx.quadraticCurveTo( 6.2,-8.0, 9.4,0.8);
+    ctx.quadraticCurveTo( 5.4,-3.4, 0,-4.4);
+    ctx.quadraticCurveTo(-5.4,-3.4, -9.4,0.8);
+    ctx.closePath(); ctx.fill();
+  },
+  sword(){                                      // enemies
+    ctx.lineJoin="round";
+    ctx.fillStyle=ICON_STEEL;                                                    // blade, point up
+    ctx.beginPath();
+    ctx.moveTo(0,-9.5); ctx.lineTo(2.2,-5.6); ctx.lineTo(2.2,1.6);
+    ctx.lineTo(-2.2,1.6); ctx.lineTo(-2.2,-5.6); ctx.closePath(); ctx.fill();
+    roundPath(-6.4,1.6,12.8,2.4,1.2); ctx.fill();                                // crossguard
+    ctx.beginPath(); ctx.arc(0,8.6,1.4,0,Math.PI*2); ctx.fill();                 // pommel
+    ctx.fillStyle=ICON_WOOD;
+    roundPath(-1.5,4.0,3.0,4.0,1.4); ctx.fill();                                 // grip
+  },
+};
+
+/**
+ * Compact frame + silhouette, centred on (px,py) in 960x540 overlay space.
+ * @param fill 0..1 of the held action already served — the badge doubles as the
+ *   swing bar, so this rises bottom-to-top inside the frame. 0 draws an empty badge.
+ */
+function drawBadge(px, py, iconId, k, fill){
+  const paint = ACTION_ICONS[iconId];
+  if(!paint) return;                          // unknown tool: draw nothing, never a blank box
+  const box = BADGE.box*k, half = box/2, r = Math.min(half, 5*k);
+  ctx.save();
+  // Same dark-fill / light-rim treatment as stackedBars, so the two marks on one
+  // target read as one family rather than two invented widgets.
+  roundPath(px-half, py-half, box, box, r);
+  ctx.fillStyle = "rgba(36,31,22,.86)"; ctx.fill();
+  // Progress rises inside that same rounded interior: clipped to it, so the fill
+  // can never square off the corners or bleed past the rim, and painted BEFORE the
+  // rim and the icon — the stroke below always runs at one width and one colour
+  // whatever the fraction, and the silhouette always sits on top of the fill.
+  const frac = clamp(fill || 0, 0, 1);
+  if(frac > 0){
+    ctx.save();
+    ctx.clip();                               // the rounded frame path, still current
+    ctx.fillStyle = BADGE.fill;
+    ctx.fillRect(px-half, py+half - box*frac, box, box*frac);
+    ctx.restore();
+  }
+  roundPath(px-half, py-half, box, box, r);   // rebuilt: clip() left the path implicit
+  ctx.lineWidth = Math.max(1, 1.5*k); ctx.strokeStyle = "#efe6cd"; ctx.stroke();
+  ctx.translate(px, py);
+  const s = BADGE.icon*k/20;                  // icon design space is 20 units wide
+  ctx.scale(s, s);
+  paint();
+  ctx.restore();
+}
+
+/**
+ * The action the badge advertises, or null when it must stay dark.
+ * Reads chopTarget() -> resolvePrimaryAction(), the one authority the press
+ * arms, so an enemy standing on a tree previews the sword the click swings.
+ */
+function badgeAction(){
+  if(state.paused || state.gameOver || modalOpen()) return null;  // pause, loss, modal UI
+  if(state.camera.panning) return null;                           // middle-mouse drag
+  if(state.heldObject) return null;                               // carrying a worker or building
+  const action = chopTarget();                                    // null once the cursor leaves the canvas
+  if(!action) return null;
+  // Placement mode swallows the press for harvesting but not for a swing:
+  // leftClick() resolves an attack before it ever looks at state.buildMode.
+  if(state.buildMode && action.kind !== "attack") return null;
+  return action;
+}
+function drawActionBadge(){
+  const action = badgeAction();
+  if(!action) return;
+  const t = action.target;
+  const p = project(t.x, t.y, 0);      // ground point = the model's lower/front edge on screen
+  if(p.depth > 1) return;              // behind the camera
+  const k = barScale();
+  const half = BADGE.box*k/2 + BADGE.edgePad*k;
+  // Visible height from the live backing store, so clamping still lands inside
+  // the frame on aspects other than the authored 16:9.
+  const viewH = canvas.height/overlayScale || VIEW_H;
+  // Read-only view of the sim's one hold timer — nothing is advanced here.
+  // It shows only while the button is down on the very thing chopState is timing,
+  // so hovering before the press draws an empty badge, and an early release, a
+  // pointer leave, a modal, or a swap to another target has already zeroed or
+  // dropped chopState by the time this frame draws. A completed hit rolls the
+  // timer back to 0 itself, which empties the badge for the next repeat while the
+  // button stays held. Steady Hand needs nothing here: it multiplies chopState.t.
+  const filling = state.primaryClick.held && chopState.target === action.target;
+  drawBadge(clamp(p.x, half, VIEW_W-half),
+            clamp(p.y + BADGE.drop*k, half, viewH-half),
+            action.icon, k, filling ? chopProgress() : 0);
+}
+
 /** The pile itself is 3D; only the "n/5" readout stays flat. */
 function drawCarryCount(){
   const total = carriedTotal();
@@ -2808,6 +3506,231 @@ function drawNightTelegraph(){
 }
 
 // ─────────────────────────────────────────────────────────── interaction rings
+/**
+ * The ONE gameplay radius a building (or a build-menu type) advertises, in sim pixels, or null when
+ * it has none. Single source for every radius indicator — placement preview, relocation preview and
+ * hover all call this, so they can never disagree about what a type covers.
+ *
+ * `building` is optional: pass the live building to read its own state, omit it for a menu type that
+ * has not been placed yet. Towers resolve through towerRadius() -> towerVariant(), whose own fallback
+ * is TOWER_VARIANTS.basic — exactly the chassis a fresh placement builds, so an omitted building
+ * yields the basic chassis's range without restating it. Everything else reports its service radius
+ * (lumber/quarry/stockpile) or its effect radius (blast/landmine/tar) straight from BUILDING_TYPES.
+ * Types with neither — house, obelisk, spikes — return null and get NO ring: an indicator is
+ * only ever drawn for coverage the simulation actually has.
+ */
+function indicatorRadius(type, building=null){
+  if(type==="tower") return towerRadius(building || {}) || null;
+  const def = BUILDING_TYPES[type];
+  return def?.serviceRadius || def?.effectRadius || null;
+}
+
+/**
+ * Placement/relocation mark: four pulsing corners around the COMPLETE footprint, plus the segmented
+ * radius ring when indicatorRadius() reports one.
+ *
+ * anchor is the snapToCellCenter() result the preview and the commit both use, so the corners, the
+ * ring, the tinted cells, the ghost and the building that finally lands share one centre. Extents come
+ * from buildingFootprint() -> footprintWorldRect(), the same pair showFootprint() measures its pad
+ * with, so 1x1 and 3x3 need no special casing and no dimension is restated here.
+ *
+ * Colour is the placement verdict, PAL.cellOk/PAL.cellBad — the same two colours CELL_MAT/EDGE_MAT
+ * tint the pad with, so corners, ring and cells flip together. Only the CORNERS breathe (a pulse on
+ * their offsets); the ring's radius is left alone and its opacity does the breathing, because the ring
+ * states real coverage and a scaled one would advertise a range the tower does not have. An invalid
+ * spot therefore reads as red everywhere while still showing the true, unshrunken radius.
+ */
+function showPlacementIndicators(type, anchor, ok, t, building=null){
+  const c = worldToCell(anchor.x, anchor.y);
+  const color = css(ok ? PAL.cellOk : PAL.cellBad);
+  showSelector(footprintWorldRect(c.cx, c.cy, buildingFootprint(type)),
+    {color, opacity:indicatorCornerOpacity(IND_OPACITY_PLACEMENT), pulse:indicatorPulse(t)});
+  const radius = indicatorRadius(type, building);
+  if(radius) showRadiusRing(anchor.x, anchor.y, radius, {color, opacity:indicatorRingOpacity(t)});
+}
+
+// ── selector preview (debugger affordance) ──────────────────────────────────
+// A tuning aid owned by the view debugger's `selectors` tab, not a game feature. Ordinary play never
+// puts every selector state on screen at once — a valid and an invalid footprint are mutually
+// exclusive, and a coverage ring only appears while the cursor sits on the thing that owns it — so
+// this draws SAMPLE marks on demand and the slider row above can be judged against a known state.
+//
+// RENDER-ONLY, and strictly so: nothing here places, mutates or reads-then-writes anything. No
+// building is created, `buildings` and `state` are never assigned to, and the samples go through the
+// SAME showSelector()/showRadiusRing() calls drawZones() makes. They therefore claim ordinary pool
+// slots and endSelectors()/endRadiusRings() retire them on the very frame the mode returns to off —
+// no separate teardown exists because none is needed. Every dimension is real: footprints come from
+// the footprint table (FOOTPRINT_1x1 / FOOTPRINT_3x3) and the radius from indicatorRadius("tower"),
+// which resolves through towerRadius() to TOWER_VARIANTS.basic.range. No number is invented here.
+//
+// LIVE MARKS — deliberate: the preview is ADDITIVE and never suppresses them. With a mode on and the
+// cursor also over a target, BOTH draw. That is the point of the control: the sample is the fixed
+// reference you compare the moving live mark against, and suppressing one would make them
+// un-comparable. The anchor is the camera-focus cell, so a sample holds still and stays on screen
+// while you pan; if a live mark happens to land on the same cell the two simply overlap, which is
+// harmless — separate pool slots, separate materials, no shared state.
+const SEL_PREVIEW_MODES = Object.freeze({OFF:0, ACTION:1, OK_1X1:2, OK_3X3:3, BAD_3X3:4, RADIUS:5});
+let SEL_PREVIEW = SEL_PREVIEW_MODES.OFF;   // written by bindV("vSelPreview") and by nothing else
+
+function drawSelectorPreview(t){
+  if(SEL_PREVIEW === SEL_PREVIEW_MODES.OFF) return;
+  // Camera focus, snapped the same way a real placement snaps — always on screen, always on lattice.
+  const a = snapToCellCenter(state.camera.x, state.camera.y);
+  const c = worldToCell(a.x, a.y);
+  const M = SEL_PREVIEW_MODES;
+  if(SEL_PREVIEW === M.ACTION){
+    // The one-cell primary-action bracket: PAL.ok, and the deeper IND_PULSE_ACTION breath.
+    showSelector(cellWorldRect(a.x, a.y),
+      {color:css(PAL.ok), opacity:indicatorCornerOpacity(), pulse:indicatorPulse(t, IND_PULSE_ACTION)});
+    return;
+  }
+  if(SEL_PREVIEW === M.RADIUS){
+    // A completed building under the cursor: hint-toned footprint corners plus its coverage ring.
+    showSelector(footprintWorldRect(c.cx, c.cy, FOOTPRINT_3x3),
+      {color:css(PAL.hint), opacity:indicatorCornerOpacity(), pulse:indicatorPulse(t)});
+    const radius = indicatorRadius("tower");   // omitted building => the basic chassis's own range
+    if(radius) showRadiusRing(a.x, a.y, radius, {color:css(PAL.hint), opacity:indicatorRingOpacity(t)});
+    return;
+  }
+  // Placement verdicts. BAD reuses the 3x3 footprint so it differs from the valid 3x3 in COLOUR
+  // ONLY — the pair is there to check the red/green flip reads at a glance, not the sizing.
+  const ok = SEL_PREVIEW !== M.BAD_3X3;
+  const footprint = SEL_PREVIEW === M.OK_1X1 ? FOOTPRINT_1x1 : FOOTPRINT_3x3;
+  showSelector(footprintWorldRect(c.cx, c.cy, footprint),
+    {color:css(ok ? PAL.cellOk : PAL.cellBad),
+     opacity:indicatorCornerOpacity(IND_OPACITY_PLACEMENT), pulse:indicatorPulse(t)});
+}
+
+// How close the cursor must be to a completed building with no button of its own before it counts as
+// hovered. Same number the plain hover rings used before the segmented mark replaced them.
+const HOVER_BUILDING_RANGE = 48;
+/**
+ * The ONE completed building the cursor is currently acting on, or null. Single authority for the
+ * hover mark: drawZones() calls it once a frame and draws exactly what it returns, so two neighbouring
+ * 1x1 structures can never both light up and no distance test lives anywhere else.
+ *
+ * Priority is leftClick()'s chain first, then hoverTarget()'s right-click delivery pass, in each of
+ * their own orders — so the mark always names whatever a press would really act on, never something
+ * merely nearby. hoverTarget()'s two non-building outcomes (the base drop zone, an unfinished
+ * blueprint) return null: the cursor is committed elsewhere, and neither is a completed building.
+ *
+ * Render-only and stateless: it reads live `buildings` every frame and keeps no reference between
+ * frames, so a building that is destroyed, detonated, picked up, replaced by completion or retyped by
+ * an upgrade simply stops being returned and the claim-per-frame pools hide its mark on that frame.
+ */
+function hoveredBuilding(){
+  // Every suppression badgeAction() owns, plus placement — a ghost already draws its own mark there.
+  if(state.paused || state.gameOver || modalOpen()) return null;
+  if(state.camera.panning || state.heldObject || state.buildMode) return null;
+  const m = state.mouse;
+  if(!m.inside) return null;
+  // ── leftClick()'s order: blast, manual tower, obelisk menu, tower menu, stockpile pull ──
+  const blast = buildings.find(b=>b.complete && b.type==="blast" && blastButtonHit(b,m.x,m.y));
+  if(blast) return blast;
+  const manualTower = buildings.find(b=>b.complete && b.type==="tower" && towerVariant(b).manual && manualTowerButtonHit(b,m.x,m.y));
+  if(manualTower) return manualTower;
+  const obelisk = buildings.find(b=>b.complete && b.type==="obelisk" && upgradeButtonHit(b,m.x,m.y));
+  if(obelisk) return obelisk;
+  const tower = buildings.find(b=>b.complete && b.type==="tower" && b.tower.variant==="basic" && !b.activeUpgrade && upgradeButtonHit(b,m.x,m.y));
+  if(tower) return tower;
+  const pile = buildings.find(b=>b.complete && b.type==="stockpile" && distance(m.x,m.y,b.x,b.y)<38);
+  if(pile) return pile;
+  // ── hoverTarget()'s order: base first, then one pass over buildings with its three branches ──
+  if(distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16) return null;
+  for(const b of buildings){
+    if(!b.complete && distance(m.x,m.y,b.x,b.y)<38) return null;          // blueprint owns the cursor
+    if(b.complete && b.type==="stockpile" && distance(m.x,m.y,b.x,b.y)<42) return b;
+    if(b.complete && (b.type==="obelisk"||b.type==="tower") && b.activeUpgrade && upgradeButtonHit(b,m.x,m.y)) return b;
+  }
+  // ── plain proximity, for everything with no button and no delivery role ──
+  // NEAREST wins, not first-in-array: deployables may sit in touching cells (see canPlace), so their
+  // hover circles overlap and picking the closest is what keeps the answer single.
+  let near = null, best = HOVER_BUILDING_RANGE;
+  for(const b of buildings){
+    if(!b.complete) continue;
+    const d = distance(m.x,m.y,b.x,b.y);
+    if(d<best){ best = d; near = b; }
+  }
+  return near;
+}
+
+// ── cursor bracket ──────────────────────────────────────────────────────────
+// ONE bracket lives under the pointer at all times, and it changes what it frames rather than
+// blinking in and out. Three states, in priority order, resolved fresh every frame:
+//
+//   1. a harvest/attack target   -> that target's one-cell rect, PAL.ok, the deeper action breath
+//   2. a completed building      -> its COMPLETE footprint rect, PAL.hint, plus its coverage rings
+//   3. nothing                   -> the lattice cell under the pointer, PAL.cursor, dimmed
+//
+// Both target states already had their own authority — badgeAction() and hoveredBuilding() — and
+// those are unchanged and still consulted in that order. All this adds is the third state and the
+// glide, so a bracket that used to appear from nowhere now travels there from wherever it was.
+/**
+ * What the cursor bracket frames this frame, or null when it should not be drawn at all.
+ * Pure: reads state and the live world lists, mutates nothing, returns a fresh descriptor.
+ *
+ * `building` rides along so the caller can hang the coverage rings off the same resolution — the
+ * corners and the rings can never end up naming different buildings.
+ */
+function cursorMark(){
+  // 1. Something to swing at. badgeAction() owns every suppression this needs.
+  const action = badgeAction();
+  if(action){
+    // Nodes sit exactly on cell centers (see the seeder), so theirs snaps to the lattice; enemies move
+    // continuously, so theirs is centred on the enemy at the same one-cell size instead of hopping.
+    const p = action.target;
+    return {rect: action.resource ? cellWorldRect(p.x, p.y) : pointWorldRect(p.x, p.y),
+            color: css(PAL.ok), opacity: indicatorCornerOpacity(), pulse: IND_PULSE_ACTION,
+            building: null};
+  }
+  // 2. A finished building. hoveredBuilding() is the sole authority for WHICH one.
+  const b = hoveredBuilding();
+  if(b){
+    const c = worldToCell(b.x, b.y);
+    return {rect: footprintWorldRect(c.cx, c.cy, buildingFootprint(b.type)),
+            color: css(PAL.hint), opacity: indicatorCornerOpacity(), pulse: 1, building: b};
+  }
+  // 3. Empty ground. The two resolvers above both refuse in these states and the idle bracket has to
+  // refuse in the same ones, or it would outlive them — placement and a held object draw their own
+  // snapped mark, and the rest are "the game is not taking pointer input right now".
+  const m = state.mouse;
+  if(!m.inside || state.paused || state.gameOver || modalOpen()) return null;
+  if(state.camera.panning || state.heldObject || state.buildMode) return null;
+  return {rect: cellWorldRect(m.x, m.y), color: css(PAL.cursor),
+          opacity: indicatorCornerOpacity(IND_OPACITY_IDLE), pulse: 1, building: null};
+}
+
+// Where the bracket actually IS, as opposed to where cursorMark() says it belongs. Centre and size
+// are smoothed separately so a 1x1 -> 3x3 handover grows the frame instead of popping it.
+// `live` false means the bracket is not on screen, so the next frame that draws it TELEPORTS: without
+// that it would sail across the whole map after every pause, modal or pointer-leave.
+const cursorGlide = {x:0, y:0, w:0, h:0, live:false};
+let cursorGlideT = 0;
+/**
+ * Ease the drawn rect toward the resolved one and return what to draw. Exponential smoothing with the
+ * step taken from real elapsed time, so the glide covers the same ground per second at 30fps as at
+ * 144 and IND.follow keeps meaning "fraction of the gap closed per 60Hz frame".
+ *
+ * A moving enemy is smoothed like everything else rather than special-cased: exponential smoothing
+ * settles at a constant lag of v*dt/k, which at the default is about a fortieth of a cell for a
+ * walking raider — far too small to read as the bracket falling behind, and it keeps the handover
+ * from the lattice onto a moving body as smooth as every other handover.
+ */
+function glideCursorRect(rect){
+  const now = performance.now()/1000;
+  const dt = Math.min(.05, now - (cursorGlideT || now));
+  cursorGlideT = now;
+  const cx = rect.x + rect.w/2, cy = rect.y + rect.h/2;
+  const k = cursorGlide.live ? 1 - Math.pow(1 - clamp(IND.follow, .01, 1), dt*60) : 1;
+  cursorGlide.x += (cx - cursorGlide.x)*k;
+  cursorGlide.y += (cy - cursorGlide.y)*k;
+  cursorGlide.w += (rect.w - cursorGlide.w)*k;
+  cursorGlide.h += (rect.h - cursorGlide.h)*k;
+  cursorGlide.live = true;
+  return {x: cursorGlide.x - cursorGlide.w/2, y: cursorGlide.y - cursorGlide.h/2,
+          w: cursorGlide.w, h: cursorGlide.h};
+}
+
 function drawZones(){
   const m = state.mouse, t = performance.now()/1000;
 
@@ -2815,21 +3738,34 @@ function drawZones(){
   if(SHOW_VACUUM_RING && state.collecting && m.inside)
     ring(m.x, m.y, VACUUM_RADIUS, css(PAL.ok), .45 + Math.sin(t*6)*.18);
 
-  // What a left click is about to hit.
-  if(m.inside && !modalOpen() && !state.heldObject && !state.buildMode){
-    const node = chopTarget();
-    if(node) ring(node.target.x, node.target.y, 24, css(PAL.ok), .5);
-  }
+  // The cursor bracket: one mark, always present, that RETARGETS instead of appearing and vanishing.
+  // cursorMark() picks what it frames (see above) and the glide carries it there, so moving off a tree
+  // and onto a tower is a single frame sliding and growing rather than two separate marks.
+  const cursor = cursorMark();
+  if(cursor){
+    // One continuous clock (t, shared with the rings), so a retarget mid-breath carries the phase over
+    // instead of snapping the bracket back to full size.
+    showSelector(glideCursorRect(cursor.rect),
+      {color:cursor.color, opacity:cursor.opacity, pulse:indicatorPulse(t, cursor.pulse)});
+  } else cursorGlide.live = false;   // off screen: the next appearance teleports rather than flies in
 
   if(m.inside && distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16) ring(BASE.x,BASE.y,BASE_ZONE);
-  for(const b of buildings){
-    const def=BUILDING_TYPES[b.type];
-    const radius = b.complete && b.type==="tower" ? towerRadius(b) : def.serviceRadius||def.effectRadius;
-    if(b.complete && radius && m.inside && distance(m.x,m.y,b.x,b.y)<48){
-      ring(b.x,b.y,radius);
-      const taunt = b.type==="tower" && towerVariant(b).tauntRadius;
-      if(taunt) ring(b.x,b.y,taunt,css(PAL.taunt),.6);
-    }
+
+  // Coverage rings for the hovered building, hung off the SAME resolution the corners used so the two
+  // can never name different buildings. The radius comes from indicatorRadius(), the resolver the
+  // placement preview also reads — a tower reads its OWN variant's range through it, so an upgraded
+  // tower advertises what it actually covers and a house/obelisk/spike gets no ring at all.
+  // These do NOT glide: the corners are a pointer, free to ease, but a ring is a claim about where the
+  // simulation reaches, and a claim that drifts to its position is a claim that is briefly wrong.
+  const hovered = cursor?.building;
+  if(hovered){
+    const color = css(PAL.hint);
+    const radius = indicatorRadius(hovered.type, hovered);
+    if(radius) showRadiusRing(hovered.x, hovered.y, radius, {color, opacity:indicatorRingOpacity(t)});
+    // Aggro's taunt is a SECOND ring in PAL.taunt — a different radius with different meaning (what it
+    // pulls, not what it shoots), so it is coloured apart instead of doubling the attack ring's tone.
+    const taunt = hovered.type==="tower" && towerVariant(hovered).tauntRadius;
+    if(taunt) showRadiusRing(hovered.x, hovered.y, taunt, {color:css(PAL.taunt), opacity:indicatorRingOpacity(t)});
   }
   if(heldWorker()){
     ring(BASE.x,BASE.y,BASE_ZONE,css(PAL.storage),.4);
@@ -2846,6 +3782,7 @@ function drawZones(){
     const ok = canPlace(a.x, a.y, state.buildMode);
     showFootprint(state.buildMode, a.x, a.y, ok);
     showGhostBuilding(state.buildMode, a.x, a.y, ok);
+    showPlacementIndicators(state.buildMode, a, ok, t);
   }
   if(state.heldObject && m.inside){
     const worker = heldWorker();
@@ -2861,11 +3798,16 @@ function drawZones(){
         const a = snapToCellCenter(m.x, m.y), ok = canPlace(a.x, a.y, b.type, b);
         showFootprint(b.type, a.x, a.y, ok);
         showGhostBuilding(b.type, a.x, a.y, ok, 1.6 + Math.sin(t*5)*.12);
+        // A held tower keeps whatever variant it was upgraded to, so its radius comes from the
+        // building itself (towerRadius -> its own variant), never from the basic chassis.
+        showPlacementIndicators(b.type, a, ok, t, b);
         ring(a.x, a.y, 30, ok?css(PAL.ok):css(PAL.bad), .8);
       }
     }
   }
-  // endRings() runs in draw(), after drawAttacks() has claimed its own rings.
+  // Debugger samples last, so they claim pool slots AFTER every live mark and can never displace one.
+  drawSelectorPreview(t);
+  // endRings()/endSelectors()/endRadiusRings() run in draw(), after drawAttacks() claims its rings.
 }
 
 // ─────────────────────────────────────────────────────────── frame
@@ -2890,7 +3832,11 @@ function draw(){
   syncEnemies(state.enemies); syncWorkers(state.workers);
   syncBuildings(); syncParticles(); syncHand();
 
-  baseMesh.scale.set(1+state.basePulse*.1, view.heightScale/100, 1+state.basePulse*.1);
+  const basePulse = 1 + state.basePulse*.1;
+  baseMesh.scale.set(basePulse, view.heightScale/100, basePulse);
+  // The pad marks BASE's RESERVED CELLS, so it must not breathe with the store pulse - same
+  // counter-scale syncBuildings() applies to every other building's footprint floor.
+  baseMesh.userData.floor.scale.set(1/basePulse, 1, 1/basePulse);
   const king = state.king;
   kingMesh.position.set(gx(king.x), 0, gz(king.y));
   kingMesh.scale.y = view.heightScale/100;
@@ -2904,6 +3850,10 @@ function draw(){
   drawZones();
   drawAttacks();
   endRings();
+  // Same claim-per-frame contract as the rings: whatever drawZones() did not claim this frame hides.
+  // draw() runs even while paused / in a modal, so a suppressed selector is always cleared next frame.
+  endSelectors();
+  endRadiusRings();
   // Visibility stat + occluded pins. Throttled: it raycasts every clickable thing.
   if(++frameTick % 15 === 0) measureNow();
   renderer.render(scene, camera3);
@@ -2917,6 +3867,14 @@ let frameTick = 0, lastDrawT = 0;
 // VIEW DEBUGGER
 // Ported from prototype-3d. Tabs are generated from the panes, so adding a
 // section means adding a <section class="pane" data-tab="..."> and nothing else.
+//
+// Tab ownership (same order as the panes, and as the binding groups below):
+//   camera / visibility / input / overlays / selectors — view + presentation only.
+//   gameplay — the deliberate exception: it drives the simulation. Its switches
+//              write DBG (see that object's rule: never authored data) and its
+//              buttons call the same entry points play does. Its bindings are the
+//              last group in this file, under the GAMEPLAY PANE banner.
+// bindV() covers range / checkbox / select; bindBtn() covers plain buttons.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const $v = id => document.getElementById(id);
@@ -2936,7 +3894,9 @@ vPanes.forEach((p,i)=>{
   $v("vTabs").appendChild(b);
 });
 (function initTab(){
-  let first = vPanes[0]?.dataset.tab;
+  // A stored name from an older layout (sightlines/pickup/bars) no longer
+  // matches a pane, so fall back to camera — the first pane, by design.
+  let first = vPanes.some(p=>p.dataset.tab==="camera") ? "camera" : vPanes[0]?.dataset.tab;
   try{ const s = localStorage.getItem("wd3d.tab"); if(vPanes.some(p=>p.dataset.tab===s)) first = s; }catch{}
   showVTab(first);
 })();
@@ -2946,19 +3906,26 @@ $v("vToggle").addEventListener("click", ()=>{
   $v("vToggle").textContent = on ? "view ▸" : "view ▾";
 });
 
+// Binds one control to one presentation field. Three control shapes: range (numeric), checkbox
+// (boolean) and <select> (numeric, from the option's value — so `apply` always sees a number and
+// callers never branch on the widget). The o_<id> readout span is optional; a <select> already shows
+// its own label, so those omit it.
 function bindV(id, apply, fmt){
-  const el = $v(id), out = $v("o_"+id);
+  const el = $v(id), out = $v("o_"+id), select = el.tagName === "SELECT";
   // Browsers restore form-control values across a reload, so a slider left at
   // some test value keeps applying it while the markup still reads its default.
   // Markup wins on load; that is the only way these stay predictable.
   if(el.type === "checkbox") el.checked = el.hasAttribute("checked");
+  // Same rule for a <select>: the option carrying the `selected` attribute wins over whatever the
+  // browser restored, and with none marked the first option is the default.
+  else if(select) el.selectedIndex = Math.max(0, [...el.options].findIndex(o=>o.hasAttribute("selected")));
   else if(el.hasAttribute("value")) el.value = el.getAttribute("value");
   const run = ()=>{
     const v = el.type==="checkbox" ? el.checked : +el.value;
     apply(v);
     if(out) out.textContent = fmt ? fmt(v) : v;
   };
-  el.addEventListener(el.type==="checkbox"?"change":"input", run);
+  el.addEventListener(el.type==="checkbox"||select ? "change" : "input", run);
   run();
 }
 
@@ -2979,12 +3946,27 @@ bindV("vRate",  v=>{ SUCK_RATE=v/1000; },      v=>v+"ms");
 bindV("vArc",   v=>{ HAND_ARC=v; },            v=>v.toFixed(1));
 bindV("vRing",  v=>{ SHOW_VACUUM_RING=v; });
 bindV("vChopT", v=>{ CHOP_TIME=v/1000; },      v=>(v/1000).toFixed(2)+"s");
-bindV("vSpeed", v=>{ GAME_SPEED=v; },          v=>v+"x");
 bindV("vShotSpeed", v=>{ SHOT_SPEED=v; },      v=>v+" u/s");
 bindV("vShotArc",   v=>{ SHOT_ARC=v; },        v=>v.toFixed(1)+"x");
 bindV("vShotSize",  v=>{ SHOT_SIZE=v; },       v=>v.toFixed(1)+"x");
 bindV("vOutline",   v=>{ setOutlines(v); });
 bindV("vOutlineW",  v=>{ outlineMat.uniforms.thickness.value=v; }, v=>v.toFixed(3));
+// ── ground selectors: presentation only, see the IND block by showSelector() ──
+// Owned by the `selectors` pane (see the tab-ownership list above #vPanes; this block and that pane
+// are the two halves of the same concern and nothing else should write IND).
+// These write IND fields and nothing else. Footprints (buildingFootprint) and gameplay radii
+// (indicatorRadius) are read from the simulation on the frame they are drawn and are never touched
+// here, so no slider position can change where a building lands or how far a tower shoots.
+bindV("vSelPulse",   v=>{ IND.pulseAmt=v; },    v=>v.toFixed(3));
+bindV("vSelSpeed",   v=>{ IND.pulseSpeed=v; },  v=>v.toFixed(1)+" rad/s");
+bindV("vSelThick",   v=>{ IND.thick=v; },       v=>v.toFixed(2));
+bindV("vSelOpacity", v=>{ IND.cornerOpacity=v; }, v=>v.toFixed(2));
+bindV("vRingOpacity",v=>{ IND.ringOpacity=v; }, v=>v.toFixed(2));
+bindV("vSelFollow",  v=>{ IND.follow=v; },      v=>v>=1?"snap":v.toFixed(2));
+// The one control here that is not a style knob: it draws sample marks (drawSelectorPreview) instead
+// of restyling the live ones, and it stays render-only — see the comment on that function.
+bindV("vSelPreview", v=>{ SEL_PREVIEW=v; });
+
 bindV("vYield", v=>{ CHOP_YIELD=v; },          v=>v+"x");
 bindV("vDamage",v=>{ CLICK_DAMAGE=v; },        v=>v+" hp");
 
@@ -3001,6 +3983,113 @@ bindV("vBarLift", v=>{ BARS.lift=v; },     v=>v.toFixed(2)+"x");
 bindV("vBarText", v=>{ BARS.text=v; },     v=>v.toFixed(1)+"px");
 bindV("vTextMin", v=>{ BARS.textMin=v; },  v=>v.toFixed(1)+"px");
 bindV("vTextMax", v=>{ BARS.textMax=v; },  v=>v.toFixed(1)+"px");
+
+// ── action badge: presentation only, drawn from the same barScale() as above ──
+// Ranges are clamped in the markup so the badge stays legible, stays translucent
+// enough to read the silhouette through, and stays pinned to its target.
+bindV("vBadgeBox",  v=>{ BADGE.box=v; BADGE.icon=v*BADGE_ICON_RATIO; }, v=>v+"px");
+bindV("vBadgeDrop", v=>{ BADGE.drop=v; },                              v=>v+"px");
+bindV("vBadgeFill", v=>{ BADGE.fill="rgba("+BADGE.fillRGB+","+v+")"; }, v=>v.toFixed(2));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GAMEPLAY PANE
+// The one pane whose controls reach into the simulation instead of a
+// presentation bag. Every switch here writes a DBG field and nothing else;
+// every button calls a normal gameplay entry point (completeBuilding,
+// applyFinishedUpgrade, transitionPhase, spawnEnemy, spawnHouseWorker...).
+// NOTHING in this block may mutate authored data: BUILDING_TYPES / UPGRADES /
+// TOWER_VARIANTS costs and stats, ENEMY_TYPES, and NIGHT_WAVE_RECIPES are read
+// only. The grant buttons are the sole writers of state.stored, and the free
+// costs toggle deliberately is not one of them.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Buttons, the shape bindV() does not cover (no value, no readout span). */
+function bindBtn(id, fn){ $v(id).addEventListener("click", fn); }
+
+/** Fill a <select> from data so the options can never drift from the tables. */
+function fillSelect(id, items){
+  $v(id).replaceChildren(...items.map(([value,label])=>{
+    const o=document.createElement("option"); o.value=value; o.textContent=label; return o;
+  }));
+}
+
+const DEBUG_GRANT=25;
+function debugGrant(kinds){
+  // A grant is an honest deposit into the base store, the same field dropToBase() writes.
+  for(const kind of kinds) state.stored[kind]+=DEBUG_GRANT;
+  state.basePulse=1; toast("granted "+DEBUG_GRANT+" "+kinds.join(" + ")); sound(520,.08);
+}
+/** Sweep anything already pending when free costs is switched on, so no blueprint or
+ *  accepted upgrade can sit half-delivered under a toggle that says costs are free. */
+function debugSweepFreeCosts(){
+  if(!DBG.freeCosts) return;
+  for(const building of [...buildings]) if(!building.complete) completeBuilding(building);
+  for(const building of [...buildings]) if(building.activeUpgrade) applyFinishedUpgrade(building);
+}
+/** Phase buttons all go through transitionPhase(), never through clock.phase, so the
+ *  night wave setup, chooseUpcomingNight() and the day-side forecast reset all run. */
+function debugGoToPhase(phase){
+  if(state.clock.phase!==phase) transitionPhase();
+  syncPhaseHud();
+}
+function debugAdvancePhase(){ transitionPhase(); syncPhaseHud(); }
+/** Start the chosen recipe's wave immediately: force night through the real transition
+ *  (which does the side/telegraph bookkeeping), then hand the schedule this recipe with
+ *  its first spawn already due. The recipe object itself is never modified. */
+function debugStartWave(id){
+  const recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===id); if(!recipe) return;
+  if(state.clock.phase!=="night") transitionPhase();
+  const wave=state.nightWave;
+  wave.activeRecipe=recipe;
+  wave.activeSide??=MAP_SIDES[(Math.random()*MAP_SIDES.length)|0];
+  wave.secondarySide=recipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;
+  wave.remainingSpawns=NIGHT_WAVE_SPAWNS; wave.elapsed=0; wave.nextSpawnAt=0;
+  syncPhaseHud(); toast("debug wave: "+recipe.id);
+}
+/** Debug removal, not a kill: no dust roll, no defeat toast — just the same status and
+ *  retaliation teardown killEnemy() does so nothing keeps a reference to a gone enemy. */
+function debugClearEnemies(){
+  const count=state.enemies.length;
+  for(const enemy of state.enemies){ enemy.status={burn:null,slow:null}; enemy.retaliationTower=null; burst(enemy.x,enemy.y,"#4b3b50",6); }
+  state.enemies.length=0;
+  toast("cleared "+count+" enemies");
+}
+function debugHealAll(){
+  state.baseHp=state.baseMax;
+  for(const building of [...buildings,heldBuilding()]) if(building?.tower){ const variant=towerVariant(building); building.tower.maxHp=variant.maxHp; building.tower.hp=variant.maxHp; }
+  for(const worker of state.workers) worker.hp=WORKER_HP;
+  const held=heldWorker(); if(held) held.hp=WORKER_HP;
+  toast("healed base, towers and workers"); sound(780,.12);
+}
+
+fillSelect("vEnemyType", Object.entries(ENEMY_TYPES).map(([id,def])=>[id,def.name]));
+fillSelect("vWaveRecipe", NIGHT_WAVE_RECIPES.map(recipe=>[recipe.id,recipe.id]));
+
+// economy — free costs bypasses the DELIVERY, it does not zero a cost or top up a store.
+bindV("vFreeCosts", v=>{ DBG.freeCosts=v; debugSweepFreeCosts(); });
+bindV("vUnlimitedCharges", v=>{ DBG.unlimitedCharges=v; syncBuildHud(); });
+bindBtn("vGrantAll",     ()=>debugGrant(RESOURCE_KINDS));
+bindBtn("vGrantDust",    ()=>debugGrant(["dust"]));
+bindBtn("vGrantCoin",    ()=>debugGrant(["coin"]));
+bindBtn("vGrantDiamond", ()=>debugGrant(["diamond"]));
+
+// time — game speed moved here from the input pane; id, range, default, format unchanged.
+bindV("vSpeed", v=>{ GAME_SPEED=v; },          v=>v+"x");
+bindBtn("vStartDay",     ()=>debugGoToPhase("day"));
+bindBtn("vStartNight",   ()=>debugGoToPhase("night"));
+bindBtn("vAdvancePhase", debugAdvancePhase);
+
+// combat — spawnEnemy() carries no phase guard of its own (night-only spawning lives in
+// the sim loop's updateNightEnemyWave), so a debug spawn needs no bypass; it is a direct
+// call with a random edge, exactly like the daytime spawner used to make.
+bindBtn("vSpawnEnemy",   ()=>spawnEnemy(null,$v("vEnemyType").value));
+bindBtn("vStartWave",    ()=>debugStartWave($v("vWaveRecipe").value));
+bindBtn("vClearEnemies", debugClearEnemies);
+bindV("vInvulnBase", v=>{ DBG.invulnBase=v; });
+
+// population
+bindV("vInstantWorkers", v=>{ DBG.instantWorkers=v; });
+bindBtn("vHealAll", debugHealAll);
 
 $v("vRescan").addEventListener("click", ()=>runScan());
 
@@ -3122,7 +4211,7 @@ requestAnimationFrame(()=>{ resizeRenderer(); runScan(); });
 
 // ── boot ──────────────────────────────────────────────────────────────
 resizeRenderer();
-syncBuildHud();syncPhaseHud();syncDebugUiAvailability();setBuildDockCategory(null);
+syncBuildHud();syncPhaseHud();setBuildDockCategory(null);
 let previous=performance.now();
 function frame(now){
   const dt=Math.min(.033,(now-previous)/1000);previous=now;

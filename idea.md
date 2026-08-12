@@ -58,6 +58,12 @@ Explicitly postponed:
 
 Manual clicks and steady-hand holding share one player-work cooldown, tuned by `PLAYER_CLICK_CPS`. The rate applies only to direct enemy attacks and tree, rock, or diamond gathering; other interactions remain immediate.
 
+## Picking Up Enemies
+
+- Let the player pick up enemies and drop them elsewhere using the same right-drag interaction as workers.
+- Decide whether carrying pauses the enemy, whether drops require valid ground, and whether enemies can be dropped into hazards or tower range.
+- Keep worker assignment priority and resource collection unambiguous when targets overlap.
+
 ## Fog and Expansion
 
 **Question:** How should fog and expansion work?

@@ -85,3 +85,31 @@ Living checklist for production assets. Current canvas art is placeholder art un
 - [ ] Activation, detonation, accept, and decline buttons
 - [ ] Cooldown bar and timer treatment
 - [ ] Placement-valid and placement-invalid outlines
+- [ ] Action badge frame: empty, filling, and hidden states
+- [ ] Axe action icon
+- [ ] Pickaxe action icon
+- [ ] Sword action icon
+
+## Ground Selectors
+
+Flat, ground-plane marks. Corners state *what* (target or footprint), arcs state
+*how far* (the simulation's real gameplay radius). Buildings with no gameplay
+radius get corners only and no ring, on purpose. Current shapes are generated
+geometry, not art.
+
+- [ ] Corner bracket stroke: cap/end treatment and a texture or taper to replace
+      the flat quad
+- [ ] One-cell action selector: valid, and a distinct "blocked/out of reach" read
+- [ ] Footprint selector: placement-valid and placement-invalid tones, plus the
+      neutral hover tone
+- [ ] Footprint selector at 3x3, so arm length still reads proportionate
+- [ ] Segmented radius ring: arc cap treatment and gap rhythm
+- [ ] Second-ring treatment for taunt radius, distinct from the attack ring
+- [ ] Night/day value check for every selector under the night sun tint
+
+### VFX
+
+- [ ] Selector arrive/leave transition (currently a hard on/off)
+- [ ] Corner breath: the resting pulse, and whether a "confirmed" beat differs
+- [ ] Ring opacity breath, and a firing/active variant
+- [ ] Placement-rejected feedback on the footprint selector
