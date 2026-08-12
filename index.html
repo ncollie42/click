@@ -11,6 +11,12 @@
   The simulation is deliberately 2D. Game (x, y) maps to world (x/16, 0, y/16)
   in the render layer, so targeting, ranges and hit tests never learn about the
   camera — only draw code does.
+
+  Placement runs on one 32px square grid (search "Placement grid" / "footprint").
+  Anything PLACED — buildings, deployables, resource nodes — is anchored on a cell
+  centre and reserves an odd-sized footprint of whole cells; canPlace() is the only
+  occupancy authority. Everything that MOVES — workers, enemies, drops, the cursor —
+  stays continuous. Service radius, attack range and effect radius stay circular.
 -->
 <!doctype html>
 <html lang="en">
@@ -141,9 +147,10 @@
   #vStatline .ok{color:#8fd07a}
   #vStatline .warn{color:#e8926f}
   #viewPanel .hint{font-size:9px;opacity:.6;line-height:1.45;margin-top:5px}
-  #vRestart{flex:0 0 auto;margin:8px 0 0;padding:5px;text-align:center;
+  #vSpeedRow{flex:0 0 auto;margin:8px 0 0;padding-top:7px;border-top:1px solid #8f9760}
+  #vRestart{flex:0 0 auto;margin:7px 0 0;padding:5px;text-align:center;
     background:#8e2924;color:#fff;border-color:#d8c58f}
-  #viewPanel.collapsed #vRestart{display:none}
+  #viewPanel.collapsed #vRestart,#viewPanel.collapsed #vSpeedRow{display:none}
 </style>
 </head>
 <body>
@@ -209,6 +216,12 @@
             <input autocomplete="off" type="range" id="vHeight" min="30" max="130" step="5" value="100"></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vShadow" checked><span>shadows</span></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vPins"><span>mark occluded</span></label>
+          <h4>readability</h4>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vOutline"><span>mesh outlines</span></label>
+          <label><span class="row"><span>outline weight</span><span id="o_vOutlineW"></span></span>
+            <input autocomplete="off" type="range" id="vOutlineW" min="0.01" max="0.2" step="0.005" value="0.05"></label>
+          <p class="hint">inverted-hull ink. thickness is in world units, so it
+          thins out as you zoom away — and box corners can show a seam.</p>
         </section>
 
         <section class="pane" data-tab="pickup">
@@ -229,6 +242,13 @@
             <input autocomplete="off" type="range" id="vYield" min="1" max="10" step="1" value="1"></label>
           <label><span class="row"><span>damage per swing</span><span id="o_vDamage"></span></span>
             <input autocomplete="off" type="range" id="vDamage" min="1" max="20" step="1" value="1"></label>
+          <h4>projectiles</h4>
+          <label><span class="row"><span>shot speed</span><span id="o_vShotSpeed"></span></span>
+            <input autocomplete="off" type="range" id="vShotSpeed" min="8" max="90" step="2" value="26"></label>
+          <label><span class="row"><span>shot arc</span><span id="o_vShotArc"></span></span>
+            <input autocomplete="off" type="range" id="vShotArc" min="0" max="3" step="0.1" value="1"></label>
+          <label><span class="row"><span>shot size</span><span id="o_vShotSize"></span></span>
+            <input autocomplete="off" type="range" id="vShotSize" min="0.4" max="3" step="0.1" value="1"></label>
           <p class="hint">hold-to-fill: the bar must complete before anything lands,
           and releasing early banks nothing. yield and damage apply to your own
           swings only — worker gathering still drops one per hit.</p>
@@ -268,6 +288,8 @@
         </section>
 
       </div>
+      <label id="vSpeedRow"><span class="row"><span>game speed</span><span id="o_vSpeed"></span></span>
+        <input autocomplete="off" type="range" id="vSpeed" min="1" max="6" step="1" value="1"></label>
       <button id="vRestart" type="button">restart run</button>
     </section>
     <section id="phaseHud">
@@ -313,6 +335,10 @@ let SUCK_RATE=.08;         // seconds between vacuum pickups
 let HAND_ARC=2;            // world units a collected drop arcs on its way in
 let SHOW_VACUUM_RING=true;
 const STEADY_HAND_RATE=1.8;  // the "steady hand" upgrade's fill multiplier
+let GAME_SPEED=1;          // whole simulation steps per rendered frame
+let SHOT_SPEED=26;         // tower projectile travel, world units per second
+let SHOT_ARC=1;            // multiplier on how much a shot lobs
+let SHOT_SIZE=1;           // projectile scale multiplier
 let CHOP_YIELD=1;          // drops spawned per completed player chop
 let CLICK_DAMAGE=1;        // hp removed per completed player swing on an enemy
 
@@ -333,20 +359,85 @@ const VIEW_W=960,VIEW_H=540;                 // Fixed 16:9 logical frame; CSS sc
 const W=1536,H=1024;                          // Larger world explored through camera pan/zoom.
 const BASE = {x:W/2,y:H/2,r:43};
 const BASE_ZONE=240;
+// ── Placement grid ──
+// One shared lattice for every placeable object. The simulation owns it; rendering consumes it.
+// CELL is measured in simulation pixels, the same space as W/H, BASE, mouse, and building x/y.
+// Origin is shifted back by half a cell so cell CENTERS land on exact multiples of CELL. That keeps
+// BASE (768,512 = 24·CELL, 16·CELL) sitting precisely on a cell center, so the base stays a valid
+// alignment reference for anything snapped to the grid.
+// Map-edge treatment: because of that half-cell shift the first and last column/row are HALF cells
+// clipped by the world border - cell (0,*) spans x∈[-16,16] and cell (48,*) spans x∈[1520,1552],
+// with centers exactly on x=0 and x=W. They remain addressable (worldToCell never returns a
+// negative index for an in-world point) but are never fully inside the world, so
+// footprintInWorldBounds() rejects them. Fully-interior cells are cx∈[1,47], cy∈[1,31] (47x31).
+const CELL=32;
+const GRID_ORIGIN_X=-CELL/2,GRID_ORIGIN_Y=-CELL/2;   // world coords of cell (0,0)'s top-left corner
+const GRID_COLS=W/CELL+1,GRID_ROWS=H/CELL+1;         // 49 x 33 addressable cells, edge ones half-clipped
+// ── Footprint ownership ──
+// Written by: the literals below and the BUILDING_TYPES / world-node definitions that reference them.
+// Read by:    the grid helpers, and later canPlace() and the Three.js layer.
+// Format:     {w,h} in CELLS, always ODD so half-extents are whole cells and a model can stay
+//             centered on its anchor cell. Anchor coordinates are always the CENTER cell.
+// Rule:       dimensions live here only - rendering must read footprint.w/h, never restate a size.
+const FOOTPRINT_1x1=Object.freeze({w:1,h:1});
+const FOOTPRINT_3x3=Object.freeze({w:3,h:3});
+const RESOURCE_FOOTPRINT=FOOTPRINT_1x1;              // trees, rocks and diamonds each occupy one cell
+// The base reserves cells exactly like a placed building - no keep-out circle, no special case in
+// canPlace(). Its anchor is already a cell center, so the 3x3 is symmetric around it.
+BASE.footprint=FOOTPRINT_3x3;
+// ── Grid helpers (pure) ──
+// No state reads, no mutation. Cell coords (cx,cy) are integers; world coords are sim pixels.
+// worldToCell and cellToWorld are exact inverses when applied to a cell center.
+const worldToCellX=x=>Math.floor((x-GRID_ORIGIN_X)/CELL);
+const worldToCellY=y=>Math.floor((y-GRID_ORIGIN_Y)/CELL);
+const worldToCell=(x,y)=>({cx:worldToCellX(x),cy:worldToCellY(y)});
+const cellToWorldX=cx=>GRID_ORIGIN_X+cx*CELL+CELL/2;
+const cellToWorldY=cy=>GRID_ORIGIN_Y+cy*CELL+CELL/2;
+const cellToWorld=(cx,cy)=>({x:cellToWorldX(cx),y:cellToWorldY(cy)});
+// Snap an arbitrary world point onto the center of the cell that contains it. A point exactly on a
+// cell edge belongs to the higher-index cell (floor semantics), so snapping is total and stable.
+function snapToCellCenter(x,y){const c=worldToCell(x,y);return cellToWorld(c.cx,c.cy);}
+// Footprints are odd, so half-extent is a whole number of cells on each side of the anchor.
+const footprintHalf=size=>(size-1)/2;
+function buildingFootprint(type){return BUILDING_TYPES[type]?.footprint||FOOTPRINT_1x1;}
+function footprintCellBounds(cx,cy,footprint=FOOTPRINT_1x1){
+  const hx=footprintHalf(footprint.w),hy=footprintHalf(footprint.h);
+  return {minX:cx-hx,maxX:cx+hx,minY:cy-hy,maxY:cy+hy};
+}
+// Every cell an object covers, anchor-centered, row-major. 1x1 yields exactly the anchor cell.
+function footprintCells(cx,cy,footprint=FOOTPRINT_1x1){
+  const b=footprintCellBounds(cx,cy,footprint),cells=[];
+  for(let y=b.minY;y<=b.maxY;y++)for(let x=b.minX;x<=b.maxX;x++)cells.push({cx:x,cy:y});
+  return cells;
+}
+// World-space rectangle covered by a footprint; the later rendering/placement consumer of {w,h}.
+function footprintWorldRect(cx,cy,footprint=FOOTPRINT_1x1){
+  const b=footprintCellBounds(cx,cy,footprint);
+  return {x:GRID_ORIGIN_X+b.minX*CELL,y:GRID_ORIGIN_Y+b.minY*CELL,w:footprint.w*CELL,h:footprint.h*CELL};
+}
+// Boundary test on the COMPLETE footprint, not just the anchor: a 3x3 anchored one cell from the
+// border overhangs the world even though its anchor is in-bounds. Half-clipped edge cells always fail.
+function footprintInWorldBounds(cx,cy,footprint=FOOTPRINT_1x1){
+  const r=footprintWorldRect(cx,cy,footprint);
+  return r.x>=0&&r.y>=0&&r.x+r.w<=W&&r.y+r.h<=H;
+}
 const HOUSE_SLOTS=2,HOUSE_COST={wood:8,stone:6},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
 const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
 const DEBUG_UI_ENABLED=true;
+// Every entry carries an explicit `footprint` (odd cells, anchor-centered). The tower chassis is the
+// only 3x3; every other building and deployable is 1x1. Tower VARIANTS inherit the chassis footprint -
+// upgrading never resizes an already-placed tower, so variants deliberately declare no footprint.
 const BUILDING_TYPES = {
-  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155},
-  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155},
-  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},serviceRadius:175},
-  house:{name:"house",resource:null,cost:HOUSE_COST},
-  obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12}},
-  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10}},
-  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},effectRadius:135,instant:true},
-  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},instant:true,stack:true},
-  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},effectRadius:65,instant:true,stack:true},
-  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},effectRadius:22,slowDuration:2,slowMultiplier:.5,instant:true,stack:true}
+  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155,footprint:FOOTPRINT_1x1},
+  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155,footprint:FOOTPRINT_1x1},
+  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},serviceRadius:175,footprint:FOOTPRINT_1x1},
+  house:{name:"house",resource:null,cost:HOUSE_COST,footprint:FOOTPRINT_1x1},
+  obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},footprint:FOOTPRINT_1x1},
+  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},footprint:FOOTPRINT_3x3},
+  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},effectRadius:135,instant:true,footprint:FOOTPRINT_1x1},
+  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},effectRadius:65,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},effectRadius:22,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_1x1}
 };
 const UPGRADES=[
   {id:"hardness",icon:"⛏",name:"click hardness",cost:{wood:5,stone:5},description:"placeholder: mine tougher resources with each click."},
@@ -443,22 +534,52 @@ function chooseUpcomingNight(){
 chooseUpcomingNight();
 
 // Full land map: dense resource patches surround one initial clearing.
+// ── Resource cell ownership ──
+// Written by: seedWorld() — the only writer of initial node cells. Every tree/rock/diamond is born on
+//             a cell CENTER and claims that cell exclusively, so no two active nodes share ground.
+// Read by:    canPlace(), the occupancy consumer — it maps each node back through worldToCell() and
+//             refuses any building footprint overlapping an ACTIVE node's cell. A depleted node keeps
+//             its original cell (nothing ever moves it) but stops blocking, so clearing a node frees
+//             exactly the one cell it stood on for construction.
+const SEED_CELL_TRIES=8000;   // per-batch dart throws before a layout is declared unworkable
+const SEED_LAYOUT_TRIES=24;   // whole-world re-rolls; diamonds are the batch that can genuinely box out
 function seedWorld(){
-  const occupied=[];
-  const place=(count,minGap,make,accept=()=>true)=>{
-    let tries=0;
-    while(count>0&&tries++<6000){
-      const x=rand(30,W-30),y=rand(35,H-25);
-      if(distance(x,y,BASE.x,BASE.y)<110||!accept(x,y))continue;
-      if(occupied.some(p=>distance(x,y,p.x,p.y)<minGap))continue;
-      occupied.push({x,y});make(x,y);count--;
-    }
+  const cellKey=(cx,cy)=>cy*GRID_COLS+cx;   // unique per addressable cell; cx<GRID_COLS by construction
+  const attempt=()=>{
+    const occupied=[],takenCells=new Set();
+    // Bounded rejection sampling: a batch ends by satisfying `count` or by reporting a shortfall.
+    // `minGap` is a SCATTER rule, not a placement rule: it only spreads a batch out at seed time so the
+    // map does not clump. It is NOT the old circular building-spacing ring, which cell occupancy in
+    // canPlace() replaced outright — placed objects are separated by cells, never by a distance.
+    const place=(count,minGap,make,accept=()=>true)=>{
+      let tries=0;
+      while(count>0&&tries++<SEED_CELL_TRIES){
+        // Sample broadly in world space, then quantize with the shared helpers — keeps the old scatter
+        // instead of stepping cells in order, which would read as obvious uniform rows.
+        const c=worldToCell(rand(30,W-30),rand(35,H-25));
+        if(takenCells.has(cellKey(c.cx,c.cy)))continue;          // one node per cell, no exceptions
+        if(!footprintInWorldBounds(c.cx,c.cy,RESOURCE_FOOTPRINT))continue;
+        const {x,y}=cellToWorld(c.cx,c.cy);                      // nodes live exactly on cell centers
+        if(distance(x,y,BASE.x,BASE.y)<110||!accept(x,y))continue;
+        if(occupied.some(p=>distance(x,y,p.x,p.y)<minGap))continue;
+        takenCells.add(cellKey(c.cx,c.cy));occupied.push({x,y});make(x,y);count--;
+      }
+      return count===0;
+    };
+    // Fewer, richer nodes: each has 10× the old durability and therefore yields 10× as many drops.
+    // Nodes carry RESOURCE_FOOTPRINT so grid consumers read one shared definition instead of per-kind sizes.
+    return place(80,45,(x,y)=>trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:trees.length%3,footprint:RESOURCE_FOOTPRINT}))
+      && place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT}))
+      && place(5,110,(x,y)=>diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT}),
+        (x,y)=>distance(x,y,BASE.x,BASE.y)>600);
   };
-  // Fewer, richer nodes: each has 10× the old durability and therefore yields 10× as many drops.
-  place(80,45,(x,y)=>trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:trees.length%3}));
-  place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0}));
-  place(5,110,(x,y)=>diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0}),
-    (x,y)=>distance(x,y,BASE.x,BASE.y)>600);
+  // A dense tree/rock scatter can leave no far-from-base cell that still clears the diamond gap, and no
+  // amount of extra dart throwing fixes that layout — so a shortfall discards the world and re-rolls.
+  for(let layout=0;layout<SEED_LAYOUT_TRIES;layout++){
+    trees.length=rocks.length=diamonds.length=0;
+    if(attempt())return;
+  }
+  throw new Error(`seedWorld: could not place 80 trees / 24 rocks / 5 diamonds in ${SEED_LAYOUT_TRIES} layout attempts`);
 }
 seedWorld();
 
@@ -626,8 +747,11 @@ function dropHeldObject(){
     else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast("invalid ground — worker returned");}
     state.heldObject=null;sound(260,.06);return true;
   }
-  const building=held.object;
-  if(state.mouse.inside&&canPlace(state.mouse.x,state.mouse.y)){building.x=state.mouse.x;building.y=state.mouse.y;toast(towerVariant(building).name+" placed");}
+  // Relocation validates the tower's own 3x3 footprint at the snapped anchor, excluding itself.
+  // Only x/y are ever touched: cooldown, hp, variant and upgrade state ride along on the same object,
+  // and an invalid drop restores the exact origin recorded at pickup.
+  const building=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
+  if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)){building.x=anchor.x;building.y=anchor.y;toast(towerVariant(building).name+" placed");}
   else{building.x=held.originX;building.y=held.originY;toast("invalid ground — tower returned");}
   buildings.push(building);state.heldObject=null;sound(260,.06);return true;
 }
@@ -691,9 +815,11 @@ function leftClick(){
   // Attacking is timed too — the press only arms the bar.
   if(enemy){beginChop({target:enemy,kind:"enemy"});return;}
   if(state.buildMode){
-    if(canPlace(m.x,m.y)){
-      const type=state.buildMode,def=BUILDING_TYPES[type];
-      buildings.push(createBuilding(type,m.x,m.y));
+    // Commit uses the same snap the ghost preview drew with, so what you see is what lands.
+    const type=state.buildMode,anchor=snapToCellCenter(m.x,m.y);
+    if(canPlace(anchor.x,anchor.y,type)){
+      const def=BUILDING_TYPES[type];
+      buildings.push(createBuilding(type,anchor.x,anchor.y));
       if(def.stack){state.buildStacks[type]--;state.buildMode=state.buildStacks[type]>0?type:null;}else state.buildMode=null;
       setBuildDockCategory(null);syncBuildHud();
       sound(240,.06);
@@ -921,14 +1047,43 @@ function handoffParticles(x,y,kind,count,fromX=state.mouse.x,fromY=state.mouse.y
   for(let i=0;i<Math.min(count,10);i++)particles.push({x:fromX+rand(-9,9),y:fromY+rand(-9,9),tx:x,ty:y,life:.45+i*.035,max:.45+i*.035,col,kind,resource:true});
 }
 
-function canPlace(x,y){
-  if(x<45||y<45||x>W-45||y>H-45)return false;
-  if(distance(x,y,BASE.x,BASE.y)<105)return false;
+// ── Placement validity ──
+// Occupancy is RECOMPUTED from the live trees/rocks/diamonds/buildings arrays on every call; it is
+// never cached. Harvesting, construction, detonation and tower pickup all mutate those arrays
+// directly, so a cached grid would need invalidation hooks in a dozen unrelated places to buy
+// nothing measurable at this world size (~210 nodes x at most 9 candidate cells).
+const BUILD_MARGIN=45;        // buildable world = the map inset by this much on every side
+// Axis-aligned cell-rectangle overlap. Footprints are rectangles, so testing their cell BOUNDS is
+// exactly equivalent to testing every cell of one against every cell of the other, minus the loops.
+function cellBoundsOverlap(a,b){return a.minX<=b.maxX&&b.minX<=a.maxX&&a.minY<=b.maxY&&b.minY<=a.maxY;}
+// Cell bounds of anything already on the map: world anchor -> its cell -> its footprint's bounds.
+// Resource nodes carry `footprint` themselves; buildings resolve theirs from their type.
+function occupiedCellBounds(entity,footprint=entity.footprint||FOOTPRINT_1x1){
+  const c=worldToCell(entity.x,entity.y);
+  return footprintCellBounds(c.cx,c.cy,footprint);
+}
+// `type` is the CANDIDATE building type and is always explicit — canPlace() no longer reads
+// state.buildMode, so held-tower relocation and blueprint previews can't disagree about footprints.
+// `ignoreBuilding` drops one existing instance from the occupancy scan: a relocating Shock Tower must
+// not collide with itself. (Pickup already splices it out of `buildings`; passing it keeps the rule
+// true regardless of that ordering.)
+function canPlace(x,y,type=null,ignoreBuilding=null){
+  const footprint=buildingFootprint(type),c=worldToCell(x,y);
+  // Whole footprint, not just the anchor: a 3x3 one cell from the border overhangs the map.
+  if(!footprintInWorldBounds(c.cx,c.cy,footprint))return false;
+  const rect=footprintWorldRect(c.cx,c.cy,footprint);
+  if(rect.x<BUILD_MARGIN||rect.y<BUILD_MARGIN||rect.x+rect.w>W-BUILD_MARGIN||rect.y+rect.h>H-BUILD_MARGIN)return false;
+  const bounds=footprintCellBounds(c.cx,c.cy,footprint);
+  // The base is just another occupant: its 3x3 blocks, the cells beside it do not.
+  if(cellBoundsOverlap(bounds,occupiedCellBounds(BASE)))return false;
   // Depleted nodes no longer reserve ground, letting harvesting open construction sites.
-  if(trees.some(t=>t.stump<=0&&distance(x,y,t.x,t.y)<55))return false;
-  if(rocks.some(r=>r.depleted<=0&&distance(x,y,r.x,r.y)<48))return false;
-  if(diamonds.some(d=>d.depleted<=0&&distance(x,y,d.x,d.y)<52))return false;
-  if(buildings.some(b=>distance(x,y,b.x,b.y)<(BUILDING_TYPES[state.buildMode]?.stack&&BUILDING_TYPES[b.type]?.stack?28:65)))return false;
+  for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])
+    for(const node of nodes)
+      if(resourceIsActive(node,kind)&&cellBoundsOverlap(bounds,occupiedCellBounds(node)))return false;
+  // Cell occupancy replaces the old distance rings, so 1x1 deployables (spikes/mines/tar included)
+  // may sit in touching cells but never share one.
+  for(const b of buildings)
+    if(b!==ignoreBuilding&&cellBoundsOverlap(bounds,occupiedCellBounds(b,buildingFootprint(b.type))))return false;
   return true;
 }
 
@@ -1412,6 +1567,7 @@ const PAL = {
   grassAlt:   0x96b177,
   grassSpeck: 0x8dab70,
   dirt:       0xd9c9a3,   // base clearing, paths
+  grid:       0x63764c,   // placement lattice; drawn at very low opacity
 
   // ── flora ──────────────────────────────────────────────
   trunk:      0x6b4a2e,
@@ -1473,6 +1629,7 @@ const PAL = {
   chargeBody: 0x59473a,
   blueprint:  0x9a774d,
   scaffold:   0x83603a,
+  pad:        0xa08a63,   // packed earth under a finished building's footprint
 
   // ── tower accents (by variant) ─────────────────────────
   towShock:   0x4c5d61,
@@ -1491,6 +1648,8 @@ const PAL = {
   emberGlow:  0x60220c,   // burning status emissive
   ghostOk:    0x1d3312,
   ghostBad:   0x3d1410,
+  cellOk:     0x8fc95e,   // footprint preview, placement allowed
+  cellBad:    0xcf4f3e,   // footprint preview, placement blocked
   tool:       0x65442c,
   hpGood:     0x7fb356,   // remaining-health track, top row of a stack
   hint:       0xead18d,
@@ -1601,8 +1760,42 @@ scene.add(sun, sun.target);
 
 // ─────────────────────────────────────────────────────────── ground
 const flat = (color, extra={}) => new THREE.MeshLambertMaterial({color, flatShading:true, ...extra});
+// ── outlines ────────────────────────────────────────────────────────────────
+// Inverted hull: a back-faced copy of each prop pushed out along its normals,
+// so only the shell behind the object survives depth testing and reads as ink.
+// Costs one extra draw per prop; hidden meshes are skipped, so the toggle is free.
+let OUTLINE_ON = false;
+const outlineMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  uniforms: {thickness:{value:.05}, tint:{value:new THREE.Color(0x1d1712)}},
+  vertexShader: `
+    uniform float thickness;
+    void main(){
+      vec3 swollen = position + normal * thickness;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(swollen, 1.0);
+    }`,
+  fragmentShader: `
+    uniform vec3 tint;
+    void main(){ gl_FragColor = vec4(tint, 1.0); }`,
+});
+const outlineShells = [];
+const isOutline = o => o.userData.outline === true;
+
 function meshOf(geo, mat, cast=true, receive=true){
-  const m = new THREE.Mesh(geo, mat); m.castShadow=cast; m.receiveShadow=receive; return m;
+  const m = new THREE.Mesh(geo, mat); m.castShadow=cast; m.receiveShadow=receive;
+  if(cast){                                  // props only — never ground or water
+    const shell = new THREE.Mesh(geo, outlineMat);
+    shell.castShadow = shell.receiveShadow = false;
+    shell.userData.outline = true;
+    shell.visible = OUTLINE_ON;
+    m.add(shell);
+    outlineShells.push(shell);
+  }
+  return m;
+}
+function setOutlines(on){
+  OUTLINE_ON = on;
+  for(const s of outlineShells) s.visible = on;
 }
 
 // The original pixel-art ground generator, repainted in the prototype's palette.
@@ -1614,7 +1807,7 @@ const groundLayer=document.createElement("canvas");groundLayer.width=W;groundLay
     c.fillStyle=n%3?css(PAL.grass):css(PAL.grassAlt);c.fillRect(x,y,8,8);
     if(n<6){c.fillStyle=css(PAL.grassSpeck);c.fillRect(x+n,y+(n*3)%7,2,2);}
   }
-  c.fillStyle=css(PAL.dirt);c.beginPath();c.ellipse(BASE.x,BASE.y,112,86,0,0,Math.PI*2);c.fill();
+  // No dirt clearing under the base: it wears the same footprint pad as every other building.
 })();
 const groundTex = new THREE.CanvasTexture(groundLayer);
 groundTex.magFilter = THREE.NearestFilter;
@@ -1638,6 +1831,38 @@ water.rotation.x = -Math.PI/2;
 water.position.set(WU/2, -1.9, HU/2);
 scene.add(water);
 
+// ─────────────────────────────────────────────────────────── placement grid
+// The simulation owns the lattice (CELL, GRID_ORIGIN_*, GRID_COLS/ROWS); this only draws it, so the
+// lines land on cell BOUNDARIES. Every square therefore encloses exactly one snap target — the same
+// cell centre snapToCellCenter() commits to and the same anchor seedWorld() gave each resource node.
+// Edge treatment: the half-clipped border cells put boundaries at -CELL/2 and past W/H. Those are
+// skipped rather than clamped — a clamped line would sit mid-cell and lie about where a cell ends.
+// Cost: (GRID_COLS-1) + (GRID_ROWS-1) = 80 segments in one LineSegments, a single draw call.
+const GRID_Y = .015;          // world units above the ground plane: enough to win the depth test
+const GRID_OPACITY = .24;     // deliberately faint; draw() fades it further at night
+const gridMat = new THREE.LineBasicMaterial({color:PAL.grid, transparent:true,
+                                             opacity:GRID_OPACITY, depthWrite:false});
+const terrainGrid = (function buildTerrainGrid(){
+  const v = [];
+  for(let cx=0; cx<=GRID_COLS; cx++){
+    const x = GRID_ORIGIN_X + cx*CELL;
+    if(x<0 || x>W) continue;
+    v.push(gx(x), GRID_Y, gz(0), gx(x), GRID_Y, gz(H));
+  }
+  for(let cy=0; cy<=GRID_ROWS; cy++){
+    const y = GRID_ORIGIN_Y + cy*CELL;
+    if(y<0 || y>H) continue;
+    v.push(gx(0), GRID_Y, gz(y), gx(W), GRID_Y, gz(y));
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(v, 3));
+  const lines = new THREE.LineSegments(geo, gridMat);
+  // Not a mesh and not a shadow caster, so blockerMeshes() cannot pick it up as an occluder.
+  lines.castShadow = lines.receiveShadow = false;
+  lines.renderOrder = -1;      // below rings, ghosts and every other transparent mark
+  return lines;
+})();
+scene.add(terrainGrid);
 
 
 // ─────────────────────────────────────────────────────────── entity models
@@ -1754,7 +1979,7 @@ function makeBase(){
     const t = meshOf(new THREE.BoxGeometry(1.1,2.4,1.1), flat(PAL.plasterLit));
     t.position.set(dx,1.2,dz); g.add(t);
   }
-  g.add(body, roof, doorway, pole, flagM);
+  g.add(makeFootprintFloor(BASE.footprint), body, roof, doorway, pole, flagM);
   g.position.set(gx(BASE.x), 0, gz(BASE.y));
   g.userData = {body};
   return g;
@@ -1772,6 +1997,25 @@ function makeKing(){
   g.add(body, head, crown, sword);
   g.userData = {sword};
   return g;
+}
+
+// ── footprint floors ────────────────────────────────────────────────────────
+// A low pad covering exactly the cells canPlace() reserves for `type`. Every dimension is derived
+// from the footprint metadata (fp.w/fp.h in CELLS -> game px -> world units), so the tower's 3x3
+// pad and a deployable's single cell come from the same expression and nothing restates a size.
+// The model keeps its own scale and stays centred on the anchor; the pad is what grows.
+// Ownership: geometry and material are built PER INSTANCE. Building groups are torn down wholesale
+// by disposeGroup(), so nothing parented into one may share a geometry or material with anything else.
+const FLOOR_H = .09;          // pad thickness in world units
+const FLOOR_LIFT = .006;      // bottom face held clear of the ground plane
+const FLOOR_TOP = FLOOR_LIFT + FLOOR_H;
+// Takes the footprint itself, not a type, so the base (which has no BUILDING_TYPES entry) uses the
+// same pad path as everything else.
+function makeFootprintFloor(fp, color=PAL.pad){
+  // cast=false: no outline shell, no shadow casting, and therefore invisible to blockerMeshes().
+  const m = meshOf(new THREE.BoxGeometry(fp.w*CELL*S, FLOOR_H, fp.h*CELL*S), flat(color), false, true);
+  m.position.y = FLOOR_LIFT + FLOOR_H/2;   // box bottom sits just above y=0, so no coplanar ground face
+  return m;
 }
 
 function makeBuilding(type){
@@ -1825,18 +2069,29 @@ function makeBuilding(type){
   } else {
     const b = add(meshOf(new THREE.BoxGeometry(2,1.4,1.8), flat(PAL.blueprint))); b.position.y=.7;
   }
+  // Added after `parts` is filled and deliberately NOT pushed into it: the tower hurt-flash and the
+  // ghost tint iterate `parts`/meshes for the MODEL, and the ground pad must not join those effects.
+  const floor = makeFootprintFloor(buildingFootprint(type));
+  g.add(floor);
+  g.userData.floor = floor;
   g.userData.parts = parts;
   return g;
 }
-function makeBlueprint(){
+// Blueprints are footprint-aware too: same pad the finished building will get, so completing a
+// structure never changes the ground it reserved. Posts ride the footprint corners.
+function makeBlueprint(type){
   const g = new THREE.Group();
-  const pad = meshOf(new THREE.BoxGeometry(2.6,.14,2.4), flat(PAL.scaffold), false, true);
-  pad.position.y = .07;
-  const a = meshOf(new THREE.BoxGeometry(.18,1.1,.18), flat(PAL.blueprint)); a.position.set(-1.05,.55,-.95);
-  const b = meshOf(new THREE.BoxGeometry(.18,1.1,.18), flat(PAL.blueprint)); b.position.set(1.05,.55,-.95);
-  const c = meshOf(new THREE.BoxGeometry(.18,1.1,.18), flat(PAL.blueprint)); c.position.set(-1.05,.55,.95);
-  const d = meshOf(new THREE.BoxGeometry(.18,1.1,.18), flat(PAL.blueprint)); d.position.set(1.05,.55,.95);
-  g.add(pad,a,b,c,d);
+  const fp = buildingFootprint(type);
+  const w = fp.w*CELL*S, d = fp.h*CELL*S;
+  const pad = makeFootprintFloor(buildingFootprint(type), PAL.scaffold);
+  g.add(pad);
+  g.userData.floor = pad;
+  const post = .18, ix = w/2 - post/2 - .06, iz = d/2 - post/2 - .06;
+  for(const sx of [-1,1]) for(const sz of [-1,1]){
+    const p = meshOf(new THREE.BoxGeometry(post,1.1,post), flat(PAL.blueprint));
+    p.position.set(sx*ix, FLOOR_TOP + .55, sz*iz);
+    g.add(p);
+  }
   return g;
 }
 
@@ -1865,7 +2120,16 @@ function makeLayer(build, update){
   };
 }
 function disposeGroup(g){
-  g.traverse(o=>{ if(o.isMesh){ o.geometry.dispose(); if(o.material.dispose)o.material.dispose(); } });
+  g.traverse(o=>{
+    if(!o.isMesh) return;
+    if(isOutline(o)){                        // shares its parent's geometry and
+      const i = outlineShells.indexOf(o);     // one global material — drop the
+      if(i >= 0) outlineShells.splice(i, 1);  // reference, dispose neither
+      return;
+    }
+    o.geometry.dispose();
+    if(o.material.dispose) o.material.dispose();
+  });
 }
 const setXZ = (g,e,y=0)=>g.position.set(gx(e.x), y, gz(e.y));
 const shakeOf = e => e.shake ? Math.sin(e.shake*28)*.12 : 0;
@@ -1957,11 +2221,12 @@ const buildingStore = new Map();
 function syncBuildings(){
   const seen = new Set();
   for(const b of buildings){
-    const key = b.complete ? (b.type==="tower" ? "tower:"+(b.tower?.variant||"basic") : b.type) : "blueprint";
+    // The blueprint key carries its type now that the blueprint pad is footprint-sized.
+    const key = b.complete ? (b.type==="tower" ? "tower:"+(b.tower?.variant||"basic") : b.type) : "blueprint:"+b.type;
     let rec = buildingStore.get(b);
     if(!rec || rec.key!==key){
       if(rec){ scene.remove(rec.g); disposeGroup(rec.g); }
-      const g = b.complete ? makeBuilding(b.type) : makeBlueprint();
+      const g = b.complete ? makeBuilding(b.type) : makeBlueprint(b.type);
       if(b.complete && b.type==="tower" && g.userData.roof)
         g.userData.roof.material.color.setHex(TOWER_TOP[b.tower?.variant] ?? PAL.timberDark);
       g.traverse(o=>{ if(o.isMesh) o.userData.ent = b; });
@@ -1975,6 +2240,9 @@ function syncBuildings(){
     rec.g.scale.y = view.heightScale/100;
     const pulse = 1 + (b.pulse||0)*.12;
     rec.g.scale.x = rec.g.scale.z = pulse;
+    // The pad marks RESERVED CELLS, so it must not breathe with the pulse: undo the group's
+    // horizontal scale on the floor alone. Its extents then always equal the placement preview's.
+    if(rec.g.userData.floor) rec.g.userData.floor.scale.set(1/pulse, 1, 1/pulse);
     if(b.complete && b.type==="tower" && b.tower){
       const hurt = b.tower.hitFlash>0;
       for(const p of rec.g.userData.parts||[]) p.material.emissive.setHex(hurt?PAL.hurtGlow:0x000000);
@@ -2011,6 +2279,155 @@ function ring(x, y, radiusPx, color=css(PAL.hint), opacity=.6){
   return m;
 }
 function endRings(){ for(let i=ringUsed;i<ringPool.length;i++) ringPool[i].visible=false; ringUsed=0; }
+
+// ─────────────────────────────────────────────────────────── attack visuals
+// Every ranged attack already records where it fired and a decaying flash; the
+// sim applies damage instantly, so these are pure feedback drawn from that.
+const beamGeo = new THREE.CylinderGeometry(1,1,1,6,1,true);
+const flashGeo = new THREE.IcosahedronGeometry(1,0);
+const beamPool = [], flashPool = [];
+let beamUsed = 0, flashUsed = 0;
+const _bA = new THREE.Vector3(), _bB = new THREE.Vector3(), _bD = new THREE.Vector3();
+const _upY = new THREE.Vector3(0,1,0);
+
+/** A cylinder stretched between two points, both in game (x, y) plus world height. */
+function beam(x1,y1,h1, x2,y2,h2, radius, color, alpha){
+  _bA.set(gx(x1), h1, gz(y1));
+  _bB.set(gx(x2), h2, gz(y2));
+  _bD.subVectors(_bB, _bA);
+  const len = _bD.length();
+  if(len < 1e-4) return;
+
+  let m = beamPool[beamUsed];
+  if(!m){
+    m = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({transparent:true, depthWrite:false}));
+    beamPool.push(m); scene.add(m);
+  }
+  beamUsed++;
+  m.visible = true;
+  m.position.copy(_bA).addScaledVector(_bD, .5);
+  m.quaternion.setFromUnitVectors(_upY, _bD.normalize());
+  m.scale.set(radius, len, radius);
+  m.material.color.set(color);
+  m.material.opacity = clamp(alpha, 0, 1);
+}
+function muzzle(x, y, h, size, color, alpha){
+  let m = flashPool[flashUsed];
+  if(!m){
+    m = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({transparent:true, depthWrite:false}));
+    flashPool.push(m); scene.add(m);
+  }
+  flashUsed++;
+  m.visible = true;
+  m.position.set(gx(x), h, gz(y));
+  m.scale.setScalar(size);
+  m.material.color.set(color);
+  m.material.opacity = clamp(alpha, 0, 1);
+}
+function endAttacks(){
+  for(let i=beamUsed;i<beamPool.length;i++) beamPool[i].visible=false;
+  for(let i=flashUsed;i<flashPool.length;i++) flashPool[i].visible=false;
+  beamUsed = flashUsed = 0;
+}
+
+// ── travelling shots ────────────────────────────────────────────────────────
+// Purely visual. The sim resolves damage the instant a tower fires, so these
+// balls are a short flight after the fact — kept brief enough that the target
+// has not visibly reacted before the shot lands.
+const SHOT_GEO = new THREE.DodecahedronGeometry(.30, 0);
+const shotPool = [], shots = [], impacts = [];
+const lastFlash = new WeakMap();
+
+function spawnShot(x1,y1,h1, x2,y2,h2, color, size, arc, impact){
+  const from = new THREE.Vector3(gx(x1), h1, gz(y1));
+  const to   = new THREE.Vector3(gx(x2), h2, gz(y2));
+  let mesh = shotPool.pop();
+  if(!mesh){
+    mesh = new THREE.Mesh(SHOT_GEO, new THREE.MeshLambertMaterial({flatShading:true}));
+    mesh.castShadow = false;                  // keeps them out of the occlusion scan
+    scene.add(mesh);
+  }
+  mesh.visible = true;
+  mesh.material.color.set(color);
+  mesh.scale.setScalar(size*SHOT_SIZE);
+  shots.push({mesh, from, to, t:0,
+    dur: clamp(from.distanceTo(to)/SHOT_SPEED, .1, .9),
+    arc: arc*SHOT_ARC, impact});
+}
+
+function stepShots(dt){
+  for(let i=shots.length-1; i>=0; i--){
+    const s = shots[i];
+    s.t += dt/s.dur;
+    const p = Math.min(s.t, 1);
+    s.mesh.position.lerpVectors(s.from, s.to, p);
+    s.mesh.position.y += Math.sin(p*Math.PI)*s.arc;
+    s.mesh.rotation.x += dt*13;
+    s.mesh.rotation.y += dt*9;
+    if(p < 1) continue;
+    s.mesh.visible = false;
+    shotPool.push(s.mesh);
+    shots.splice(i, 1);
+    if(s.impact) impacts.push({...s.impact, t:0});
+  }
+  for(let i=impacts.length-1; i>=0; i--){
+    impacts[i].t += dt/0.28;
+    if(impacts[i].t >= 1) impacts.splice(i, 1);
+  }
+}
+
+function drawAttacks(){
+  const hs = view.heightScale/100;
+
+  for(const b of buildings){
+    if(!b.complete || b.type!=="tower" || !b.tower) continue;
+    const t = b.tower, v = towerVariant(b);
+    const col = v.impactColor || v.accent || css(PAL.ok);
+    const topH = 3.4*hs;                       // the tower deck
+    const area = v.attackMode==="periodic area" || v.attackMode==="manual area";
+
+    // A rising flash means it just fired. Launch the visual for that shot.
+    const prev = lastFlash.get(b) ?? 0;
+    if(t.flash > prev){
+      if(v.attackMode==="splash" && t.impactX!==undefined)
+        spawnShot(b.x,b.y,topH, t.impactX,t.impactY, .35, col, 1.6, 2.4,
+                  {x:t.impactX, y:t.impactY, r:v.splashRadius||40, col});
+      else if(!area && v.attackMode!=="line" && t.targetX!==undefined)
+        spawnShot(b.x,b.y,topH, t.targetX,t.targetY, .7, col, 1, 1.0, null);
+    }
+    lastFlash.set(b, t.flash);
+
+    if(t.flash <= 0) continue;
+    const a = clamp(t.flash*3.2, 0, 1);
+    if(area){
+      // Shockwave grows outward as the flash decays.
+      const grow = 1 - clamp(t.flash/.4, 0, 1);
+      ring(b.x, b.y, (v.effectRadius||60)*(.25+.75*grow), col, a*.85);
+    } else if(v.attackMode==="line" && t.targetX!==undefined){
+      beam(b.x, b.y, topH, t.targetX, t.targetY, .5, (v.beamWidth||10)*S*.5, col, a);
+    }
+    muzzle(b.x, b.y, topH, .22 + .42*a, col, a);
+  }
+
+  // Splash rings fire when the shell lands, not when the barrel flashes.
+  for(const im of impacts)
+    ring(im.x, im.y, im.r*(.3+.7*im.t), im.col, (1-im.t)*.9);
+
+  for(const e of state.enemies){
+    if(e.shotFlash > 0)
+      beam(e.x, e.y, .8, e.shotX ?? BASE.x, e.shotY ?? BASE.y, .7, .055,
+           "#d9b65f", clamp(e.shotFlash*7, 0, 1));
+    if(e.healFlash > 0 && e.healX!==undefined)
+      beam(e.x, e.y, 1.0, e.healX, e.healY, 1.0, .07,
+           "#75c86d", clamp(e.healFlash*3, 0, 1));
+  }
+
+  for(const w of state.workers)
+    if(w.combatTarget && w.attackCooldown > WORKER_ATTACK_RATE-.2)
+      beam(w.x, w.y, .8, w.combatTarget.x, w.combatTarget.y, .7, .06, "#f3dfa3", .85);
+
+  endAttacks();
+}
 
 // ─────────────────────────────────────────────────────────── occluded markers
 // Populated by measureNow() in the debug layer, which already computes the
@@ -2110,15 +2527,83 @@ function showGhostBuilding(type, x, y, ok, lift=0){
   if(ghostBuild.key!==key){
     if(ghostBuild.g){ scene.remove(ghostBuild.g); disposeGroup(ghostBuild.g); }
     ghostBuild.g = makeBuilding(type);
-    ghostBuild.g.traverse(o=>{ if(o.isMesh){ o.material.transparent=true; o.material.opacity=.5; o.castShadow=false; } });
+    // The ghost's own pad is hidden: showFootprint() draws the reserved cells on the ground, and a
+    // held building floats on the cursor, where a pad would just hang in the air.
+    if(ghostBuild.g.userData.floor) ghostBuild.g.userData.floor.visible = false;
+    // depthWrite off as well as transparent: a 1x1 model is wider than its cell, so a depth-writing
+    // ghost would bury the reserved-cell quads underneath it and the footprint would go unseen.
+    ghostBuild.g.traverse(o=>{ if(o.isMesh && !isOutline(o)){ o.material.transparent=true; o.material.opacity=.5; o.material.depthWrite=false; o.castShadow=false; } });
     scene.add(ghostBuild.g);
     ghostBuild.key = key;
   }
   ghostBuild.g.visible = true;
   ghostBuild.g.position.set(gx(x), lift, gz(y));
-  ghostBuild.g.traverse(o=>{ if(o.isMesh) o.material.emissive.setHex(ok?PAL.ghostOk:PAL.ghostBad); });
+  ghostBuild.g.traverse(o=>{ if(o.isMesh && !isOutline(o)) o.material.emissive.setHex(ok?PAL.ghostOk:PAL.ghostBad); });
 }
 function hideGhostBuilding(){ if(ghostBuild.g) ghostBuild.g.visible=false; }
+
+// ── footprint preview ───────────────────────────────────────────────────────
+// One tinted quad per cell footprintCells() reserves, plus a border on the footprint's exact world
+// rect. The player sees the same cells canPlace() tested and the same rectangle the finished floor
+// will cover, so the preview and the committed pad share one source of dimensions.
+// Depth: the quads ride just above the tallest pad (FLOOR_TOP) so an invalid placement over an
+// existing building still shows red instead of being swallowed by that building's own floor. They
+// keep depthTest on — trees and towers still occlude them correctly — with depthWrite off and a
+// negative polygon offset so nothing coplanar (a tar puddle, another pad) can flicker against them.
+// Ownership: these live directly in the scene, never inside a group disposeGroup() will visit, so
+// their geometry and materials are shared module singletons and are never disposed.
+const CELL_U = CELL*S;                 // one cell in world units
+const GHOST_Y = FLOOR_TOP + .035;
+const CELL_GAP = .07;                  // hairline seam so each reserved cell reads as its own square
+const cellGeo = new THREE.PlaneGeometry(1,1);
+const edgeGeo = new THREE.BufferGeometry().setAttribute("position",
+  new THREE.Float32BufferAttribute([-.5,0,-.5,  .5,0,-.5,  .5,0,.5,  -.5,0,.5], 3));
+const cellMat = ok => new THREE.MeshBasicMaterial({
+  color: ok?PAL.cellOk:PAL.cellBad, transparent:true, opacity:.34, depthWrite:false,
+  side:THREE.DoubleSide, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2});
+const edgeMat = ok => new THREE.LineBasicMaterial({
+  color: ok?PAL.cellOk:PAL.cellBad, transparent:true, opacity:.85, depthWrite:false});
+const CELL_MAT = {ok:cellMat(true), bad:cellMat(false)};
+const EDGE_MAT = {ok:edgeMat(true), bad:edgeMat(false)};
+const cellPool = [];
+let footprintEdge = null;
+
+function showFootprint(type, x, y, ok){
+  const fp = buildingFootprint(type), c = worldToCell(x, y);
+  const cells = footprintCells(c.cx, c.cy, fp);
+  for(let i=0;i<cells.length;i++){
+    let m = cellPool[i];
+    if(!m){
+      m = new THREE.Mesh(cellGeo, CELL_MAT.ok);
+      m.rotation.x = -Math.PI/2;                 // plane XY -> ground XZ
+      m.castShadow = m.receiveShadow = false;    // never a shadow caster => never an occlusion blocker
+      m.renderOrder = 2;
+      cellPool.push(m); scene.add(m);
+    }
+    const w = cellToWorld(cells[i].cx, cells[i].cy);
+    m.visible = true;
+    m.material = ok?CELL_MAT.ok:CELL_MAT.bad;
+    m.position.set(gx(w.x), GHOST_Y, gz(w.y));
+    m.scale.set(CELL_U-CELL_GAP, CELL_U-CELL_GAP, 1);
+  }
+  for(let i=cells.length;i<cellPool.length;i++) cellPool[i].visible=false;
+  // The border is the authority on extents: exactly footprintWorldRect(), the rect the pad fills.
+  if(!footprintEdge){
+    footprintEdge = new THREE.LineLoop(edgeGeo, EDGE_MAT.ok);
+    footprintEdge.castShadow = footprintEdge.receiveShadow = false;
+    footprintEdge.renderOrder = 3;
+    scene.add(footprintEdge);
+  }
+  const r = footprintWorldRect(c.cx, c.cy, fp);
+  footprintEdge.visible = true;
+  footprintEdge.material = ok?EDGE_MAT.ok:EDGE_MAT.bad;
+  footprintEdge.position.set(gx(r.x+r.w/2), GHOST_Y+.004, gz(r.y+r.h/2));
+  footprintEdge.scale.set(r.w*S, 1, r.h*S);
+}
+function hideFootprint(){
+  for(const m of cellPool) m.visible=false;
+  if(footprintEdge) footprintEdge.visible=false;
+}
 
 // Held workers are the real mesh lifted onto the cursor (see syncWorkers), so
 // there is no worker ghost — only the drop-target ring below it.
@@ -2353,7 +2838,15 @@ function drawZones(){
   }
 
   hideGhostBuilding();
-  if(state.buildMode && m.inside) showGhostBuilding(state.buildMode, m.x, m.y, canPlace(m.x,m.y));
+  hideFootprint();
+  // Previews snap with snapToCellCenter() — the exact call leftClick()/dropHeldObject() commit with —
+  // so the ghost's cell, its validity tint, and the placed anchor can never disagree.
+  if(state.buildMode && m.inside){
+    const a = snapToCellCenter(m.x, m.y);
+    const ok = canPlace(a.x, a.y, state.buildMode);
+    showFootprint(state.buildMode, a.x, a.y, ok);
+    showGhostBuilding(state.buildMode, a.x, a.y, ok);
+  }
   if(state.heldObject && m.inside){
     const worker = heldWorker();
     if(worker){
@@ -2365,13 +2858,14 @@ function drawZones(){
     } else {
       const b = heldBuilding();
       if(b){
-        const ok = canPlace(m.x,m.y);
-        showGhostBuilding(b.type, m.x, m.y, ok, 1.6 + Math.sin(t*5)*.12);
-        ring(m.x, m.y, 30, ok?css(PAL.ok):css(PAL.bad), .8);
+        const a = snapToCellCenter(m.x, m.y), ok = canPlace(a.x, a.y, b.type, b);
+        showFootprint(b.type, a.x, a.y, ok);
+        showGhostBuilding(b.type, a.x, a.y, ok, 1.6 + Math.sin(t*5)*.12);
+        ring(a.x, a.y, 30, ok?css(PAL.ok):css(PAL.bad), .8);
       }
     }
   }
-  endRings();
+  // endRings() runs in draw(), after drawAttacks() has claimed its own rings.
 }
 
 // ─────────────────────────────────────────────────────────── frame
@@ -2387,6 +2881,9 @@ function draw(){
   const night = state.clock.light;
   sun.intensity = 1.1 - night*.75;
   sun.color.setHex(night>.25 ? PAL.sunNight : PAL.sunDay);
+  // The grid is unlit, so without this it would stay bright while the map darkens and end up the
+  // loudest thing on screen at night. Fading it keeps it under the terrain and the combat marks.
+  gridMat.opacity = GRID_OPACITY * (1 - night*.55);
 
   syncTrees(trees); syncRocks(rocks); syncDiamonds(diamonds);
   syncDrops(resourceDrops); syncCorpses(workerCorpses);
@@ -2399,14 +2896,21 @@ function draw(){
   kingMesh.scale.y = view.heightScale/100;
   kingMesh.userData.sword.rotation.z = king.swing>0 ? -1.2 : 0;
 
+  // Shots advance on real elapsed time, independent of the sim step count.
+  const nowS = performance.now()/1000;
+  stepShots(Math.min(.05, nowS - (lastDrawT || nowS)));
+  lastDrawT = nowS;
+
   drawZones();
+  drawAttacks();
+  endRings();
   // Visibility stat + occluded pins. Throttled: it raycasts every clickable thing.
   if(++frameTick % 15 === 0) measureNow();
   renderer.render(scene, camera3);
   drawOverlay();
   if(scanPending){ scanPending=false; runScan(); }
 }
-let frameTick = 0;
+let frameTick = 0, lastDrawT = 0;
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2475,6 +2979,12 @@ bindV("vRate",  v=>{ SUCK_RATE=v/1000; },      v=>v+"ms");
 bindV("vArc",   v=>{ HAND_ARC=v; },            v=>v.toFixed(1));
 bindV("vRing",  v=>{ SHOW_VACUUM_RING=v; });
 bindV("vChopT", v=>{ CHOP_TIME=v/1000; },      v=>(v/1000).toFixed(2)+"s");
+bindV("vSpeed", v=>{ GAME_SPEED=v; },          v=>v+"x");
+bindV("vShotSpeed", v=>{ SHOT_SPEED=v; },      v=>v+" u/s");
+bindV("vShotArc",   v=>{ SHOT_ARC=v; },        v=>v.toFixed(1)+"x");
+bindV("vShotSize",  v=>{ SHOT_SIZE=v; },       v=>v.toFixed(1)+"x");
+bindV("vOutline",   v=>{ setOutlines(v); });
+bindV("vOutlineW",  v=>{ outlineMat.uniforms.thickness.value=v; }, v=>v.toFixed(3));
 bindV("vYield", v=>{ CHOP_YIELD=v; },          v=>v+"x");
 bindV("vDamage",v=>{ CLICK_DAMAGE=v; },        v=>v+" hp");
 
@@ -2614,7 +3124,14 @@ requestAnimationFrame(()=>{ resizeRenderer(); runScan(); });
 resizeRenderer();
 syncBuildHud();syncPhaseHud();syncDebugUiAvailability();setBuildDockCategory(null);
 let previous=performance.now();
-function frame(now){const dt=Math.min(.033,(now-previous)/1000);previous=now;update(dt);draw();requestAnimationFrame(frame);}
+function frame(now){
+  const dt=Math.min(.033,(now-previous)/1000);previous=now;
+  // Speed-up runs extra whole steps rather than stretching dt — a 3x-longer dt
+  // would let enemies skip past melee range and break contact-damage checks.
+  for(let i=0;i<GAME_SPEED;i++)update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
 requestAnimationFrame(frame);
 toast("left-hold a tree or rock to gather");
 </script>

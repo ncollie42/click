@@ -12,7 +12,63 @@ Living reference for resources, building categories, and behavior tags.
 | Gold coin | Temporary random spawn; flashes and vanishes after about 8 seconds | Shock tower variant upgrade |
 | Diamond | Five rare deposits generated more than 600px from the base | Advanced tower variant upgrades |
 
-Resources may exist in several states: loose on the ground, carried by the player or a hauling worker, stored at the base or stockpile, or delivered to construction/upgrade progress.
+Resources may exist in several states: loose on the ground, carried by the player or a hauling worker, stored at the base or stockpile, or delivered to construction/upgrade progress. Loose drops are continuous — only the *nodes* are grid-anchored.
+
+Each run seeds 80 trees, 24 stone nodes, and 5 diamond deposits onto distinct cell centres, one node per cell (see [Placement Grid](#placement-grid)).
+
+## Placement Grid
+
+Everything that is *placed* lands on one shared square lattice. The simulation owns it (`CELL`, `GRID_ORIGIN_X/Y`, `GRID_COLS/GRID_ROWS` near the top of the script); rendering only consumes it.
+
+- **Cell size is 32 simulation pixels.** The same unit as world width/height, base position, mouse position, and every building `x`/`y`. The world is 1536x1024, so the lattice addresses 49x33 cells.
+- **The anchor is the centre cell.** A building's stored `x`/`y` is always a cell *centre*, never a corner. The origin is deliberately shifted back by half a cell so centres land on exact multiples of 32, which puts the base (768, 512) on a centre and makes it a valid alignment reference.
+- **Footprints must be odd.** An odd `{w, h}` has a whole-cell half-extent on each side of the anchor, so a model can stay centred on the cell it is anchored to. `1x1` and `3x3` are the only sizes in use; a `2x2` would have no centre cell and is not supported.
+- **The whole footprint is validated, not just the anchor.** Bounds, the build margin, and occupancy against nodes, buildings, and the base are all tested against every cell the footprint covers. A 3x3 whose anchor is in bounds can still be rejected because a corner cell overhangs.
+- **The half-clipped border row and column always fail.** The half-cell origin shift makes column 0 / 48 and row 0 / 32 straddle the world edge. They remain addressable but never fully inside the world, so nothing can be placed on them. Fully interior cells are 47x31.
+- **Cell occupancy is the only spacing rule between placed things.** There is no minimum distance between buildings any more. Two 1x1 deployables may sit in touching cells; they may never share one.
+
+### Footprints
+
+| Placed object | Footprint | Notes |
+|---|---|---|
+| Lumber camp | 1x1 | |
+| Quarry | 1x1 | |
+| Stockpile | 1x1 | |
+| House | 1x1 | |
+| Obelisk | 1x1 | |
+| Basic tower chassis | 3x3 | The only multi-cell placement in the game |
+| Every tower variant | 3x3 | Inherited from the chassis; variants declare no footprint of their own |
+| Blast charge | 1x1 | |
+| Spike trap | 1x1 | |
+| Land mine | 1x1 | |
+| Tar | 1x1 | |
+| Base | 3x3 | Not placeable, but occupies cells like anything else |
+| Tree | 1x1 | Blocks only while standing |
+| Stone node | 1x1 | Blocks only while not depleted |
+| Diamond deposit | 1x1 | Blocks only while not depleted |
+
+The base is never placed by the player, but it reserves ground exactly like a building: a 3x3 footprint on its own cell centre, tested by the same occupancy rule and drawn with the same pad. There is no keep-out circle and no dirt clearing under it — the cells immediately outside its 3x3 are buildable.
+
+Towers are permanently 3x3. Choosing a chassis upgrade never resizes an already-placed tower: upgrade completion swaps stats, health scale, and behaviour but leaves the anchor and the nine reserved cells untouched. The Shock Tower is the one movable tower; relocating it re-validates the same 3x3 footprint at the new snapped anchor while excluding the tower itself from the occupancy scan, and only `x`/`y` change — cooldown, health, and variant ride along.
+
+### Depleted nodes
+
+Trees, stone nodes, and diamond deposits each reserve exactly one cell *while active*. Felling a tree or exhausting a node clears that reservation immediately: the cell becomes buildable, but the node object does not move and does not disappear. The stump or spent rock stays on the map as scenery on the same cell it always occupied. Harvesting is therefore the way to open construction sites in a crowded forest.
+
+### Footprint is not the other radii
+
+Footprint occupancy answers one question only: *which cells does this object reserve so nothing else can be placed there?* It is unrelated to, and must not be confused with:
+
+- **Model bounds.** The 3D mesh has its own dimensions and may visually overhang or under-fill its cells. Only `footprint.w/h` may be read for placement; rendering derives its pad and preview from the same values rather than restating a size.
+- **Service radius.** Circles in which a lumber camp (155) or quarry (155) finds nodes, and a stockpile (175) covers drops and delivery. Still circular, still measured from the anchor.
+- **Attack range.** Per-variant tower range (165 to 430) plus the Aggro Tower's 320 taunt radius. Still circular.
+- **Effect radius.** Blast charge 135, land mine 65, tar 22, Pulse 145, Shock 150. Still circular.
+- **Build margin.** A 45px inset from the world border, still a continuous rule; the grid only decides which cells are tested against it. (The base is *not* in this list any more — it is plain cell occupancy.)
+- **Hover and drop targeting.** Picking a blueprint, stockpile, or upgrade button under the cursor is still a distance test, so two structures in adjacent cells can both be inside each other's hover range even though their footprints never overlap.
+
+### What stays continuous
+
+The grid governs *placement only*. Workers, enemies, the player cursor, loose resource drops, projectiles, and all movement remain free-floating in continuous world pixels. There is no pathfinding, no tile-based movement, no rotation, and no persistence of the grid between runs — `seedWorld()` simply re-rolls node anchors onto fresh unique cells each run.
 
 ## Building Categories
 
@@ -100,6 +156,8 @@ Categories answer **what role does this building serve?** Tags answer **how does
 | Land mine | Defense / Deployable | `free`, `contact`, `card`, `charges`, `area`, `one-use` |
 | Tar | Defense / Deployable | `free`, `contact`, `card`, `charges`, `persistent` |
 
+Footprints for every row above live in the [Footprints](#footprints) table. All of them are 1x1 except the tower chassis and its variants.
+
 ## Deployable Cards
 
 | Item | Starting charges | Effect |
@@ -110,7 +168,7 @@ Categories answer **what role does this building serve?** Tags answer **how does
 
 ## Tower Chassis and Variants
 
-The basic tower is the only constructible tower. It remains a `tower` building and keeps firing while one upgrade cost is delivered. It may permanently become exactly one variant; variants cannot be switched or refunded.
+The basic tower is the only constructible tower. It remains a `tower` building and keeps firing while one upgrade cost is delivered. It may permanently become exactly one variant; variants cannot be switched or refunded. Every chassis and every variant is permanently 3x3 — see [Placement Grid](#placement-grid).
 
 | Variant | Family | Upgrade cost | Role | Implementation status |
 |---|---|---:|---|---|
@@ -152,3 +210,5 @@ A new run begins with zero workers. Each completed house owns two worker slots a
 ## Design Rule
 
 Use categories for menu organization and tags for shared systems. Cooldown UI, card stacks, pickup behavior, targeting, and activation should eventually read these tags instead of relying on building-specific conditionals.
+
+Footprints follow the same rule: a size is declared once, on the building type (or on `RESOURCE_FOOTPRINT` for nodes), and every consumer — placement validation, ghost preview, ground pad, blueprint scaffold — derives its dimensions from that one declaration. No simulation or rendering path may restate a cell count or a pixel size of its own.
