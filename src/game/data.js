@@ -9,11 +9,11 @@
 //   Written by: nobody. Every value here is authored, read-only at runtime, and
 //               may only change by editing this file. No debug flag, no view
 //               panel binding and no simulation path may assign into these
-//               tables (see the DBG rule in main.js, which restates the same
+//               tables (see the DBG rule in simulation.js, which restates the same
 //               contract from the consumer side).
-//   Read by:    grid.js (lattice + footprints only), main.js (everything), and
-//               the later simulation / rendering / UI modules this file is being
-//               split ahead of.
+//   Read by:    grid.js (lattice + footprints only), simulation.js (everything
+//               gameplay), and main.js (the render / UI layer). Both consumers
+//               only ever read.
 //   Imports:    none, deliberately. This module must stay a leaf so nothing can
 //               create an import cycle through it. It never touches `document`,
 //               `window`, THREE, the canvas, or any mutable run state.
@@ -21,8 +21,8 @@
 // Anything that IS written at runtime deliberately does NOT live here: mutable
 // run state (`state`, the entity arrays), the world seeding constants next to
 // seedWorld(), and the debug-tunable feel constants the view panel reassigns
-// all stay in main.js, because a `const` re-exported from here could not be
-// reassigned by its readers.
+// all stay in simulation.js (TUNE) and main.js (VIEW_TUNE), because a `const`
+// re-exported from here could not be reassigned by its readers.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── frame and world dimensions ──────────────────────────────────────────────
@@ -31,13 +31,13 @@ export const W=1536,H=1024;                  // Larger world explored through ca
 
 // ── the base ────────────────────────────────────────────────────────────────
 // Authored anchor, radius and reserved footprint. Not run state: base HEALTH is
-// state.baseHp/baseMax in main.js, and nothing ever writes x/y/r/footprint.
+// state.baseHp/baseMax in simulation.js, and nothing ever writes x/y/r/footprint.
 // Its anchor is already a cell center, so the 3x3 is symmetric around it. The base reserves cells
 // exactly like a placed building - no keep-out circle, no special case in canPlace().
 // `footprint` is attached below, once FOOTPRINT_3x3 exists; nothing else ever writes this object.
 export const BASE = {x:W/2,y:H/2,r:43};
 export const BASE_ZONE=240;
-// Buildable world = the map inset by this much on every side. Read by canPlace() in main.js.
+// Buildable world = the map inset by this much on every side. Read by canPlace() in simulation.js.
 export const BUILD_MARGIN=45;
 
 // ── Placement grid ──
@@ -58,7 +58,7 @@ export const GRID_COLS=W/CELL+1,GRID_ROWS=H/CELL+1;         // 49 x 33 addressab
 
 // ── Footprint ownership ──
 // Written by: the literals below and the BUILDING_TYPES / world-node definitions that reference them.
-// Read by:    the grid helpers in grid.js, canPlace() in main.js, and the Three.js layer.
+// Read by:    the grid helpers in grid.js, canPlace() in simulation.js, and the Three.js layer.
 // Format:     {w,h} in CELLS, always ODD so half-extents are whole cells and a model can stay
 //             centered on its anchor cell. Anchor coordinates are always the CENTER cell.
 // Rule:       dimensions live here only - rendering must read footprint.w/h, never restate a size.
@@ -150,8 +150,9 @@ export const KING={range:95,damage:2,rate:.85};
 
 // ── player feel ─────────────────────────────────────────────────────────────
 // Only the constants the view debugger can NEVER write live here. The tunable
-// siblings (CHOP_TIME, VACUUM_RADIUS, SUCK_RATE, HAND_ARC, SHOW_VACUUM_RING,
-// GAME_SPEED, SHOT_*, CHOP_YIELD, CLICK_DAMAGE) stay in main.js because the
-// view panel reassigns them at runtime and an imported binding cannot be
-// reassigned by its importer.
+// siblings are fields of a mutable holder in whichever module READS them,
+// because the view panel reassigns them at runtime and an imported binding
+// cannot be reassigned by its importer: TUNE in simulation.js (chopTime,
+// vacuumRadius, suckRate, chopYield, clickDamage, gameSpeed) and VIEW_TUNE in
+// main.js (handArc, showVacuumRing, shotSpeed, shotArc, shotSize).
 export const STEADY_HAND_RATE=1.8;  // the "steady hand" upgrade's fill multiplier

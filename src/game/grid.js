@@ -15,10 +15,10 @@
 //               the footprint records / BUILDING_TYPES). data.js imports
 //               nothing, so this pair can never form a cycle, and neither
 //               module touches `document`, `window`, THREE or run state.
-//   Read by:    main.js — the seeder, canPlace(), the input commit path, and the
-//               Three.js preview/selector layer, which must derive every pad and
-//               preview rectangle from footprintWorldRect() rather than restate
-//               a size.
+//   Read by:    simulation.js — the seeder, canPlace() and the commit path — and
+//               the Three.js preview/selector layer in main.js, which must derive
+//               every pad and preview rectangle from footprintWorldRect() rather
+//               than restate a size.
 //
 // Units: cell coords (cx,cy) are integers; world coords are simulation pixels,
 // the same space as W/H, BASE, the mouse and every building x/y.
