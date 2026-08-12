@@ -16,11 +16,12 @@
 //             screen coordinates; src/render/overlay.js is the sole CONSUMER. The dependency runs
 //             overlay -> scene and never back, so the overlay can never steer the camera.
 //   Asks:     connect({isModalOpen}) — one host predicate the idle cursor bracket needs. Injected
-//             rather than imported so this module never reaches into main.js or the DOM UI.
+//             rather than imported so this module never reaches into the host or the DOM UI.
 //
 // The DOM element <canvas id="overlay"> is shared by three owners, deliberately and read-only here:
-// overlay.js owns its 2D context and backing-store size, main.js owns its event listeners and
-// classes, and this file only reads its client rect to build a raycast ray.
+// overlay.js owns its 2D context and backing-store size, the host owns its event listeners and
+// classes (src/main.js looks it up and hands it to src/input.js and src/ui/hud.js), and this file
+// only reads its client rect to build a raycast ray.
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
 import {PAL, css, DROP_COLOR, TOWER_TOP} from "./palette.js";
@@ -62,7 +63,7 @@ export function connect(hooks){ Object.assign(HOOKS, hooks); }
 // ── runtime-tunable PRESENTATION constants (view panel) ──────────────────────
 // The view debugger reassigns these while the game runs, exactly as it does the simulation's TUNE.
 // They live in one mutable holder for the same reason: an imported binding cannot be reassigned by
-// its importer, so a plain `let` here would break the moment main.js's debugger wrote one. The split
+// its importer, so a plain `let` here would break the moment the view debugger wrote one. The split
 // between the two holders is by READER, not by widget: nothing below is ever read by the simulation,
 // and nothing in TUNE is presentation-only.
 //   handArc / shotSpeed / shotArc / shotSize — pure visuals of a flight the sim already resolved.
@@ -158,7 +159,7 @@ export function resizeRenderer(){
 }
 
 // ── Pointer data flow (producer end) ──
-// The pointer surface is the overlay canvas: it is the element main.js listens on, so its client
+// The pointer surface is the overlay canvas: it is the element src/input.js listens on, so its client
 // rect is the one that turns a client point into normalised device coordinates.
 // Format out: world-space simulation pixels, produced by raycasting the ground plane — the 3D
 // equivalent of the old inverse camera transform, correct at any pitch/yaw.

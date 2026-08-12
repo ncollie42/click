@@ -1,12 +1,23 @@
 <!--
-  Wooddrop — one file: DOM UI, simulation, three.js render layer, view debugger.
+  Wooddrop — markup only. Everything below is structure the modules under src/
+  find by id; no behaviour lives in this file and there is no inline script.
 
-  Script layout, in order:
-    prelude      three.js import, debug-tunable feel constants, the chop timer
-    simulation   state, input, update() — thinks purely in 2D game pixels (x, y)
-    render       PALETTE, one pooled mesh group per entity, 2D overlay for
-                 bars and text that must stay camera-facing
-    debugger     the "view" panel: camera / sightlines / pickup / bars
+  Module layout (loaded by <script type="module" src="./src/main.js"> at the
+  bottom; "three" comes from the importmap beside it):
+    src/game/data.js        authored, immutable definitions — a leaf module
+    src/game/grid.js        pure placement-lattice math
+    src/game/simulation.js  the sole owner of mutable gameplay state; DOM-free
+                            and three.js-free. Commands in, queries out.
+    src/render/palette.js -> models.js -> scene.js -> overlay.js
+                            the presentation layer, read-only over the sim.
+                            #scene is the WebGL canvas, #overlay the 2D one
+                            stacked above it.
+    src/ui/hud.js           build dock, phase panel, prompt, toast, upgrade
+                            modal, pause badge, game-over card
+    src/input.js            pointer / wheel / keyboard, on #overlay and window
+    src/debug/view-debugger.js
+                            the #viewPanel side panel: tabs, controls, scan
+    src/main.js             composition + the animation loop
 
   The simulation is deliberately 2D. Game (x, y) maps to world (x/16, 0, y/16)
   in the render layer, so targeting, ranges and hit tests never learn about the

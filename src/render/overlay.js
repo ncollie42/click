@@ -14,8 +14,8 @@
 //   Writes:   the 2D context, this canvas's backing store, and the two presentation holders below
 //             (BARS, BADGE) which the view debugger's `overlays` pane fills in.
 //
-// The canvas element itself is shared: scene.js reads its client rect for raycasting and main.js
-// owns its event listeners and classes. This module is the only writer of its width/height.
+// The canvas element itself is shared: scene.js reads its client rect for raycasting and the host
+// owns its event listeners and classes (src/input.js, src/ui/hud.js). This module is the only writer of its width/height.
 // ═══════════════════════════════════════════════════════════════════════════
 import {PAL, css} from "./palette.js";
 import {project} from "./scene.js";
@@ -224,7 +224,8 @@ function marks(x, y, hpx, wpx, rows){
 // and never consults the canvas, so the badge cannot swallow a click.
 // box / drop / icon / fill alpha below are debugger-owned presentation state:
 // the view panel's "bars > action badge" sliders write them live (see the bindV
-// calls near vBarScale in main.js). Nothing here feeds targeting, cadence, or the resolver.
+// calls near vBarScale in src/debug/view-debugger.js). Nothing here feeds targeting, cadence, or
+// the resolver.
 export const BADGE = {
   box:19,       // frame side, overlay px at zoom 1            [slider vBadgeBox]
   drop:15,      // px below the target's ground point — its lower/front edge on screen
