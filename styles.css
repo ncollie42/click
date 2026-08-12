@@ -1,0 +1,142 @@
+/* styles.css — owns all wooddrop presentation; extracted verbatim from the index.html style block. */
+  :root{
+    --ink:#292119; --paper:#f1dfb7; --red:#a94634; --gold:#d29a39;
+    --shadow:3px 3px 0 #17120d99;
+    --mono:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{display:grid;place-items:center;background:#0b0d13;color:var(--ink);font:12px/1.35 var(--mono);text-transform:lowercase}
+  #game{position:relative;width:min(100vw,calc(100vh * 16 / 9));aspect-ratio:16 / 9;container:game-frame / inline-size}
+  #stage{position:absolute;inset:0}
+  /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, debug 7, toast 8, game-over 10. */
+  #phaseHud{position:absolute;z-index:3;right:10px;top:10px;width:245px;padding:8px 9px;background:#292119ed;color:var(--paper);border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
+  #phaseHud.night{background:#17213aed;border-color:#c65b4d;color:#dce9ff}
+  #phaseHeader{display:flex;justify-content:space-between;font-size:13px}
+  #phaseProgress{height:5px;margin:6px 0;background:#17120d;border:1px solid #0008}
+  #phaseProgressFill{display:block;height:100%;background:var(--gold)}
+  #phaseHud.night #phaseProgressFill{background:#c65b4d}
+  #runTimeRow{display:flex;justify-content:space-between;font-size:9px;opacity:.72;margin-bottom:5px}
+  #runTime{font-variant-numeric:tabular-nums}
+  #forecastLabel{font-size:9px;opacity:.72;margin-bottom:3px}
+  #forecastSides{font-weight:bold;margin-bottom:4px}
+  #forecastRemaining{font-size:9px;color:#d98b75;margin-bottom:3px}
+  #recipeSummary{display:flex;flex-wrap:wrap;gap:2px 9px;list-style:none;font-size:10px}
+  #buildDock{position:absolute;z-index:4;left:50%;bottom:10px;transform:translateX(-50%);width:min(900px,calc(100% - 20px));pointer-events:none}
+  #buildCards{display:none;margin-bottom:5px;padding:5px;background:#f1dfb7f2;border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
+  #buildCards.open{display:block}
+  .build-category{display:none;gap:5px;overflow-x:auto;padding-bottom:2px}
+  .build-category.open{display:flex}
+  /* One equal column per tab, counted from the markup rather than hardcoded — a fixed count left a
+     dead slot behind when the debug button moved into the view debugger. */
+  #buildTabs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:min(520px,100%);margin:auto;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
+  button{width:100%;font:inherit;text-transform:lowercase;text-align:left;color:var(--ink);cursor:pointer;background:#e6d09f;border:2px solid #b99f6c;padding:7px;margin:2px 0}
+  button:hover{border-color:var(--ink);background:#f7e8c5}
+  button.on,.dock-tab.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  button:disabled{cursor:not-allowed;opacity:.42;filter:saturate(.4)}
+  button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+  .dock-tab{text-align:center;margin:0;padding:6px}
+  .build-category .build{position:relative;flex:0 0 150px;min-height:68px;margin:0;padding:6px}
+  .build-category .build:hover{transform:translateY(-1px)}
+  .build-category .build.on{box-shadow:inset 0 0 0 1px var(--gold)}
+  .cost,.purpose{display:block;font-size:9px;margin-top:2px}
+  .cost{color:#765f42}.purpose{opacity:.72}
+  kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
+  #toast{position:absolute;z-index:8;left:50%;bottom:calc(var(--build-dock-clearance,42px) + 16px);transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s,bottom .15s;pointer-events:none;white-space:nowrap}
+  #toast.on{opacity:1}#game.modal-open #toast{opacity:0}
+  #prompt{position:absolute;z-index:5;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
+  #prompt.on{opacity:1}
+  #prompt kbd{margin-right:5px}
+  #upgradePanel{position:absolute;z-index:6;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,calc(100% - 20px));max-height:calc(100% - 20px);overflow:auto;padding:9px;background:#242919;color:var(--paper);border:2px solid #d8c58f;box-shadow:5px 5px 0 #17120daa}
+  #upgradePanel.off{display:none}
+  #upgradePanel h3{text-align:center;font-size:14px;border-bottom:1px solid #8f9760;padding-bottom:5px;margin-bottom:7px}
+  #upgradeOptions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+  #upgradeOptions button{height:58px;text-align:center;padding:4px;background:#354027;color:var(--paper);border-color:#69754b;font-size:9px}
+  #upgradeOptions button.on{border-color:#78d7d4;background:#425339}
+  #upgradeOptions button.owned{opacity:.4}
+  #upgradeOptions b{display:block;font-size:17px;line-height:1.1}
+  #upgradeOptions .variant-card{height:58px;text-align:center;padding:4px}
+  #upgradeOptions .variant-card b{font-size:17px}
+  #upgradeDetail .detail-meta{color:#9ed8d3;font-size:9px;margin-bottom:3px}
+  #upgradeDetail{min-height:64px;margin-top:7px;padding:6px;border-top:1px solid #8f9760;border-bottom:1px solid #8f9760}
+  #upgradeDetail b{display:block;margin-bottom:3px}
+  #upgradeActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}
+  #upgradeActions button{text-align:center;margin:0}
+  #upgradeAccept{background:#557a35;color:#fff}#upgradeDecline{background:#8e2924;color:#fff}
+  #gameOver{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:#17120dcc}
+  #gameOver.off{display:none}
+  #gameOver .endcard{width:280px;padding:18px;text-align:center;background:var(--paper);border:2px solid var(--ink);box-shadow:5px 5px 0 #0008}
+  #gameOver h2{font-size:23px;border:0;margin:0 0 8px;color:var(--red)}
+  #pauseBadge{position:absolute;left:50%;top:48%;transform:translate(-50%,-50%);z-index:5;padding:9px 18px;background:#292119e8;color:var(--paper);border:2px solid var(--paper);font-size:17px;pointer-events:none}
+  #pauseBadge.off{display:none}
+  #gameOver p{margin-bottom:12px}
+  #restart{background:var(--ink);color:var(--paper);text-align:center;padding:9px}
+  @container game-frame (max-width:799px){
+    #phaseHud{right:6px;top:6px;width:50%;padding:5px 6px;font-size:10px}
+    #phaseHeader{font-size:11px}#phaseProgress{margin:4px 0}
+    #runTimeRow,#forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
+    #buildDock{bottom:6px;width:calc(100% - 12px)}#buildCards{padding:3px;margin-bottom:3px}
+    .build-category{gap:3px}.build-category .build{flex-basis:126px;min-height:58px;padding:5px;font-size:10px}
+    .cost,.purpose{font-size:9px}#buildTabs{width:min(440px,100%);padding:2px}.dock-tab{padding:4px;font-size:10px}
+    #upgradePanel{max-height:calc(100% - 12px)}
+  }
+
+  /* ── 3D layers ───────────────────────────────────────────────────── */
+  #scene,#overlay{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #scene{z-index:0;background:#1d1c29;image-rendering:auto}
+  #overlay{z-index:1;background:transparent;cursor:default;image-rendering:auto}
+  #overlay.building{cursor:crosshair}
+  #viewPanel{position:absolute;z-index:9;left:8px;top:8px;width:252px;max-height:calc(100% - 16px);
+    display:flex;flex-direction:column;padding:6px 8px 8px;background:#242919f2;color:#f1dfb7;
+    border:2px solid #d8c58f;box-shadow:var(--shadow);font-size:11px}
+  #viewPanel.collapsed{width:96px}
+  #viewPanel.collapsed #vTabs,#viewPanel.collapsed #vPanes{display:none}
+  #vToggle{margin:0;padding:4px;text-align:center;background:#4a5533;color:#f1dfb7;border-color:#8f9760}
+  /* six labels never fit one 252px row at 10px, so the row wraps. A third-width
+     basis lays them out 3+3 at both widths; the flex-grow still lets a long
+     label ("visibility") take the slack from a short one on its row. */
+  #vTabs{display:flex;flex-wrap:wrap;gap:3px;margin:6px 0 7px}
+  #vTabs button{flex:1 1 calc(33.333% - 2px);width:auto;margin:0;padding:4px 3px;font-size:10px;text-align:center;
+    white-space:nowrap;background:#354027;color:#f1dfb7;border:1px solid #69754b}
+  #vTabs button.on{background:#d4a443;color:#292119;border-color:#f1dfb7}
+  #vPanes{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
+  #vPanes .pane{display:none}
+  #vPanes .pane.on{display:block}
+  #viewPanel h4{font-size:10px;letter-spacing:.06em;opacity:.85;border-bottom:1px solid #8f9760;
+    padding-bottom:3px;margin:9px 0 5px}
+  #viewPanel h4:first-child{margin-top:0}
+  #viewPanel label{display:block;margin:5px 0}
+  #viewPanel .row{display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px}
+  #viewPanel .row span:last-child{opacity:.62}
+  #viewPanel input[type=range]{width:100%;margin:0;accent-color:#d4a443}
+  #viewPanel select{width:100%;margin:0;padding:3px;font:inherit;font-size:10px;
+    background:#354027;color:#f1dfb7;border:1px solid #69754b}
+  #viewPanel .chk{display:flex;gap:6px;align-items:center;margin:4px 0;cursor:pointer;font-size:10px}
+  #viewPanel .chk input{width:auto;margin:0;accent-color:#d4a443}
+  /* action buttons inside a pane (gameplay tab). Same slate as #vRescan so the
+     panel keeps one button language; they wrap like the tab row does. */
+  #viewPanel .btnrow{display:flex;flex-wrap:wrap;gap:3px;margin:5px 0}
+  #viewPanel .btnrow button{flex:1 1 calc(50% - 2px);width:auto;margin:0;padding:4px 3px;font-size:10px;
+    text-align:center;white-space:nowrap;background:#4a5533;color:#f1dfb7;border:1px solid #8f9760}
+  #viewPanel .btnrow button:hover{background:#5a6740}
+  #vScan{width:100%;height:70px;display:block;margin-bottom:4px;background:#1b2013;border:1px solid #69754b}
+  #vRescan{margin:0;padding:4px;text-align:center;background:#4a5533;color:#f1dfb7;border-color:#8f9760}
+  #vReadout{margin-top:6px;padding:4px 5px;background:#1b2013;font-size:10px;line-height:1.5;
+    white-space:pre;user-select:all}
+  #vStatline{display:flex;gap:7px;font-size:10px;margin-bottom:5px}
+  #vStatline .ok{color:#8fd07a}
+  #vStatline .warn{color:#e8926f}
+  #viewPanel .hint{font-size:9px;opacity:.6;line-height:1.45;margin-top:5px}
+  /* #vSpeedRow now lives inside the gameplay pane, so it needs no footer rules —
+     the generic #viewPanel label styling covers it and #vPanes hides it when
+     the panel collapses. restart stays in the footer, away from the controls. */
+  #vRestart{flex:0 0 auto;margin:7px 0 0;padding:5px;text-align:center;
+    background:#8e2924;color:#fff;border-color:#d8c58f}
+  #viewPanel.collapsed #vRestart{display:none}
+  /* Must come after the rules above: a container query adds no specificity, so
+     the earlier @container block up top cannot override them. */
+  @container game-frame (max-width:799px){
+    #viewPanel{width:230px;padding:5px 6px 6px}
+    #vTabs{gap:2px}
+    #vTabs button{flex:1 1 calc(33.333% - 2px);padding:3px 2px;font-size:9px}
+  }
