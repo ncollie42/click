@@ -10,7 +10,7 @@ import {
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
   ENEMY_TYPES,MAP_SIDE,MAP_SIDES,WAVE_FRONT_SECONDARY,
-  ENEMY_POOL,DAY_ENEMY_SPAWN,DAY_ENEMY_CAP,
+  ENEMY_POOL,
   NIGHT_WAVE_SPAWNS,NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,
   DAY_DURATION,NIGHT_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
   KING,STEADY_HAND_RATE
@@ -118,7 +118,7 @@ const state = {
   runMode:"normal",
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
-  baseHp:100,baseMax:100,gameOver:false,paused:false,dayEnemyTimer:DAY_ENEMY_SPAWN.min,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
+  baseHp:100,baseMax:100,gameOver:false,paused:false,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed: total simulated seconds this run. It accumulates the same dt the phase countdown
   // spends, so it is game time, not wall time — it does not advance while paused or after a loss,
   // and a raised game speed makes it run as fast as the phases do.
@@ -1043,7 +1043,7 @@ function transitionPhase(){
     wave.activeSide=wave.upcomingSide;wave.activeRecipe=wave.upcomingRecipe;wave.secondarySide=wave.activeRecipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;wave.lastSides=wave.secondarySide?[wave.activeSide,wave.secondarySide]:[wave.activeSide];wave.remainingSpawns=NIGHT_WAVE_SPAWNS;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/NIGHT_WAVE_SPAWNS;wave.nightNumber++;
     chooseUpcomingNight();
   }else{
-    clock.phase="day";clock.remaining=DAY_DURATION;clock.completedNights++;state.dayEnemyTimer=rand(DAY_ENEMY_SPAWN.min,DAY_ENEMY_SPAWN.max);
+    clock.phase="day";clock.remaining=DAY_DURATION;clock.completedNights++;
     state.nightWave.activeSide=null;state.nightWave.secondarySide=null;state.nightWave.activeRecipe=null;state.nightWave.remainingSpawns=0;
   }
 }
@@ -1056,13 +1056,6 @@ function updateClock(dt){
   clock.light=target>clock.light?Math.min(target,clock.light+step):Math.max(target,clock.light-step);
 }
 
-function updateDaytimeEnemySpawns(dt){
-  if(state.clock.phase!=="day")return;
-  state.dayEnemyTimer-=dt;
-  if(state.dayEnemyTimer>0)return;
-  state.dayEnemyTimer=rand(DAY_ENEMY_SPAWN.min,DAY_ENEMY_SPAWN.max);
-  if(state.enemies.length<DAY_ENEMY_CAP)spawnEnemy();
-}
 function updateNightEnemyWave(dt){
   if(state.clock.phase!=="night")return;
   const wave=state.nightWave,interval=NIGHT_WAVE_WINDOW/NIGHT_WAVE_SPAWNS;

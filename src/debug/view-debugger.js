@@ -225,9 +225,7 @@ function bindControls(){
   bindBtn("vStartNight",   ()=>debugGoToPhase("night"));
   bindBtn("vAdvancePhase", debugAdvancePhase);
 
-  // combat — spawnEnemy() carries no phase guard of its own (night-only spawning lives in
-  // the sim loop's updateNightEnemyWave), so a debug spawn needs no bypass; it is a direct
-  // call with a random edge, exactly like the daytime spawner used to make.
+  // combat — spawnEnemy() has no phase guard, so debugger spawns need no bypass.
   bindBtn("vSpawnEnemy",   ()=>spawnEnemy(null,$v("vEnemyType").value));
   bindBtn("vStartWave",    ()=>debugStartWave($v("vWaveRecipe").value));
   bindBtn("vClearEnemies", debugClearEnemies);

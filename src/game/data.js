@@ -106,7 +106,7 @@ export const ENEMY_TYPES={
 };
 export const MAP_SIDE={NORTH:"north",EAST:"east",SOUTH:"south",WEST:"west"},MAP_SIDES=Object.values(MAP_SIDE);
 export const WAVE_FRONT_SECONDARY="secondary";
-export const ENEMY_POOL=["raider","raider","archer","healer","brute"],DAY_ENEMY_SPAWN={min:14,max:20},DAY_ENEMY_CAP=5;
+export const ENEMY_POOL=["raider","raider","archer","healer","brute"];
 export const NIGHT_WAVE_SPAWNS=12,NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
 // Authored order/composition changes tactical shape without deriving stats from night number.
 export const NIGHT_WAVE_RECIPES=[
