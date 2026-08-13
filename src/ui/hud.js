@@ -20,15 +20,17 @@
 //                            state, it must never write it, and it must not call back into a
 //                            command. They run synchronously inside commands and inside update(),
 //                            in the exact order the old inline DOM calls ran.
-//             modalOpen()  — the one host predicate both the simulation and the scene ask for. The
-//                            upgrade panel's own class IS the modal flag, so nothing keeps a copy.
+//             modalOpen()  — the one host predicate both the simulation and the scene ask for. It
+//                            answers for either modal (see the block below); nothing keeps a copy.
+//             syncModalUi() — repaint that predicate onto #game, for the other modal's adapter.
 //             syncBuildHud() / syncPhaseHud() — the two sync passes other adapters and boot re-run.
 //
-// Imported by: src/main.js (composition), src/input.js (modalOpen, for the pointer-down guard) and
+// Imported by: src/main.js (composition), src/input.js (modalOpen, for the pointer-down guard),
+// src/ui/skill-tree.js (syncModalUi, when its panel opens or closes) and
 // src/debug/view-debugger.js (syncBuildHud, after it flips DBG.unlimitedCharges). Nothing is
-// imported back from any of them — the HUD is the lowest of the three browser adapters, so the
+// imported back from any of them — the HUD is the lowest of the four browser adapters, so the
 // pointer surface it needs for the build cursor is HANDED IN by main.js rather than looked up here.
-// That keeps <canvas id="overlay"> at its documented three owners: main.js (listeners + classes),
+// That keeps <canvas id="overlay"> at its documented three owners: main.js (listeners, classes and focus),
 // src/render/overlay.js (2D context and backing store) and src/render/scene.js (client rect).
 // ═══════════════════════════════════════════════════════════════════════════
 import {
@@ -51,14 +53,21 @@ let surface = null;
 
 // ── modal state ─────────────────────────────────────────────────────────────
 function upgradePanelOpen(){return !document.getElementById("upgradePanel").classList.contains("off");}
-// The upgrade panel is the only modal left; the old debug modal is gone, and the view
-// debugger is a non-modal side panel that deliberately does NOT suppress gameplay input.
-export function modalOpen(){return upgradePanelOpen();}
-function syncModalUi(){document.getElementById("game").classList.toggle("modal-open",modalOpen());}
+// Two modals: the upgrade panel, whose own class is its flag, and the skill-tree screen, whose flag
+// the simulation owns (src/ui/skill-tree.js only mirrors it onto the panel). The old debug modal is
+// gone, and the view debugger is a non-modal side panel that deliberately does NOT suppress
+// gameplay input. Neither modal pauses the run; both stop POINTER input reaching the world — this
+// predicate is the guard input.js's pointer-down asks. Keys are a separate question each modal
+// answers for itself: the skill tree suppresses the camera keys in input.js, the upgrade panel
+// never did.
+export function modalOpen(){return upgradePanelOpen()||state.skillTree.open;}
+/** The `.modal-open` class on #game, which this file owns. Called by whichever modal just moved. */
+export function syncModalUi(){document.getElementById("game").classList.toggle("modal-open",modalOpen());}
 
 // ── effect implementations handed to the simulation ─────────────────────────
-// main.js is the only caller of connect(SIM_EFFECTS); the names here are the simulation's, one for
-// one, and nothing in this record reaches back into a command.
+// main.js is the only caller of connect(), and it merges this record with the skill tree's before
+// handing it over. The names here are the simulation's, one for one, they do not overlap with that
+// other record, and nothing in this one reaches back into a command.
 export const SIM_EFFECTS = {
   toast(message){const el=document.getElementById("toast");el.textContent=message;el.classList.add("on");},
   sound(freq,duration){sound(freq,duration);},
@@ -75,7 +84,7 @@ export const SIM_EFFECTS = {
   upgradeMenuOpened(){renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");syncModalUi();},
   upgradeMenuClosed(){document.getElementById("upgradePanel").classList.add("off");syncModalUi();},
   phaseHudChanged(){syncPhaseHud();},
-  // The panel's own class IS the modal flag, so the simulation asks rather than tracking a copy.
+  // Answers for both modals (see the block above), so the simulation keeps no copy of either flag.
   isModalOpen(){return modalOpen();},
 };
 

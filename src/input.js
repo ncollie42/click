@@ -6,18 +6,20 @@
 // this file draws, and nothing in it reads or writes a HUD element.
 //
 // Ownership / data flow
-//   Reads:    `state` from src/game/simulation.js, read-only, for the two facts a handler needs
-//             before it can decide: whether a camera pan is in progress and whether the run is
-//             over / paused. It never assigns into `state`.
+//   Reads:    `state` from src/game/simulation.js, read-only, for the three facts a handler needs
+//             before it can decide: whether a camera pan is in progress, whether the run is
+//             over / paused, and whether the skill-tree screen is up. It never assigns into it.
 //   Writes:   only through simulation commands (setPointerWorld, setPointerOutside, primaryPress,
 //             primaryRelease, secondaryPress, secondaryRelease, pointerCancelled, windowBlurred,
 //             pressKey, releaseKey, beginCameraPan, endCameraPan, dragCameraTo, zoomCameraBy,
-//             offsetCamera, clampCamera, togglePause, cancelBuildMode, closeUpgradeMenu) and
-//             through src/render/scene.js's placeCamera(), which re-derives the camera from the
-//             simulation's camera state. There is no third way out of this file.
-//   Asks:     modalOpen() from src/ui/hud.js — a pointer-down must not reach gameplay while the
-//             upgrade panel owns input. The HUD is the lower module of the two, so this is a plain
-//             import and the dependency runs input -> hud and never back.
+//             offsetCamera, clampCamera, togglePause, cancelBuildMode, closeUpgradeMenu,
+//             closeSkillTree) and through src/render/scene.js's placeCamera(), which re-derives
+//             the camera from the simulation's camera state. There is no third way out of here.
+//   Asks:     modalOpen() from src/ui/hud.js — a pointer-down must not reach gameplay while a modal
+//             owns input. That is the ONLY guard for the upgrade panel, which leaves most of the
+//             canvas exposed; the skill tree also covers the surface, so its presses never arrive
+//             here at all. The HUD is the lower module of the two, so this is a plain import and
+//             the dependency runs input -> hud and never back.
 //             HOOKS.cameraChanged() — injected by main.js. The view debugger's yaw/zoom sliders
 //             mirror the camera, so a programmatic camera change (wheel zoom) has to push back into
 //             them. Injected rather than imported so this file never learns a debugger exists.
@@ -30,7 +32,7 @@
 //             correct at any pitch/yaw.
 //
 // The pointer surface (<canvas id="overlay">) is handed in by main.js rather than looked up here,
-// so the element keeps its documented three owners: main.js (listeners + classes),
+// so the element keeps its documented three owners: main.js (listeners, classes and focus),
 // src/render/overlay.js (2D context and backing store), src/render/scene.js (client rect).
 // ═══════════════════════════════════════════════════════════════════════════
 import {
@@ -41,7 +43,7 @@ import {
   pressKey, releaseKey,
   beginCameraPan, endCameraPan, dragCameraTo, zoomCameraBy,
   offsetCamera, clampCamera,
-  togglePause, cancelBuildMode, closeUpgradeMenu
+  togglePause, cancelBuildMode, closeUpgradeMenu, closeSkillTree
 } from "./game/simulation.js";
 import {placeCamera, groundFromEvent} from "./render/scene.js";
 import {modalOpen} from "./ui/hud.js";
@@ -88,7 +90,9 @@ function onPointerMove(event){
 function onPointerLeave(){ setPointerOutside(); }
 function onPreventDefault(event){ event.preventDefault(); }
 // Priority order, unchanged: middle button claims the event for camera panning before any guard
-// runs, so a pan still works while paused, over a modal, or after the base has fallen.
+// runs, so a pan still works while paused, after the base has fallen, and over the upgrade panel,
+// which leaves most of the canvas exposed. The skill tree is the case this cannot cover: it is a
+// full-stage overlay, so a press over it never reaches the surface and no handler here runs.
 function onPointerDown(event){
   pointerPosition(event);
   if(event.button===1){event.preventDefault();const g=groundFromEvent(event);beginCameraPan(g?g.x:state.camera.x,g?g.y:state.camera.y);surface.setPointerCapture(event.pointerId);return;}
@@ -101,7 +105,13 @@ function onPointerUp(event){if(event.button===0)primaryRelease();if(event.button
 function onPointerCancel(){ pointerCancelled(); }
 function onBlur(){ windowBlurred(); }
 function onKeyDown(event){
-  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
+  // Escape is a dismiss chain, outermost thing first, and each link reports whether it consumed the
+  // press: the skill tree covers the whole stage, so it goes before the panel underneath it.
+  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeSkillTree())return;if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
+  // The skill tree covers the whole stage, so panning under it would scroll a world nobody can see;
+  // openSkillTree() already dropped the held keys and this stops new ones being taken. Escape above
+  // is deliberately ahead of the guard, and the upgrade panel — which hides little — is untouched.
+  if(state.skillTree.open)return;
   if(["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowLeft","ArrowDown","ArrowRight"].includes(event.code)){event.preventDefault();pressKey(event.code);}
 }
 function onKeyUp(event){ releaseKey(event.code); }

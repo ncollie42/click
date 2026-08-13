@@ -50,6 +50,17 @@ Explicitly postponed:
 - Buildings cost resources to construct; drag resources into their blueprints.
 - A special building type can pull in nearby resources automatically.
 
+## Ground Clutter
+
+**Question:** If the ground is the only place loose resources live, how do we keep it readable?
+
+Start messy and unassisted — ship the raw version first and see whether a littered forest floor reads as wealth or as noise. Two cleaner versions to test after that:
+
+- **Stack / merge.** Drops of the same kind near each other combine into one object with a count, so ten logs are one readable pile instead of ten sprites.
+- **Tidy cluster deposit.** Producers drop into an ordered arrangement near themselves (a neat stack beside the lumber camp) rather than scattering at the point of harvest.
+
+These are not exclusive; merging is about density, clustering is about placement. Decide by looking at a mid-game screen, not in the abstract.
+
 ## Towers
 
 - Add towers.

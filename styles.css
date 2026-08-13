@@ -9,7 +9,9 @@
   body{display:grid;place-items:center;background:#0b0d13;color:var(--ink);font:12px/1.35 var(--mono);text-transform:lowercase}
   #game{position:relative;width:min(100vw,calc(100vh * 16 / 9));aspect-ratio:16 / 9;container:game-frame / inline-size}
   #stage{position:absolute;inset:0}
-  /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, debug 7, toast 8, game-over 10. */
+  /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, toast 8, viewPanel 9,
+     skill tree 10, game-over 11. The skill tree is a full-stage overlay, so it covers every panel
+     above; only the end card, which ends the run outright, may cover it. */
   #phaseHud{position:absolute;z-index:3;right:10px;top:10px;width:245px;padding:8px 9px;background:#292119ed;color:var(--paper);border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
   #phaseHud.night{background:#17213aed;border-color:#c65b4d;color:#dce9ff}
   #phaseHeader{display:flex;justify-content:space-between;font-size:13px}
@@ -63,7 +65,7 @@
   #upgradeActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}
   #upgradeActions button{text-align:center;margin:0}
   #upgradeAccept{background:#557a35;color:#fff}#upgradeDecline{background:#8e2924;color:#fff}
-  #gameOver{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:#17120dcc}
+  #gameOver{position:absolute;inset:0;z-index:11;display:grid;place-items:center;background:#17120dcc}
   #gameOver.off{display:none}
   #gameOver .endcard{width:280px;padding:18px;text-align:center;background:var(--paper);border:2px solid var(--ink);box-shadow:5px 5px 0 #0008}
   #gameOver h2{font-size:23px;border:0;margin:0 0 8px;color:var(--red)}
@@ -133,10 +135,102 @@
   #vRestart{flex:0 0 auto;margin:7px 0 0;padding:5px;text-align:center;
     background:#8e2924;color:#fff;border-color:#d8c58f}
   #viewPanel.collapsed #vRestart{display:none}
+
+  /* ── skill tree ──────────────────────────────────────────────────────
+     Three bands down the stage: title, graph viewport, action bar. `hidden` is
+     display:none on purpose: no layout, no tab stop, no a11y node.
+     Every selector in this section names an element inside #skillTreePanel, so
+     none of it reaches a generic button, the build dock or the view debugger.
+     The backdrop is opaque enough (fa) that the two scenes behind it — bright
+     day and blue night — arrive at the same dark sepia. */
+  #skillTreePanel{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
+    color:#f0ddb8;background:radial-gradient(108% 80% at 50% 40%,#43210edb,#180d06 74%),#130904fa}
+  #skillTreePanel.hidden{display:none}
+  #skillTreeTitle{flex:0 0 auto;width:fit-content;margin:16px auto 0;padding:0 26px 6px;
+    font-size:23px;letter-spacing:.05em;text-align:center;color:#fdf2d8;
+    border-bottom:3px solid var(--gold);filter:drop-shadow(0 1px 7px #e8ac3f99)}
+  /* min-height:0 lets the middle band shrink instead of pushing the bar off-stage. */
+  #skillTreeViewport{flex:1;min-height:0;display:flex;container-type:size}
+  /* THE one scale: min() is a contain fit of the authored box (--graph-ratio is all skill-tree.js
+     hands CSS), so the ratio holds on both axes and 90/80 leave the outermost tiles their margin. */
+  #skillTreeGraph{position:relative;margin:auto;container-type:size;
+    width:min(90cqw,80cqh * var(--graph-ratio));aspect-ratio:var(--graph-ratio)}
+  /* First child of the graph box and never given a z-index, so the tiles that follow it in the
+     markup paint over it. Every tile fill below is opaque, so a settled tile covers the connector
+     ends that meet at its centre; an arriving one is still fading in and briefly does not, which
+     is what makes the line read as reaching it. */
+  #skillTreeLinks{position:absolute;inset:0;width:100%;height:100%;overflow:visible;
+    fill:none;stroke:#a2702f;stroke-width:3.5;stroke-linecap:round}
+  /* Both ends taken — the stretch of the graph the player has actually walked. */
+  #skillTreeLinks .taken{stroke:#eab55e}
+  #skillTreeNodes{position:absolute;inset:0}
+  /* Four tile states, one warm ramp: offered (below) is the dimmest, the cursor and the keyboard
+     brighten it, and taken is the lit end of the ramp. The offered rim is the connectors' own gold,
+     so an untaken tile reads as a bead on the line rather than a second kind of object.
+     cqw is the graph box's own width, so a tile rides the connectors' scale rather than stepping. */
+  #skillTreePanel .skill-node{--tile:6.5cqw;position:absolute;width:var(--tile);height:var(--tile);
+    margin:0;padding:0;display:grid;place-items:center;transform:translate(-50%,-50%);
+    border-radius:calc(var(--tile) * .22);background:linear-gradient(#6d333a,#552930);
+    border:1px solid #b07a56;box-shadow:inset 0 1px 0 #ffffff1a;
+    color:#e8c99c;font-size:calc(var(--tile) * .56);line-height:1}
+  /* Hover and keyboard focus share one answer, and the taken tile is excluded from both, so a tile
+     that lights up under the cursor is always one that can still be taken. The focus-visible
+     outline further down is what separates the keyboard from the pointer. */
+  #skillTreePanel .skill-node:not(.selected):hover,
+  #skillTreePanel .skill-node:not(.selected):focus-visible{
+    background:linear-gradient(#87424b,#6d333a);border-color:#d29a67;color:#fff1d3;
+    box-shadow:inset 0 1px 0 #ffffff26,0 0 9px -2px #eda93a80}
+  /* Taken tiles keep full contrast (they are the reward), but stop offering a pointer: the click
+     is refused from here on — this is the tile carrying aria-disabled, see the note in
+     src/ui/skill-tree.js. Tight blur, no spread: the halo stops before it reaches the connectors
+     leaving the tile or the glyph on the tile beside it. */
+  #skillTreePanel .skill-node.selected{cursor:default;
+    background:radial-gradient(120% 120% at 50% 28%,#1a1210,#0e0a08);
+    border-color:#f0c264;color:#fff6e0;
+    box-shadow:0 0 9px -1px #efab3a7a,inset 0 0 7px #efab3a26;text-shadow:0 0 6px #f5c16999}
+  /* The root is a diamond landmark; its glyph counter-rotates so it stays upright. */
+  #skillTreePanel .skill-node.root{transform:translate(-50%,-50%) rotate(45deg);border-radius:calc(var(--tile) * .19)}
+  #skillTreePanel .skill-node.root .skill-glyph{transform:rotate(-45deg)}
+  /* ── arrival ──
+     src/ui/skill-tree.js puts `arriving` on the tiles and the connector segments that are on screen
+     for the FIRST time and on nothing else, so taking a node animates the ring it just revealed and
+     leaves the rest of the graph alone. fill-mode is backwards rather than forwards: it covers the
+     delay, and every animation below ends at the element's own settled style, so a finished arrival
+     computes identically to a tile that never animated. */
+  @keyframes skillNodeArrive{from{opacity:0;transform:translate(-50%,-50%) scale(.55)}}
+  @keyframes skillRootArrive{from{opacity:0;transform:translate(-50%,-50%) rotate(45deg) scale(.55)}}
+  @keyframes skillLinkArrive{from{opacity:0;transform:scale(.03)}}
+  #skillTreePanel .skill-node.arriving{animation:skillNodeArrive .26s ease-out .12s backwards}
+  #skillTreePanel .skill-node.root.arriving{animation-name:skillRootArrive}
+  /* fill-box is what lets skill-tree.js name the end a segment grows FROM in that segment's own
+     coordinates. The tile delay above is shorter than this, so a tile starts appearing while the
+     line still has some way to run. */
+  #skillTreeLinks .arriving{transform-box:fill-box;animation:skillLinkArrive .22s ease-out backwards}
+  @media (prefers-reduced-motion:reduce){
+    /* No motion, same destination — the only thing dropped is the approach. The root is named
+       again here because its rule above is the more specific of the two, and a media query adds
+       no specificity: without it the root keeps its animation-name and still runs an arrival. */
+    #skillTreePanel .skill-node.arriving,#skillTreePanel .skill-node.root.arriving,
+    #skillTreeLinks .arriving{animation:none}
+  }
+  /* Solid, and deliberately DARKER than the warm backdrop above it — that contrast is the band. */
+  #skillTreeBar{flex:0 0 auto;display:flex;align-items:center;justify-content:flex-end;
+    padding:11px 18px;background:#050302;border-top:2px solid #6a4222;box-shadow:0 -7px 16px -8px #000}
+  #skillTreeContinue{width:auto;margin:0;padding:7px 22px;text-align:center;font-size:14px;
+    background:#1b1109;color:#f7e8c2;border:2px solid #d8a441;border-radius:7px}
+  #skillTreeContinue:hover{background:#2a1a0d;border-color:#f3c56a}
+  /* Scoped focus ring: the generic red one all but vanishes on a dark sepia tile. */
+  #skillTreePanel button:focus-visible{outline:2px solid #ffd27a;outline-offset:3px}
   /* Must come after the rules above: a container query adds no specificity, so
      the earlier @container block up top cannot override them. */
   @container game-frame (max-width:799px){
     #viewPanel{width:230px;padding:5px 6px 6px}
     #vTabs{gap:2px}
     #vTabs button{flex:1 1 calc(33.333% - 2px);padding:3px 2px;font-size:9px}
+    /* Chrome, plus the one screen-space number the tree has: the non-scaling stroke. Tile size and
+       box geometry are written in the graph box's own units, so those ride it at every width. */
+    #skillTreeTitle{margin-top:9px;padding-bottom:4px;font-size:16px;border-bottom-width:2px}
+    #skillTreeLinks{stroke-width:2.5}
+    #skillTreeBar{padding:6px 10px}
+    #skillTreeContinue{padding:5px 14px;font-size:11px}
   }

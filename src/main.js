@@ -1,4 +1,4 @@
-// Owns: composition. It wires the simulation to the render layer and to the three browser adapters,
+// Owns: composition. It wires the simulation to the render layer and to the four browser adapters,
 // then runs the frame. It owns no gameplay state, no meshes, no listeners of its own beyond resize,
 // and no DOM markup — every one of those belongs to a module named below.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -11,10 +11,14 @@
 //                           tower / enemy tables, the wave recipes, the pacing constants. A leaf:
 //                           it imports nothing.
 //   src/game/grid.js        pure placement-lattice math over data.js. No state.
+//   src/game/skill-tree-data.js
+//                           the authored skill graph — node ids, placeholder names / glyphs, graph
+//                           coordinates and the undirected edge list, all frozen. A second leaf: it
+//                           imports nothing, and it holds shape only, no cost and no effect.
 //   src/game/simulation.js  the SOLE owner of mutable gameplay state. Commands go in, queries come
 //                           out. It is DOM-free and Three.js-free, and it imports nothing but
-//                           data.js and grid.js. Player-facing feedback leaves it by NAME, through
-//                           the effect record connect() installs.
+//                           data.js, grid.js and skill-tree-data.js. Player-facing feedback leaves
+//                           it by NAME, through the effect record connect() installs.
 //
 //   src/render/palette.js -> models.js -> scene.js -> overlay.js
 //                           the presentation layer, read-only over the simulation. scene.js is the
@@ -24,7 +28,11 @@
 //
 //   src/ui/hud.js           the HUD adapter: build dock, phase panel, prompt, toast, upgrade modal,
 //                           pause badge, game-over card, and the effect record the simulation calls
-//                           back into. The lowest of the three adapters — the other two import it.
+//                           back into. The lowest of the four adapters — the other three import it.
+//   src/ui/skill-tree.js    the skill-tree adapter: the #skillTreePanel overlay, its connector SVG
+//                           and its node tiles, rebuilt whole from the simulation's skill queries.
+//                           Read-only over the graph. The second half of the effect record, and
+//                           the second modal — it asks hud.js to repaint the shared modal class.
 //   src/input.js            the input adapter: pointer, wheel, keyboard, blur/cancel, camera intent
 //                           and the screen-to-world conversion. Ends every path in a command.
 //   src/debug/view-debugger.js
@@ -39,7 +47,10 @@
 //   Supplies: the four wiring points, all of them the same shape (a record of named hooks, replaced
 //             wholesale at boot, never a bare imported binding — an imported binding is read-only
 //             and assigning to one throws):
-//               connectSimulation(SIM_EFFECTS)      hud.js implements the simulation's effects.
+//               connectSimulation({...effects})     hud.js and skill-tree.js implement the
+//                                                   simulation's effects, one record each, disjoint
+//                                                   by name and merged here — connect() is called
+//                                                   once, so the merge cannot live in an adapter.
 //               connectScene({isModalOpen})         the one host predicate the scene needs, so the
 //                                                   idle cursor bracket refuses to draw over a modal.
 //               initInput(surface, {cameraChanged}) the wheel's zoom has to reach the debugger's
@@ -47,15 +58,16 @@
 //               initViewDebugger({resizeView})      the ortho toggle has to reach the ONE resize
 //                                                   path, which is composed here.
 //
-// The DOM element <canvas id="overlay"> is looked up HERE and handed to both adapters that need it,
-// which keeps its owners at the documented three: this file (listeners, via input.js, and classes,
-// via hud.js), src/render/overlay.js (2D context and backing store) and src/render/scene.js (client
-// rect for the raycast). No adapter looks it up for itself.
+// The DOM element <canvas id="overlay"> is looked up HERE and handed to the three adapters that
+// need it, which keeps its owners at the documented three: this file (listeners, via input.js;
+// classes, via hud.js; and focus, via skill-tree.js), src/render/overlay.js (2D context and backing
+// store) and src/render/scene.js (client rect for the raycast). No adapter looks it up for itself.
 // ═══════════════════════════════════════════════════════════════════════════
 import {connect as connectSimulation, TUNE, update, toast, setBuildDockCategory} from "./game/simulation.js";
 import {connect as connectScene, resizeRenderer, drawScene, renderScene} from "./render/scene.js";
 import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
+import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
 import {initInput} from "./input.js";
 import {initViewDebugger, syncViewInputs, tickVisibility, drainScans} from "./debug/view-debugger.js";
 
@@ -73,13 +85,15 @@ function resizeView(){
 }
 
 // ── composition ───────────────────────────────────────────────────────────
-// Order matters and is asserted by the comments on each init: the HUD first (the other two call
-// into it), then input (its window keydown must precede the debugger's shift+digit handler), then
-// the debugger (its bindings apply their markup defaults as they are bound, and one of them
-// repaints the dock).
-connectSimulation(SIM_EFFECTS);
+// Two of these four calls are order-dependent, and the comments on each init say why: the HUD must
+// be initialised before the debugger (a binding repaints the dock as it is bound, which needs the
+// surface the HUD was handed), and input before the debugger (its window keydown must stay ahead of
+// the shift+digit handler). initSkillTree() only binds listeners to markup that is always there,
+// so its position is free; it sits with the other adapters.
+connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS});
 connectScene({isModalOpen(){return modalOpen();}});
 initHud(surface);
+initSkillTree(surface);
 initInput(surface, {cameraChanged(){ syncViewInputs(); }});
 initViewDebugger({resizeView});
 window.addEventListener("resize", resizeView);

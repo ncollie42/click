@@ -20,7 +20,7 @@
 //
 // The DOM element <canvas id="overlay"> is shared by three owners, deliberately and read-only here:
 // overlay.js owns its 2D context and backing-store size, the host owns its event listeners and
-// classes (src/main.js looks it up and hands it to src/input.js and src/ui/hud.js), and this file
+// classes and focus (src/main.js looks it up and hands it to input.js, hud.js and skill-tree.js), and this file
 // only reads its client rect to build a raycast ray.
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";

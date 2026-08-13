@@ -6,6 +6,8 @@
   bottom; "three" comes from the importmap beside it):
     src/game/data.js        authored, immutable definitions — a leaf module
     src/game/grid.js        pure placement-lattice math
+    src/game/skill-tree-data.js
+                            the authored skill graph — a second leaf module
     src/game/simulation.js  the sole owner of mutable gameplay state; DOM-free
                             and three.js-free. Commands in, queries out.
     src/render/palette.js -> models.js -> scene.js -> overlay.js
@@ -14,6 +16,8 @@
                             stacked above it.
     src/ui/hud.js           build dock, phase panel, prompt, toast, upgrade
                             modal, pause badge, game-over card
+    src/ui/skill-tree.js    the #skillTreePanel overlay: connector svg, node
+                            tiles, open/closed class. Read-only over the sim.
     src/input.js            pointer / wheel / keyboard, on #overlay and window
     src/debug/view-debugger.js
                             the #viewPanel side panel: tabs, controls, scan
@@ -66,7 +70,9 @@
   </section>
   <main id="stage">
     <canvas id="scene"></canvas>
-    <canvas id="overlay" width="960" height="540"></canvas>
+    <!-- tabindex=-1: never a tab stop, but a real focus target, so a modal closing over a
+         vanished opener has somewhere to put focus other than a stranded <body>. -->
+    <canvas id="overlay" width="960" height="540" tabindex="-1"></canvas>
     <section id="viewPanel" aria-label="3d view debugger">
       <button id="vToggle" type="button">view &#9662;</button>
       <nav id="vTabs"></nav>
@@ -291,6 +297,14 @@
           <p class="hint">instant workers skips the house spawn timer only; the
           two-per-house slot limit still applies. heal restores the base, every
           tower to its own variant's max, and every worker to full.</p>
+          <h4>skills</h4>
+          <div class="btnrow">
+            <button id="vOpenSkillTree" type="button">open skill tree</button>
+          </div>
+          <p class="hint">temporary: the skill screen has no production trigger
+          yet. it suppresses world input without pausing, cancels placement and
+          closes the upgrade panel on the way in, and takes nothing away on the
+          way out — esc or continue closes it.</p>
         </section>
 
       </div>
@@ -313,6 +327,23 @@
       <div id="upgradeOptions"></div>
       <div id="upgradeDetail">select an upgrade</div>
       <div id="upgradeActions"><button id="upgradeAccept">accept</button><button id="upgradeDecline">decline</button></div>
+    </section>
+    <!-- Skill tree. Markup only: the connector <line>s and the node tiles are built by
+         src/ui/skill-tree.js from the authored graph's coordinates, so nothing here names a
+         node. `hidden` is the closed state and is display:none, which keeps the whole panel
+         out of layout, out of the focus order and out of the accessibility tree — so the
+         dialog role below only ever describes an open panel. tabindex=-1 is not a tab stop
+         either: it is there so a press on the panel's own background can focus the panel
+         instead of dropping focus to <body>, from where Shift-Tab walks the document backwards. -->
+    <section id="skillTreePanel" class="hidden" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="skillTreeTitle">
+      <h2 id="skillTreeTitle">skill tree</h2>
+      <div id="skillTreeViewport">
+        <div id="skillTreeGraph">
+          <svg id="skillTreeLinks" aria-hidden="true"></svg>
+          <div id="skillTreeNodes"></div>
+        </div>
+      </div>
+      <footer id="skillTreeBar"><button id="skillTreeContinue" type="button">continue</button></footer>
     </section>
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
   </main>

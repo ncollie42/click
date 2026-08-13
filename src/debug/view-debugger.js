@@ -44,7 +44,7 @@ import {
 } from "../game/data.js";
 import {
   TUNE, DBG, state,
-  setCameraZoom, setCapacity,
+  setCameraZoom, setCapacity, openSkillTree,
   // debug entry points (view panel > gameplay)
   spawnEnemy, debugGrant, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
   debugStartWave, debugClearEnemies, debugHealAll
@@ -236,6 +236,11 @@ function bindControls(){
   // population
   bindV("vInstantWorkers", v=>{ DBG.instantWorkers=v; });
   bindBtn("vHealAll", debugHealAll);
+
+  // skills — the ONLY way into the skill-tree screen for now; it has no production entry point
+  // yet. Not a debug command: this is the same openSkillTree() a real trigger will call, and the
+  // guards that keep two modals off screen at once live in it, not here.
+  bindBtn("vOpenSkillTree", ()=>{ openSkillTree(); });
 }
 
 /** Push programmatic camera changes (orbit, wheel zoom) back into the sliders. */
@@ -334,9 +339,11 @@ export function initViewDebugger(hooks={}){
   bindControls();
   $v("vRescan").addEventListener("click", ()=>runScan());
 
-  // shift+digit switches tabs; plain digits stay free for the game.
+  // shift+digit switches tabs; plain digits stay free for the game. Silent while the skill tree is
+  // up: it covers this panel, and the `inert` it hangs on the rest of the frame stops clicks and
+  // focus but not a listener bound to `window`.
   window.addEventListener("keydown", e=>{
-    if(!e.shiftKey)return;
+    if(!e.shiftKey||state.skillTree.open)return;
     const n = "!@#$%^&*("./* shifted digits */indexOf(e.key);
     if(n>=0 && vPanes[n]){ showVTab(vPanes[n].dataset.tab); e.preventDefault(); }
   });

@@ -9,8 +9,11 @@
 // Ownership / data flow
 //   Owns (writes):  state, trees, rocks, diamonds, resourceDrops, buildings,
 //                   workerCorpses, particles, chopState, TUNE, DBG.
-//   Reads:          authored values from ./data.js and lattice math from
-//                   ./grid.js. Neither is ever mutated here (see the DBG rule).
+//   Reads:          authored values from ./data.js, lattice math from ./grid.js,
+//                   and the frozen skill graph from ./skill-tree-data.js. None
+//                   of the three is ever mutated here (see the DBG rule); the
+//                   graph in particular is shape only — this module owns the
+//                   run's revealed/selected sets over it, never the nodes.
 //   Exposes:        commands (player intent -> state change) and queries
 //                   (pure reads for render / UI). The exported collections are
 //                   LIVE references, handed out read-only by contract: a
@@ -48,6 +51,8 @@ import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
   footprintCellBounds,footprintWorldRect,footprintInWorldBounds
 } from "./grid.js";
+// The authored skill graph: shape only. This module owns state.skillTree over it, never the nodes.
+import {SKILL_NODES,SKILL_EDGES,SKILL_TREE_ROOT_ID,SKILL_NODES_BY_ID,SKILL_NEIGHBORS} from "./skill-tree-data.js";
 
 // ── runtime-tunable gameplay constants ──────────────────────────────────────
 // The view debugger REASSIGNS these while the game runs. An imported binding is
@@ -97,6 +102,9 @@ const NO_EFFECTS = {
   buildDockChanged(){},      // (category) which dock category is open
   upgradeMenuOpened(){},     // state.upgradeMenu is populated; show and render the panel
   upgradeMenuClosed(){},     // state.upgradeMenu is cleared; hide the panel
+  skillTreeOpened(){},       // state.skillTree.open went true; show the panel
+  skillTreeChanged(){},      // the revealed/selected sets moved; repaint the panel
+  skillTreeClosed(){},       // state.skillTree.open went false; hide the panel
   phaseHudChanged(){},       // a debug command jumped the clock; re-read the phase HUD
   isModalOpen(){return false;},   // does a modal currently own input?
 };
@@ -138,6 +146,12 @@ const state = {
   nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
   upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
+  // revealed: every node the player can SEE; selected: the subset taken, always a subset of it.
+  // Two id sets over the frozen graph, written only by selectSkillNode() and read only by the
+  // skill tree queries — the nodes have no cost and no effect, so nothing else consults them.
+  // open: whether the skill-tree screen owns input. It is a modal (see modalOpen() in the HUD) but
+  // NOT a pause: update() keeps stepping under it, exactly as it does under the upgrade panel.
+  skillTree:{revealed:new Set([SKILL_TREE_ROOT_ID]),selected:new Set(),open:false},
   king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
 };
 
@@ -1295,9 +1309,13 @@ export function openUpgradeMenu(building,kind){
   effects.upgradeMenuOpened();
   return true;
 }
-/** Returns whether a menu was actually open, so Escape can consume the keystroke. */
+/**
+ * Returns whether a menu was actually open, so Escape can consume the keystroke. The building IS
+ * the open flag: openUpgradeMenu() is the only thing that sets it and this is the only thing that
+ * clears it. It deliberately does not ask isModalOpen() — that answers for the skill tree too.
+ */
 export function closeUpgradeMenu(){
-  const wasOpen=effects.isModalOpen();
+  const wasOpen=!!state.upgradeMenu.building;
   state.upgradeMenu.building=null;state.upgradeMenu.selected=null;state.upgradeMenu.kind=null;
   effects.upgradeMenuClosed();
   return wasOpen;
@@ -1315,6 +1333,47 @@ export function acceptUpgrade(){
   return true;
 }
 
+// ── the skill tree ──
+// THE only writer of the two id sets (state.skillTree.revealed / .selected); the `open` flag beside
+// them is written by openSkillTree() / closeSkillTree() below and by nothing else. Taking a node
+// reveals its immediate neighbours — ONE hop, either direction along an edge — and costs and grants
+// nothing. Refusals are silent no-ops, so a UI may call this on any click without pre-checking.
+export function selectSkillNode(id){
+  const tree=state.skillTree;
+  if(!SKILL_NODES_BY_ID[id])return false;                          // not a node at all
+  if(!tree.revealed.has(id)||tree.selected.has(id))return false;   // hidden, or already taken
+  tree.selected.add(id);
+  for(const neighbour of SKILL_NEIGHBORS[id])tree.revealed.add(neighbour);
+  effects.skillTreeChanged();
+  return true;
+}
+/**
+ * Show the skill-tree screen. It takes over input, so it lets go of whatever the pointer and the
+ * keys were doing and clears placement through the SAME stopGameplayInput(true) the run-over path
+ * uses — a blueprint left armed under a full-stage overlay would come back with the screen. The
+ * upgrade panel goes first because two modals must never be on screen together.
+ * Reports whether it actually opened; a second call while open changes nothing.
+ */
+export function openSkillTree(){
+  if(state.skillTree.open)return false;
+  stopGameplayInput(true);
+  closeUpgradeMenu();
+  state.skillTree.open=true;
+  effects.skillTreeOpened();
+  return true;
+}
+/**
+ * Hide it again. Selected and revealed ids, resources, the clock, the camera and the pause flag are
+ * all left exactly as they were — this command writes one boolean. Returns whether it was open, so
+ * Escape can consume the keystroke.
+ */
+export function closeSkillTree(){
+  if(!state.skillTree.open)return false;
+  state.skillTree.open=false;
+  effects.skillTreeClosed();
+  return true;
+}
+
 // ── debug-owned writes into ordinary state (view panel > gameplay) ──
 export function setCapacity(value){ state.capacity=value; }
 
@@ -1328,6 +1387,20 @@ export function setCapacity(value){ state.capacity=value; }
 export function heldChopTarget(){ return chopState.target; }
 /** Is the primary button down right now? */
 export function primaryHeld(){ return state.primaryClick.held; }
+
+// ── skill tree projections ──
+// Fresh records over the frozen graph and the two id sets — project them, never mutate them, the
+// same contract the live collections carry. Status is "selected", "available" or "hidden" (unknown
+// ids read as hidden); nodes come in authored order with hidden ones in, edges only when both ends
+// are visible, so a line never points at a node the player has not been shown.
+const skillNodeVisible=id=>state.skillTree.revealed.has(id);
+function skillNodeStatus(id){ return state.skillTree.selected.has(id)?"selected":skillNodeVisible(id)?"available":"hidden"; }
+function skillTreeNodes(){
+  return SKILL_NODES.map(node=>({id:node.id,name:node.name,icon:node.icon,x:node.x,y:node.y,root:!!node.root,status:skillNodeStatus(node.id)}));
+}
+function skillTreeEdges(){
+  return SKILL_EDGES.filter(edge=>skillNodeVisible(edge.a)&&skillNodeVisible(edge.b)).map(edge=>({a:edge.a,b:edge.b}));
+}
 
 export {
   // live collections — iterate, never mutate
@@ -1348,6 +1421,8 @@ export {
   // world lookups the render layer projects
   storageServiceRadius, workerAssignmentAt, heldWorker, heldBuilding,
   workerCoatColor, workerLoad, carriedTotal, resourceIsActive, oppositeMapSide,
+  // skill tree — read-only projections of the authored graph over this run's two id sets
+  skillTreeNodes, skillTreeEdges,
   // shared numeric helpers (defined here, so nothing restates them)
   clamp, distance, rand,
   // commands that are plain gameplay functions rather than input adapters
