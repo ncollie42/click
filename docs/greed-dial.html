@@ -1,0 +1,580 @@
+<title>The Greed Dial</title>
+<style>
+  /* ── tokens · dark-first (the game lives at night) ─────────────────── */
+  :root{
+    color-scheme: dark;
+    --bg:#1d1c29; --surface:#252336; --surface-2:#2c2a40; --line:#3a3752;
+    --ink:#eae6dc; --muted:#a29caf; --faint:#6f6a80;
+    --accent:#9085e9;
+    --s-blue:#3987e5; --s-orange:#d95926; --s-aqua:#199e70; --s-yellow:#c98500;
+    --s-violet:#9085e9; --s-red:#e66767;
+    --good:#199e70; --bad:#e66767; --warn:#c98500;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      color-scheme: light;
+      --bg:#f1eee4; --surface:#faf8f0; --surface-2:#f3f0e4; --line:#d9d4c4;
+      --ink:#262233; --muted:#6b667a; --faint:#9a94a8;
+      --accent:#4a3aa7;
+      --s-blue:#2a78d6; --s-orange:#eb6834; --s-aqua:#1baf7a; --s-yellow:#eda100;
+      --s-violet:#4a3aa7; --s-red:#e34948;
+      --good:#1baf7a; --bad:#e34948; --warn:#b07800;
+    }
+  }
+  :root[data-theme="light"]{
+    color-scheme: light;
+    --bg:#f1eee4; --surface:#faf8f0; --surface-2:#f3f0e4; --line:#d9d4c4;
+    --ink:#262233; --muted:#6b667a; --faint:#9a94a8;
+    --accent:#4a3aa7;
+    --s-blue:#2a78d6; --s-orange:#eb6834; --s-aqua:#1baf7a; --s-yellow:#eda100;
+    --s-violet:#4a3aa7; --s-red:#e34948;
+    --good:#1baf7a; --bad:#e34948; --warn:#b07800;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.55 "Avenir Next","Segoe UI",system-ui,sans-serif;
+    margin:0; padding:0 20px 80px;
+  }
+  main{max-width:1060px; margin:0 auto}
+  h1,h2,h3{font-family:"Trebuchet MS","Avenir Next",system-ui,sans-serif; text-wrap:balance; margin:0}
+  .mono{font-family:ui-monospace,"Cascadia Code",Consolas,monospace}
+  .num{font-variant-numeric:tabular-nums}
+
+  header{padding:56px 0 8px; max-width:64ch}
+  .eyebrow{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 10px}
+  h1{font-size:clamp(30px,5vw,42px); line-height:1.08; letter-spacing:-.01em}
+  header p{color:var(--muted); margin:14px 0 0; max-width:58ch}
+  header p strong{color:var(--ink); font-weight:600}
+
+  section{margin-top:52px}
+  .sec-head{display:flex; align-items:baseline; gap:14px; border-bottom:1px solid var(--line); padding-bottom:10px; margin-bottom:18px}
+  .sec-head .tag{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.12em;
+    color:var(--faint); text-transform:uppercase; flex:none}
+  h2{font-size:21px}
+  .sec-note{color:var(--muted); max-width:66ch; margin:0 0 18px}
+  .sec-note code, .sec-note em{font-style:normal}
+
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:18px}
+
+  /* diagram — size rules scoped to the MAP svg only; legend swatches keep their own size */
+  .diagram-wrap{overflow-x:auto}
+  #diagram{display:block; min-width:880px; width:100%; height:auto}
+  .legend-row{display:flex; flex-wrap:wrap; gap:18px; margin-top:12px; color:var(--muted); font-size:12.5px}
+  .legend-row span{display:inline-flex; align-items:center; gap:7px}
+  .legend-row svg{flex:none}
+  .loops{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; margin-top:16px}
+  .loop{background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:12px 14px; font-size:13.5px; color:var(--muted)}
+  .loop b{color:var(--ink)}
+  .loop .lbl{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.1em}
+  .loop.r .lbl{color:var(--s-aqua)} .loop.b .lbl{color:var(--s-orange)}
+
+  /* controls */
+  .controls{display:flex; flex-wrap:wrap; gap:22px 34px; padding:14px 16px; background:var(--surface-2);
+    border:1px solid var(--line); border-radius:8px; margin-bottom:16px}
+  .ctl{min-width:180px; flex:1 1 180px; max-width:250px}
+  .ctl label{display:flex; justify-content:space-between; align-items:baseline; font-size:12.5px;
+    color:var(--muted); margin-bottom:5px; gap:8px}
+  .ctl output{font-family:ui-monospace,Consolas,monospace; font-size:13px; color:var(--ink); font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%; accent-color:var(--accent)}
+  input[type=range]:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:2px}
+
+  .verdict{display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px}
+  .tile{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px 18px; min-width:140px; flex:1 1 140px}
+  .tile .k{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint);
+    font-family:ui-monospace,Consolas,monospace}
+  .tile .v{font-size:24px; font-weight:600; margin-top:3px; font-variant-numeric:tabular-nums;
+    font-family:"Trebuchet MS",system-ui,sans-serif}
+  .tile .s{font-size:12px; color:var(--muted); margin-top:2px}
+  .chip{display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; border-radius:99px; padding:2px 10px}
+  .chip::before{content:""; width:7px; height:7px; border-radius:50%; background:currentColor}
+  .chip.alive{color:var(--good); background:color-mix(in srgb, var(--good) 14%, transparent)}
+  .chip.dead{color:var(--bad); background:color-mix(in srgb, var(--bad) 14%, transparent)}
+  .chip.stall{color:var(--warn); background:color-mix(in srgb, var(--warn) 14%, transparent)}
+
+  .charts{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px}
+  .chart{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:14px 14px 8px; position:relative}
+  .chart h3{font-size:13.5px; font-weight:600; margin:0 0 2px}
+  .chart .sub{font-size:12px; color:var(--muted); margin:0 0 6px}
+  .chart svg{display:block; width:100%; height:auto}
+  .chart .legend{display:flex; gap:14px; font-size:12px; color:var(--muted); margin-top:2px}
+  .chart .legend i{display:inline-block; width:14px; height:3px; border-radius:2px; margin-right:5px; vertical-align:middle}
+  .tip{position:absolute; pointer-events:none; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:6px; padding:6px 9px; font-size:12px; display:none; z-index:3; white-space:nowrap;
+    box-shadow:0 4px 14px rgba(0,0,0,.25)}
+  .tip .t{color:var(--faint); font-family:ui-monospace,Consolas,monospace; font-size:11px}
+  .tip .row{display:flex; align-items:center; gap:6px; margin-top:2px}
+  .tip .row i{width:8px; height:8px; border-radius:2px; flex:none}
+  .tip .row b{font-variant-numeric:tabular-nums; margin-left:auto; padding-left:12px}
+
+  /* transition event log (exp·03) */
+  .events{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px 16px; margin-top:14px}
+  .events h3{font-size:13.5px; margin-bottom:8px}
+  .events ol{list-style:none; margin:0; padding:0; font-size:12.5px; color:var(--muted);
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:4px 22px}
+  .events li{display:flex; gap:9px; align-items:baseline}
+  .events .d{font-family:ui-monospace,Consolas,monospace; color:var(--faint); flex:none; min-width:52px; font-variant-numeric:tabular-nums}
+  .events .milestone{color:var(--ink); font-weight:600}
+  .events .milestone::before{content:"◆ "; color:var(--accent)}
+
+  .footnote{font-size:12.5px; color:var(--faint); max-width:70ch; margin-top:14px}
+  .footnote code{font-family:ui-monospace,Consolas,monospace; font-size:11.5px; color:var(--muted)}
+
+  .next{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px}
+  .next .card h3{font-size:15px; margin-bottom:6px}
+  .next .card p{font-size:13.5px; color:var(--muted); margin:0}
+  .next .card .lbl{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--accent); display:block; margin-bottom:8px}
+
+  @media (prefers-reduced-motion: no-preference){
+    .chip{transition:background .2s}
+  }
+</style>
+
+<main>
+<header>
+  <p class="eyebrow">machinations bench · the thing in the ground</p>
+  <h1>The Greed Dial</h1>
+  <p>The economy as <strong>stocks, flows, and feedback loops</strong> — Machinations-style — plus three
+  toy simulations you can push around. Nothing here is the real game; every curve is a caricature
+  built from the real constants, which is exactly what makes the loops visible.</p>
+</header>
+
+<!-- ══════════════ 1 · THE MAP ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">map</span><h2>One economy, two loops</h2></div>
+  <p class="sec-note">Solid arrows move resources. Dashed arrows are <em>state</em> — a stock's level changing a rate
+  somewhere else. The game is the fight between one reinforcing loop and one balancing loop, and the
+  feed slider decides which one wins.</p>
+  <div class="card diagram-wrap"><svg id="diagram" viewBox="0 0 940 340" role="img" aria-label="Economy diagram: trees flow to ground drops, carried into towers, village, or the thing; the village loop reinforces production; feeding the thing raises night pressure which drains workers and base"></svg>
+    <div class="legend-row">
+      <span><svg width="18" height="14" viewBox="0 0 18 14"><circle cx="9" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>pool (stock)</span>
+      <span><svg width="18" height="14" viewBox="0 0 18 14"><path d="M3 12 L9 2 L15 12 Z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>source / drain</span>
+      <span><svg width="18" height="14" viewBox="0 0 18 14"><rect x="3" y="2" width="12" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>converter</span>
+      <span><svg width="26" height="14" viewBox="0 0 26 14"><line x1="1" y1="7" x2="25" y2="7" stroke="currentColor" stroke-width="1.6"/></svg>resource flow</span>
+      <span><svg width="26" height="14" viewBox="0 0 26 14"><line x1="1" y1="7" x2="25" y2="7" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 3"/></svg>state connection</span>
+    </div>
+  </div>
+  <div class="loops">
+    <div class="loop r"><span class="lbl">R1 · REINFORCING</span><br>
+      <b>The village grows.</b> Drops → houses → workers → faster chopping → more drops. Left alone,
+      production compounds. Every builder game has this loop; it is why the mid-game snowballs.</div>
+    <div class="loop b"><span class="lbl">B1 · BALANCING</span><br>
+      <b>The night answers.</b> Drops → fed to the thing → XP tier → bigger waves → dead workers,
+      chipped base → less production. This is the greed dial: the <em>player chooses</em> how hard
+      the balancing loop bites, which is rare — most games author it.</div>
+  </div>
+</section>
+
+<!-- ══════════════ 2 · GREED DIAL SIM ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">exp·01</span><h2>Feed it or fight it</h2></div>
+  <p class="sec-note">One tick = a full day-night cycle. Each day the village produces; you split the haul between
+  <em>feeding</em> (XP now, bigger nights later), <em>towers</em>, and <em>houses</em>. Waves scale with the XP tier
+  reached at dusk — <code class="mono">12 + 3·tier</code> spawns against your kill capacity. Find the dial position
+  where the run thrives; then find the two ways it dies.</p>
+
+  <div class="controls" id="c1">
+    <div class="ctl"><label>fed to the thing <output id="o-feed">40%</output></label>
+      <input type="range" id="i-feed" min="0" max="90" value="40" step="5"></div>
+    <div class="ctl"><label>of the rest → towers <output id="o-def">50%</output></label>
+      <input type="range" id="i-def" min="0" max="100" value="50" step="5"></div>
+    <div class="ctl"><label>starting workers <output id="o-w0">3</output></label>
+      <input type="range" id="i-w0" min="1" max="8" value="3" step="1"></div>
+    <div class="ctl"><label>nights simulated <output id="o-n">16</output></label>
+      <input type="range" id="i-n" min="8" max="30" value="16" step="1"></div>
+  </div>
+
+  <div class="verdict" id="verdict"></div>
+
+  <div class="charts">
+    <div class="chart" id="ch-xp"></div>
+    <div class="chart" id="ch-fight"></div>
+    <div class="chart" id="ch-workers"></div>
+    <div class="chart" id="ch-base"></div>
+  </div>
+
+  <p class="footnote">Grounded in authored data: XP tiers <code>[40,100,200,350]</code>, wave
+  <code>12 + 3·tier</code> spawns, tower cost <code>16</code>, house cost <code>14 + 7·houses</code>
+  (<code>HOUSE_COST_ESCALATION</code>), 2 workers per house. Caricatures: a worker gathers
+  ~12 units/day (75&nbsp;s day ÷ 2.35&nbsp;s per chop, heavily taxed by walking), a tower kills ~5
+  spawns/night, a worker ~1. Those two kill numbers are pure guesses — the first thing a headless
+  sim of the real <code>simulation.js</code> would replace.</p>
+</section>
+
+<!-- ══════════════ 3 · PIPELINE SIM ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">exp·02</span><h2>Chop against carry</h2></div>
+  <p class="sec-note">The open question from the ground-sourcing experiment: is production or logistics the bottleneck?
+  Supply is chopping; capacity is couriers walking drops to the site. When the orange bar beats the blue
+  one, the pile on the ground grows without bound — and hauling distance, not worker count, is usually the culprit.</p>
+
+  <div class="controls" id="c2">
+    <div class="ctl"><label>gatherers chopping <output id="o-g">3</output></label>
+      <input type="range" id="i-g" min="1" max="8" value="3" step="1"></div>
+    <div class="ctl"><label>couriers hauling <output id="o-c">1</output></label>
+      <input type="range" id="i-c" min="1" max="8" value="1" step="1"></div>
+    <div class="ctl"><label>haul distance <output id="o-d">150 px</output></label>
+      <input type="range" id="i-d" min="40" max="400" value="150" step="10"></div>
+  </div>
+
+  <div class="verdict" id="verdict2"></div>
+
+  <div class="charts">
+    <div class="chart" id="ch-rates"></div>
+    <div class="chart" id="ch-pile"></div>
+  </div>
+
+  <p class="footnote">Real constants: chop every <code>2.35 s</code> (<code>WORKER_HIT_COOLDOWN</code>),
+  walk <code>52 px/s</code> (<code>WORKER_SPEED</code>), carry <code>3</code> (<code>WORKER_CARRY</code>),
+  ~4.5 s pickup/deposit overhead per trip (guess). Courier throughput =
+  <code>3 ÷ (2·distance/52 + 4.5)</code>. The break-even distance falls out of the sliders.</p>
+</section>
+
+<!-- ══════════════ 4 · THE HANDOFF ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">exp·03</span><h2>The handoff — when automation passes your hand</h2></div>
+  <p class="sec-note">The design promise is <em>“you start doing everything yourself; you end deciding everything.”</em>
+  This sim maps the transition points on that road. Your hand improves <em>linearly</em> (upgrades, bought
+  rarely); the village compounds (houses fund houses). Every run of this chart has the same shape — a
+  slow blue line and a red curve that eventually leaves it behind. The design question is not <em>if</em>
+  but <em>which day</em>, and what you were buying along the way. Investment beyond the hand is auto-spent
+  on whichever is the better marginal deal that day: a new house, or a worker-wide upgrade.</p>
+
+  <div class="controls" id="c3">
+    <div class="ctl"><label>production reinvested <output id="o-inv">60%</output></label>
+      <input type="range" id="i-inv" min="10" max="100" value="60" step="5"></div>
+    <div class="ctl"><label>of that → hand upgrades <output id="o-hand">30%</output></label>
+      <input type="range" id="i-hand" min="0" max="100" value="30" step="5"></div>
+    <div class="ctl"><label>days simulated <output id="o-days">30</output></label>
+      <input type="range" id="i-days" min="10" max="60" value="30" step="1"></div>
+  </div>
+
+  <div class="verdict" id="verdict3"></div>
+
+  <div class="charts">
+    <div class="chart" id="ch-handoff" style="grid-column:1/-1"></div>
+  </div>
+
+  <div class="events" id="events3"></div>
+
+  <p class="footnote">Model: your hand starts at 20 units/day and each hand upgrade multiplies it ×1.4
+  (cost <code>12·2ᵏ</code> — escalating like the obelisk list should). A worker gathers 12/day; a house
+  (<code>14 + 7·n</code>) adds two; a worker-wide upgrade (“worker fuel”, <code>17·2ʲ</code>) multiplies every
+  worker ×1.25. The auto-buyer compares rate-gained-per-unit-spent and takes the better deal — watch the
+  event log flip from houses to fuel as the village grows: that flip is itself a transition point worth
+  authoring toward.</p>
+</section>
+
+<!-- ══════════════ 5 · WHERE THIS GOES ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">next</span><h2>Three fidelities of the same idea</h2></div>
+  <div class="next">
+    <div class="card"><span class="lbl">napkin</span><h3>This page</h3>
+      <p>Loop structure and rough slopes. Good for arguing about <em>shape</em> — where spirals live,
+      which constant is a dial and which is a detail. Wrong about every exact number, on purpose.</p></div>
+    <div class="card"><span class="lbl">diagram tool</span><h3>machinations.io</h3>
+      <p>The real notation with token-level simulation, Monte-Carlo runs and charts. Worth it if the
+      economy grows past what one page can hold; overkill while the game fits in your head.</p></div>
+    <div class="card"><span class="lbl">ground truth</span><h3>Headless <span class="mono">simulation.js</span></h3>
+      <p>Your sim is already DOM-free and imports nothing but data. Run it in node at speed with scripted
+      bot policies (greedy feeder, turtle, balanced) and log xp/workers/baseHp per night. Same charts as
+      this page — real rules. This is the version that actually tunes constants.</p></div>
+  </div>
+</section>
+</main>
+
+<script>
+"use strict";
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const S = () => ({ blue:css('--s-blue'), orange:css('--s-orange'), aqua:css('--s-aqua'),
+  yellow:css('--s-yellow'), violet:css('--s-violet'), red:css('--s-red'),
+  ink:css('--ink'), muted:css('--muted'), faint:css('--faint'), line:css('--line'), surface:css('--surface') });
+
+/* ─────────────── tiny chart helper: line chart with crosshair tooltip ─────────────── */
+function lineChart(el, cfg){
+  // cfg: {title, sub, series:[{name,color,data:[y..]}], xLabel, yMax?, hlines?, vlines?:[{i,label}], fmt?, tall?}
+  const W=430, H=cfg.tall?230:190, P={l:38,r:14,t:12,b:22};
+  const c = S();
+  const n = Math.max(...cfg.series.map(s=>s.data.length));
+  const yMax = cfg.yMax ?? Math.max(1, ...cfg.series.flatMap(s=>s.data)) * 1.12;
+  const X = i => P.l + (n<=1 ? 0 : i*(W-P.l-P.r)/(n-1));
+  const Y = v => H-P.b - (v/yMax)*(H-P.t-P.b);
+  const fmt = cfg.fmt || (v=>Math.round(v));
+  let g = '';
+  for(let k=1;k<=3;k++){ const y=Y(yMax*k/3.3);
+    g += `<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="${c.line}" stroke-width="1"/>`
+       + `<text x="${P.l-6}" y="${y+3.5}" text-anchor="end" font-size="10" fill="${c.faint}" font-family="ui-monospace,Consolas,monospace">${fmt(yMax*k/3.3)}</text>`; }
+  g += `<line x1="${P.l}" y1="${Y(0)}" x2="${W-P.r}" y2="${Y(0)}" stroke="${c.faint}" stroke-width="1"/>`;
+  for(const h of (cfg.hlines||[])) if(h.y<yMax){
+    g += `<line x1="${P.l}" y1="${Y(h.y)}" x2="${W-P.r}" y2="${Y(h.y)}" stroke="${c.faint}" stroke-width="1" stroke-dasharray="3 4"/>`
+       + `<text x="${W-P.r}" y="${Y(h.y)-3}" text-anchor="end" font-size="9.5" fill="${c.faint}" font-family="ui-monospace,Consolas,monospace">${h.label}</text>`; }
+  for(const v of (cfg.vlines||[])) if(v.i>=0 && v.i<n){
+    g += `<line x1="${X(v.i)}" y1="${P.t}" x2="${X(v.i)}" y2="${H-P.b}" stroke="${v.color||c.violet}" stroke-width="1.4" stroke-dasharray="5 4"/>`
+       + `<text x="${X(v.i)+4}" y="${P.t+10}" font-size="9.5" fill="${v.color||c.violet}" font-family="ui-monospace,Consolas,monospace">${v.label}</text>`; }
+  for(const i of [0, Math.floor((n-1)/2), n-1]) if(i>=0)
+    g += `<text x="${X(i)}" y="${H-6}" text-anchor="middle" font-size="10" fill="${c.faint}" font-family="ui-monospace,Consolas,monospace">${i+1}</text>`;
+  for(const s of cfg.series){
+    const pts = s.data.map((v,i)=>`${X(i).toFixed(1)},${Y(Math.min(v,yMax)).toFixed(1)}`).join(' ');
+    g += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const li = s.data.length-1, lv = s.data[li];
+    g += `<circle cx="${X(li)}" cy="${Y(Math.min(lv,yMax))}" r="3.5" fill="${s.color}" stroke="${c.surface}" stroke-width="2"/>`;
+  }
+  g += `<line class="xh" x1="0" y1="${P.t}" x2="0" y2="${H-P.b}" stroke="${c.faint}" stroke-width="1" style="display:none"/>`;
+  const legend = cfg.series.length>1
+    ? `<div class="legend">${cfg.series.map(s=>`<span><i style="background:${s.color}"></i>${s.name}</span>`).join('')}</div>` : '';
+  el.innerHTML = `<h3>${cfg.title}</h3><p class="sub">${cfg.sub}</p>
+    <svg viewBox="0 0 ${W} ${H}" aria-label="${cfg.title}">${g}</svg>${legend}<div class="tip"></div>`;
+  const svg = el.querySelector('svg'), tip = el.querySelector('.tip'), xh = el.querySelector('.xh');
+  svg.addEventListener('pointermove', e=>{
+    const r = svg.getBoundingClientRect();
+    const mx = (e.clientX-r.left) * (W/r.width);
+    const i = Math.max(0, Math.min(n-1, Math.round((mx-P.l)/((W-P.l-P.r)/(n-1||1)))));
+    xh.style.display=''; xh.setAttribute('x1',X(i)); xh.setAttribute('x2',X(i));
+    tip.style.display='block';
+    tip.innerHTML = `<span class="t">${cfg.xLabel} ${i+1}</span>` + cfg.series.map(s=>
+      `<div class="row"><i style="background:${s.color}"></i>${s.name}<b>${fmt(s.data[i]??0)}</b></div>`).join('');
+    const er = el.getBoundingClientRect();
+    let tx = e.clientX-er.left+14; if(tx+tip.offsetWidth > er.width-8) tx = e.clientX-er.left-tip.offsetWidth-14;
+    tip.style.left = tx+'px'; tip.style.top = Math.max(6, e.clientY-er.top-14)+'px';
+  });
+  svg.addEventListener('pointerleave', ()=>{ tip.style.display='none'; xh.style.display='none'; });
+}
+
+/* horizontal 2-bar comparison */
+function barPair(el, cfg){
+  const c=S(), W=430, H=120, L=120, R=70;
+  const max = Math.max(cfg.a.v, cfg.b.v) * 1.15 || 1;
+  const bw = 26, y1=26, y2=y1+bw+16;
+  const bar = (y,d)=>`<rect x="${L}" y="${y}" width="${Math.max(2,(d.v/max)*(W-L-R))}" height="${bw}" rx="4" fill="${d.color}"/>
+    <text x="${L-10}" y="${y+bw/2+4}" text-anchor="end" font-size="12" fill="${c.muted}">${d.name}</text>
+    <text x="${L+Math.max(2,(d.v/max)*(W-L-R))+8}" y="${y+bw/2+4}" font-size="12" fill="${c.ink}" font-family="ui-monospace,Consolas,monospace">${d.v.toFixed(1)}</text>`;
+  el.innerHTML = `<h3>${cfg.title}</h3><p class="sub">${cfg.sub}</p>
+    <svg viewBox="0 0 ${W} ${H}" aria-label="${cfg.title}">
+      <line x1="${L}" y1="${y1-10}" x2="${L}" y2="${y2+bw+8}" stroke="${c.faint}" stroke-width="1"/>
+      ${bar(y1,cfg.a)}${bar(y2,cfg.b)}</svg>`;
+}
+
+/* ─────────────── the machinations map ─────────────── */
+function drawDiagram(){
+  const c = S(), svg = document.getElementById('diagram');
+  const nodes = {
+    trees:  {x:75,  y:150, kind:'source', label:'trees · rocks', sub:'finite', color:c.muted},
+    ground: {x:250, y:150, kind:'pool',   label:'ground drops',  sub:'the warehouse', color:c.aqua},
+    towers: {x:475, y:52,  kind:'conv',   label:'towers',        sub:'16 / tower', color:c.blue},
+    village:{x:475, y:150, kind:'conv',   label:'houses',        sub:'14 + 7·n', color:c.aqua},
+    thing:  {x:475, y:266, kind:'conv',   label:'THE THING',     sub:'feed = xp', color:c.violet},
+    def:    {x:655, y:52,  kind:'pool',   label:'defense',       sub:'kill capacity', color:c.blue},
+    workers:{x:655, y:150, kind:'pool',   label:'workers',       sub:'+2 / house', color:c.aqua},
+    xp:     {x:655, y:266, kind:'pool',   label:'xp',            sub:'tiers 40·100·200·350', color:c.violet},
+    night:  {x:838, y:150, kind:'drain',  label:'the night',     sub:'12 + 3·tier', color:c.orange},
+  };
+  const R=26;
+  const edge=(a,b,opt={})=>{
+    const A=nodes[a], B=nodes[b];
+    const dx=B.x-A.x, dy=B.y-A.y, d=Math.hypot(dx,dy);
+    const sx=A.x+dx/d*(R+6), sy=A.y+dy/d*(R+6), ex=B.x-dx/d*(R+10), ey=B.y-dy/d*(R+10);
+    const dash = opt.state ? `stroke-dasharray="4 4"` : '';
+    const col = opt.color || c.faint;
+    let path;
+    if(opt.bend){
+      const mx=(sx+ex)/2 + opt.bend[0], my=(sy+ey)/2 + opt.bend[1];
+      path = `<path d="M${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}" fill="none" stroke="${col}" stroke-width="1.6" ${dash} marker-end="url(#arr)"/>`;
+    } else {
+      path = `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="${col}" stroke-width="1.6" ${dash} marker-end="url(#arr)"/>`;
+    }
+    let lbl='';
+    if(opt.label){
+      const lx = opt.lpos ? opt.lpos[0] : (sx+ex)/2, ly = opt.lpos ? opt.lpos[1] : (sy+ey)/2 - 7;
+      lbl = `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="10" fill="${opt.lcolor||c.faint}" font-family="ui-monospace,Consolas,monospace">${opt.label}</text>`;
+    }
+    return path+lbl;
+  };
+  const node=(n)=>{
+    let shape='';
+    if(n.kind==='pool')   shape=`<circle cx="${n.x}" cy="${n.y}" r="${R}" fill="none" stroke="${n.color}" stroke-width="2"/>`;
+    if(n.kind==='conv')   shape=`<rect x="${n.x-R-4}" y="${n.y-19}" width="${2*R+8}" height="38" rx="7" fill="none" stroke="${n.color}" stroke-width="2"/>`;
+    if(n.kind==='source') shape=`<path d="M${n.x-20} ${n.y+15} L${n.x} ${n.y-18} L${n.x+20} ${n.y+15} Z" fill="none" stroke="${n.color}" stroke-width="2"/>`;
+    if(n.kind==='drain')  shape=`<path d="M${n.x-20} ${n.y-15} L${n.x} ${n.y+18} L${n.x+20} ${n.y-15} Z" fill="none" stroke="${n.color}" stroke-width="2"/>`;
+    return shape
+      +`<text x="${n.x}" y="${n.y+R+15}" text-anchor="middle" font-size="11.5" font-weight="600" fill="${c.ink}">${n.label}</text>`
+      +`<text x="${n.x}" y="${n.y+R+28}" text-anchor="middle" font-size="9.5" fill="${c.faint}" font-family="ui-monospace,Consolas,monospace">${n.sub}</text>`;
+  };
+  svg.innerHTML = `
+    <defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L8 4 L0 8 Z" fill="${c.faint}"/></marker></defs>
+    ${edge('trees','ground',{label:'chop 1/2.35s·w',lpos:[162,128]})}
+    ${edge('ground','towers',{label:'carry',lpos:[330,84]})}
+    ${edge('ground','village',{label:'carry 3 @ 52px/s',lpos:[362,140]})}
+    ${edge('ground','thing',{label:'feed',lpos:[330,232]})}
+    ${edge('towers','def',{})}
+    ${edge('village','workers',{})}
+    ${edge('thing','xp',{})}
+    ${edge('workers','ground',{state:true,color:c.aqua,bend:[0,-58],label:'R1 · faster chopping',lpos:[578,118],lcolor:c.aqua})}
+    ${edge('xp','night',{state:true,color:c.orange,label:'tier',lpos:[762,224]})}
+    ${edge('night','workers',{state:true,color:c.orange,label:'deaths',lpos:[766,136]})}
+    ${edge('def','night',{state:true,color:c.blue,label:'−leak',lpos:[766,80]})}
+    ${Object.values(nodes).map(node).join('')}
+    <text x="838" y="255" text-anchor="middle" font-size="10" fill="${c.orange}" font-family="ui-monospace,Consolas,monospace">B1 · the night answers</text>
+    <text x="838" y="268" text-anchor="middle" font-size="10" fill="${c.faint}" font-family="ui-monospace,Consolas,monospace">also drains base hp</text>`;
+}
+
+/* ─────────────── EXP·01 greed dial ─────────────── */
+const TIERS=[40,100,200,350];
+function runGreed(){
+  const f  = +document.getElementById('i-feed').value/100;
+  const dS = +document.getElementById('i-def').value/100;
+  const W0 = +document.getElementById('i-w0').value;
+  const N  = +document.getElementById('i-n').value;
+  document.getElementById('o-feed').textContent=Math.round(f*100)+'%';
+  document.getElementById('o-def').textContent=Math.round(dS*100)+'%';
+  document.getElementById('o-w0').textContent=W0;
+  document.getElementById('o-n').textContent=N;
+
+  let W=W0, xp=0, base=100, defPool=0, ecoPool=0, towers=0, houses=0;
+  const A={xp:[],threat:[],cap:[],workers:[],base:[]};
+  let deadAt=0;
+  for(let night=1; night<=N; night++){
+    const P = W*12;
+    xp += f*P;
+    defPool += (1-f)*P*dS;
+    ecoPool += (1-f)*P*(1-dS);
+    while(defPool>=16){defPool-=16; towers++;}
+    let houseCost=14+7*houses;
+    while(ecoPool>=houseCost){ecoPool-=houseCost; houses++; houseCost=14+7*houses;}
+    W = Math.min(W0+houses*2, W + (houses*2+W0>W ? 1 : 0));
+    const tier = TIERS.filter(t=>xp>=t).length;
+    const spawns = 12+3*tier;
+    const cap = towers*5 + W*1;
+    const leak = Math.max(0, spawns-cap);
+    const deaths = Math.min(Math.max(W-1,0), Math.floor(leak/2));
+    W -= deaths;
+    base -= Math.max(0,(leak-deaths))*2;
+    A.xp.push(xp); A.threat.push(spawns); A.cap.push(cap); A.workers.push(W); A.base.push(Math.max(0,base));
+    if(base<=0 && !deadAt){ deadAt=night; break; }
+  }
+  const tier=TIERS.filter(t=>xp>=t).length;
+  const state = deadAt ? 'dead' : (tier<2 ? 'stall' : 'alive');
+  const chip = {dead:`<span class="chip dead">base fell — night ${deadAt}</span>`,
+    stall:`<span class="chip stall">starved it — tier ${tier} by night ${N}</span>`,
+    alive:`<span class="chip alive">thriving — tier ${tier}, base ${Math.max(0,Math.round(base))}</span>`}[state];
+  document.getElementById('verdict').innerHTML = `
+    <div class="tile"><div class="k">outcome</div><div class="v" style="font-size:15px;padding-top:6px">${chip}</div></div>
+    <div class="tile"><div class="k">xp banked</div><div class="v num">${Math.round(xp)}</div><div class="s">tier ${tier} of 4</div></div>
+    <div class="tile"><div class="k">towers built</div><div class="v num">${towers}</div><div class="s">kill cap ${towers*5+W}</div></div>
+    <div class="tile"><div class="k">village</div><div class="v num">${W}</div><div class="s">${houses} houses</div></div>`;
+  const c=S();
+  lineChart(document.getElementById('ch-xp'),{title:'XP — the greed line', sub:'dashes are skill-pick tiers; each crossed tier arms the night',
+    series:[{name:'xp',color:c.violet,data:A.xp}], xLabel:'night', yMax:Math.max(120,xp*1.15),
+    hlines:TIERS.map((t,i)=>({y:t,label:'tier '+(i+1)}))});
+  lineChart(document.getElementById('ch-fight'),{title:'Threat vs kill capacity', sub:'the night wins whenever orange clears blue',
+    series:[{name:'wave spawns',color:c.orange,data:A.threat},{name:'kill capacity',color:c.blue,data:A.cap}], xLabel:'night'});
+  lineChart(document.getElementById('ch-workers'),{title:'Workers', sub:'R1 pushing up, B1 leak pulling down',
+    series:[{name:'workers',color:c.aqua,data:A.workers}], xLabel:'night'});
+  lineChart(document.getElementById('ch-base'),{title:'Base HP', sub:'what the leak costs after the deaths',
+    series:[{name:'base hp',color:c.yellow,data:A.base}], xLabel:'night', yMax:105});
+}
+
+/* ─────────────── EXP·02 pipeline ─────────────── */
+function runPipe(){
+  const G=+document.getElementById('i-g').value, C=+document.getElementById('i-c').value, D=+document.getElementById('i-d').value;
+  document.getElementById('o-g').textContent=G;
+  document.getElementById('o-c').textContent=C;
+  document.getElementById('o-d').textContent=D+' px';
+  const supply = G/2.35;
+  const perCourier = 3/(2*D/52+4.5);
+  const cap = C*perCourier;
+  const need = Math.ceil(supply/perCourier);
+  const bound = cap>=supply ? 'chop' : 'haul';
+  document.getElementById('verdict2').innerHTML = `
+    <div class="tile"><div class="k">bottleneck</div><div class="v" style="font-size:18px">${bound==='chop'?'chopping':'hauling'}</div>
+      <div class="s">${bound==='chop'?'couriers idle '+Math.round((1-supply/cap)*100)+'% of the time':'pile grows '+(60*(supply-cap)).toFixed(1)+' /min'}</div></div>
+    <div class="tile"><div class="k">couriers needed</div><div class="v num">${need}</div><div class="s">to match ${G} gatherers here</div></div>
+    <div class="tile"><div class="k">per-trip time</div><div class="v num">${(2*D/52+4.5).toFixed(1)}s</div><div class="s">walk + pickup + deposit</div></div>`;
+  const c=S();
+  barPair(document.getElementById('ch-rates'),{title:'Supply vs haul capacity (units/min)',
+    sub:'chop rate against what the courier line can move',
+    a:{name:'chop supply',v:supply*60,color:c.orange}, b:{name:'haul capacity',v:cap*60,color:c.blue}});
+  const pile=[]; let p=0;
+  for(let t=0;t<=180;t+=6){ pile.push(p); p += Math.max(0,(supply-cap))*6; }
+  lineChart(document.getElementById('ch-pile'),{title:'Drops waiting on the ground', sub:'3 simulated minutes — flat is healthy, a ramp is a queue',
+    series:[{name:'waiting drops',color:c.aqua,data:pile}], xLabel:'×6s', yMax:Math.max(12,p*1.15)});
+}
+
+/* ─────────────── EXP·03 the handoff ─────────────── */
+function runHandoff(){
+  const inv  = +document.getElementById('i-inv').value/100;
+  const hand = +document.getElementById('i-hand').value/100;
+  const N    = +document.getElementById('i-days').value;
+  document.getElementById('o-inv').textContent=Math.round(inv*100)+'%';
+  document.getElementById('o-hand').textContent=Math.round(hand*100)+'%';
+  document.getElementById('o-days').textContent=N;
+
+  let handMult=1, handK=0;          // hand upgrades bought
+  let W=0, houses=0, fuelMult=1, fuelJ=0;
+  let handPool=0, autoPool=0;
+  const M=[], A=[], events=[];
+  let handoff=-1, dominance=-1;
+  const handRate = ()=>20*handMult;
+  const autoRate = ()=>W*12*fuelMult;
+  for(let day=1; day<=N; day++){
+    const m=handRate(), a=autoRate();
+    M.push(m); A.push(a);
+    if(handoff<0 && a>m){ handoff=day; events.push({d:day, t:'automation passes your hand', ms:true}); }
+    if(dominance<0 && a>2*m){ dominance=day; events.push({d:day, t:'village out-produces you 2:1 — you are a manager now', ms:true}); }
+    const budget=(m+a)*inv;
+    handPool += budget*hand;
+    autoPool += budget*(1-hand);
+    // hand upgrades: escalating 12·2^k
+    let hCost=12*Math.pow(2,handK);
+    while(handPool>=hCost){ handPool-=hCost; handMult*=1.4; handK++;
+      events.push({d:day, t:`hand upgrade ${['I','II','III','IV','V','VI','VII'][handK-1]||handK} — you now gather ${Math.round(handRate())}/day`});
+      hCost=12*Math.pow(2,handK); }
+    // auto side: greedy marginal chooser between house and worker-fuel
+    for(let guard=0; guard<12; guard++){
+      const houseCost=14+7*houses, fuelCost=17*Math.pow(2,fuelJ);
+      const houseGain=2*12*fuelMult;             // two workers at current fuel
+      const fuelGain=W*12*fuelMult*0.25;         // +25% on the existing crew
+      const houseEff=houseGain/houseCost, fuelEff=W>0 ? fuelGain/fuelCost : 0;
+      if(autoPool>=houseCost && (houseEff>=fuelEff || autoPool<fuelCost)){
+        autoPool-=houseCost; houses++; W+=2;
+        events.push({d:day, t:`house ${houses} — crew of ${W}`});
+      } else if(autoPool>=fuelCost && fuelEff>houseEff && W>0){
+        autoPool-=fuelCost; fuelMult*=1.25; fuelJ++;
+        events.push({d:day, t:`worker fuel ${['I','II','III','IV','V'][fuelJ-1]||fuelJ} — crew rate ×${fuelMult.toFixed(2)}`});
+      } else break;
+    }
+  }
+  const c=S();
+  const chipTxt = handoff<0
+    ? `<span class="chip stall">your hand never lost — automation starved</span>`
+    : `<span class="chip alive">handoff on day ${handoff}</span>`;
+  document.getElementById('verdict3').innerHTML = `
+    <div class="tile"><div class="k">the handoff</div><div class="v" style="font-size:15px;padding-top:6px">${chipTxt}</div></div>
+    <div class="tile"><div class="k">manager point</div><div class="v num">${dominance<0?'—':'day '+dominance}</div><div class="s">village at 2× your hand</div></div>
+    <div class="tile"><div class="k">end rates</div><div class="v num">${Math.round(handRate())} · ${Math.round(autoRate())}</div><div class="s">hand · village, units/day</div></div>
+    <div class="tile"><div class="k">bought</div><div class="v num">${handK}·${houses}·${fuelJ}</div><div class="s">hand upg · houses · fuel upg</div></div>`;
+  const vlines=[];
+  if(handoff>0) vlines.push({i:handoff-1,label:'handoff',color:c.violet});
+  if(dominance>0) vlines.push({i:dominance-1,label:'2×',color:c.faint});
+  lineChart(document.getElementById('ch-handoff'),{
+    title:'Your hand vs the village', sub:'linear hand, compounding village — the design question is which day they cross, and what it cost',
+    series:[{name:'your hand',color:c.orange,data:M},{name:'the village',color:c.aqua,data:A}],
+    xLabel:'day', vlines, tall:true});
+  const log = events.slice(0,28).map(e=>
+    `<li class="${e.ms?'milestone':''}"><span class="d">day ${e.d}</span><span>${e.t}</span></li>`).join('');
+  document.getElementById('events3').innerHTML =
+    `<h3>Transition map — every purchase and milestone</h3><ol>${log}</ol>`;
+}
+
+/* ─────────────── boot + live redraw ─────────────── */
+function drawAll(){ drawDiagram(); runGreed(); runPipe(); runHandoff(); }
+for(const id of ['i-feed','i-def','i-w0','i-n']) document.getElementById(id).addEventListener('input', runGreed);
+for(const id of ['i-g','i-c','i-d']) document.getElementById(id).addEventListener('input', runPipe);
+for(const id of ['i-inv','i-hand','i-days']) document.getElementById(id).addEventListener('input', runHandoff);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawAll);
+new MutationObserver(drawAll).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+drawAll();
+</script>
