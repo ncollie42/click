@@ -8,7 +8,7 @@ import {
   pressKey, releaseKey,
   beginCameraPan, endCameraPan, dragCameraTo, zoomCameraBy,
   offsetCamera, clampCamera,
-  togglePause, cancelBuildMode, closeUpgradeMenu, closeSkillTree
+  togglePause, cancelBuildMode, closeUpgradeMenu, openSkillTree, closeSkillTree
 } from "./game/simulation.js";
 import {placeCamera, groundFromEvent} from "./render/scene.js";
 import {modalOpen} from "./ui/hud.js";
@@ -73,6 +73,8 @@ function onKeyDown(event){
   // Escape is a dismiss chain, outermost thing first, and each link reports whether it consumed the
   // press: the skill tree covers the whole stage, so it goes before the panel underneath it.
   if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeSkillTree())return;if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
+  // K is the production skill-tree shortcut. It is unused elsewhere and all modals own it while open.
+  if(event.code==="KeyK"){if(!event.repeat&&!modalOpen()){event.preventDefault();openSkillTree();}return;}
   // The skill tree covers the whole stage, so panning under it would scroll a world nobody can see;
   // openSkillTree() already dropped the held keys and this stops new ones being taken. Escape above
   // is deliberately ahead of the guard, and the upgrade panel — which hides little — is untouched.

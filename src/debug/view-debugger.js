@@ -43,10 +43,10 @@ import {
   NIGHT_WAVE_RECIPES
 } from "../game/data.js";
 import {
-  TUNE, DBG, state,
+  TUNE, DBG, state, xp, xpTier, skillPoints,
   setCameraZoom, setCapacity, openSkillTree,
   // debug entry points (view panel > gameplay)
-  spawnEnemy, debugGrant, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
+  spawnEnemy, debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
   debugStartWave, debugClearEnemies, debugHealAll
 } from "../game/simulation.js";
 import {
@@ -220,6 +220,8 @@ function bindControls(){
   bindV("vBlueprintRecruiting", v => { DBG.blueprintRecruiting = v; });
   bindV("vIdleSeeksWork", v => { DBG.idleSeeksWork = v; });
   bindV("vRecruitRadius", v => { TUNE.recruitRadius = v; }, v => v + "px");
+  bindBtn("vGrantXp",      ()=>debugGrantXp(25));
+  bindBtn("vGrantXpBig",   ()=>debugGrantXp(100));
   bindBtn("vGrantAll",     ()=>debugGrant(RESOURCE_KINDS));
   bindBtn("vGrantDust",    ()=>debugGrant(["dust"]));
   bindBtn("vGrantCoin",    ()=>debugGrant(["coin"]));
@@ -247,10 +249,12 @@ function bindControls(){
   bindBtn("vOpenSkillTree", ()=>{ openSkillTree(); });
 }
 
+export function syncXpReadout(){$v("vXpReadout").textContent="xp "+xp()+" · tier "+xpTier()+" · "+skillPoints()+" points";}
 /** Push programmatic camera changes (orbit, wheel zoom) back into the sliders. */
 export function syncViewInputs(){
   $v("vYaw").value = Math.round(view.yaw);  $v("o_vYaw").textContent = Math.round(view.yaw)+"°";
   $v("vZoom").value = state.camera.zoom;    $v("o_vZoom").textContent = state.camera.zoom.toFixed(2);
+  syncXpReadout();
 }
 
 // ─────────────────────────────────────────────── visibility measurement

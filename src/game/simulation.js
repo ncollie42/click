@@ -5,13 +5,13 @@ import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
   GRID_COLS,
   FOOTPRINT_1x1,RESOURCE_FOOTPRINT,
-  RESOURCE_KINDS,
+  RESOURCE_KINDS,FEED_XP,XP_TIERS,
   HOUSE_SLOTS,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,BLUEPRINT_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
   ENEMY_TYPES,MAP_SIDE,MAP_SIDES,WAVE_FRONT_SECONDARY,
   ENEMY_POOL,
-  NIGHT_WAVE_SPAWNS,NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,
+  NIGHT_WAVE_SPAWNS,NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_TIER_BONUS_SPAWNS,NIGHT_WAVE_RECIPES,
   DAY_DURATION,NIGHT_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
   KING,STEADY_HAND_RATE
 } from "./data.js";
@@ -121,12 +121,13 @@ const state = {
   runMode:"normal",
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
+  xp:0,skillPoints:0,
   baseHp:100,baseMax:100,gameOver:false,paused:false,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed: total simulated seconds this run. It accumulates the same dt the phase countdown
   // spends, so it is game time, not wall time — it does not advance while paused or after a loss,
   // and a raised game speed makes it run as fast as the phases do.
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
-  nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
+  nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
   upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,showcaseFocus:null,buildStacks:{spikes:5,landmine:3,tar:3},
   // revealed: every node the player can SEE; selected: the subset taken, always a subset of it.
@@ -167,10 +168,12 @@ const DBG={
 function legitimateGlobalUpgradeOwned(id){return buildings.some(building=>building.complete&&building.type==="obelisk"&&building.upgrades[id]);}
 function globalUpgradeEnabled(id){return legitimateGlobalUpgradeOwned(id);}
 function oppositeMapSide(side){return side===MAP_SIDE.NORTH?MAP_SIDE.SOUTH:side===MAP_SIDE.SOUTH?MAP_SIDE.NORTH:side===MAP_SIDE.EAST?MAP_SIDE.WEST:MAP_SIDE.EAST;}
+function xpTier(){return XP_TIERS.reduce((tier,threshold)=>tier+(state.xp>=threshold),0);}
 function chooseUpcomingNight(){
   const wave=state.nightWave,choices=MAP_SIDES.filter(side=>!wave.lastSides.includes(side));
+  const recipes=NIGHT_WAVE_RECIPES.filter(recipe=>recipe.minTier<=xpTier());
   wave.upcomingSide=choices[(Math.random()*choices.length)|0];
-  wave.upcomingRecipe=NIGHT_WAVE_RECIPES[(Math.random()*NIGHT_WAVE_RECIPES.length)|0];
+  wave.upcomingRecipe=recipes[(Math.random()*recipes.length)|0];
 }
 chooseUpcomingNight();
 
@@ -266,18 +269,21 @@ function buildShowcaseFixtures(){
 }
 // First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
+function resetShowcaseEconomy(){state.xp=0;state.skillPoints=0;effects.phaseHudChanged();effects.skillTreeChanged();}
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
   if(initializedMode&&initializedMode!==mode)throw new Error("run mode already initialized as "+initializedMode);
   initializedMode=mode;state.runMode=mode;
   if(mode==="normal"){invariant(!damageDummies.length&&!showcaseProps.length,"normal mode contains showcase entities");validateSimulationInvariants();return;}
-  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.buildDockCategory=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
+  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.buildDockCategory=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
 }
-export function rebuildShowcase(){if(state.runMode!=="showcase")return false;buildShowcaseFixtures();return true;}
+export function rebuildShowcase(){if(state.runMode!=="showcase")return false;resetShowcaseEconomy();buildShowcaseFixtures();return true;}
 
 export function validateSimulationInvariants(){
   invariant(RUN_MODES.has(state.runMode),"invalid run mode "+state.runMode);
   invariant(Number.isFinite(state.baseHp)&&state.baseHp>=0&&state.baseHp<=state.baseMax,"illegal base health");
+  invariant(Number.isInteger(state.xp)&&state.xp>=0,"illegal xp");
+  invariant(Number.isInteger(state.skillPoints)&&state.skillPoints>=0,"illegal skill points");
   const collections=[trees,rocks,diamonds,resourceDrops,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles];
   for(const collection of collections)for(const item of collection)invariant(Number.isFinite(item.x)&&Number.isFinite(item.y),"non-finite entity coordinates");
   for(const enemy of state.enemies){
@@ -743,11 +749,25 @@ function dropToUpgrade(building){
 
 function upgradeButtonHit(building,x,y){const top=building.type==="obelisk"?building.y-66:building.y-48;return x>=building.x-30&&x<=building.x+30&&y>=top&&y<=building.y+38;}
 
-function dropToBase(){
-  let total=0;
-  for(const kind of RESOURCE_KINDS){const amount=state.carried[kind];state.stored[kind]+=amount;state.carried[kind]=0;total+=amount;handoffParticles(BASE.x,BASE.y,kind,amount);}
-  state.basePulse=1;toast("stored "+total+" resources at base");sound(520,.08);
+// The sole state.xp writer. It consumes one caller-owned resource-count record atomically.
+function feedBase(counts,particleFromX,particleFromY){
+  const previousTier=xpTier();let units=0,gained=0;
+  for(const kind of RESOURCE_KINDS){
+    const amount=counts[kind];units+=amount;gained+=FEED_XP[kind]*amount;counts[kind]=0;
+    handoffParticles(BASE.x,BASE.y,kind,amount,particleFromX,particleFromY);
+  }
+  if(gained<=0)return 0;
+  state.xp+=gained;state.basePulse=1;
+  toast("fed "+units+" — "+gained+" xp");sound(520,.08);
+  const crossed=xpTier()-previousTier;
+  for(let i=0;i<crossed;i++){
+    state.skillPoints++;
+    if(state.runMode!=="showcase"){toast("the thing stirs — skill point earned");sound(180,.25);}
+  }
+  effects.phaseHudChanged();
+  return gained;
 }
+function dropToBase(){feedBase(state.carried,state.mouse.x,state.mouse.y);}
 
 function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
 function completeBuilding(building){
@@ -943,8 +963,8 @@ function workerAttack(worker,enemy){
 function depositWorkerLoad(worker){
   // Hauling moves already-physical drops; harvesting itself can only call hitResource() and never reaches storage.
   const storage=worker.jobTarget;
-  for(const kind of RESOURCE_KINDS){const amount=worker.carried[kind];if(!amount)continue;if(storage===BASE)state.stored[kind]+=amount;else storage.storage[kind]+=amount;worker.carried[kind]=0;}
-  if(storage===BASE)state.basePulse=1;else storage.pulse=1;
+  if(storage===BASE)feedBase(worker.carried,worker.x,worker.y);
+  else{for(const kind of RESOURCE_KINDS){const amount=worker.carried[kind];if(!amount)continue;storage.storage[kind]+=amount;worker.carried[kind]=0;}storage.pulse=1;}
   worker.returning=false;burst(worker.postX,worker.postY,"#e5ce91",5);
 }
 function storageServiceRadius(storage){return storage===BASE?BASE_ZONE:BUILDING_TYPES[storage.type].serviceRadius;}
@@ -1250,11 +1270,14 @@ function transitionPhase(){
   if(clock.phase==="day"){
     const wave=state.nightWave;
     clock.phase="night";clock.remaining=NIGHT_DURATION;
-    wave.activeSide=wave.upcomingSide;wave.activeRecipe=wave.upcomingRecipe;wave.secondarySide=wave.activeRecipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;wave.lastSides=wave.secondarySide?[wave.activeSide,wave.secondarySide]:[wave.activeSide];wave.remainingSpawns=NIGHT_WAVE_SPAWNS;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/NIGHT_WAVE_SPAWNS;wave.nightNumber++;
-    chooseUpcomingNight();
+    // Tier is snapshotted at night setup: feeding mid-wave changes the next telegraphed night only.
+    const totalSpawns=NIGHT_WAVE_SPAWNS+xpTier()*NIGHT_TIER_BONUS_SPAWNS;
+    wave.activeSide=wave.upcomingSide;wave.activeRecipe=wave.upcomingRecipe;wave.secondarySide=wave.activeRecipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;wave.lastSides=wave.secondarySide?[wave.activeSide,wave.secondarySide]:[wave.activeSide];wave.totalSpawns=totalSpawns;wave.remainingSpawns=totalSpawns;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/totalSpawns;wave.nightNumber++;
   }else{
     clock.phase="day";clock.remaining=DAY_DURATION;clock.completedNights++;
     state.nightWave.activeSide=null;state.nightWave.secondarySide=null;state.nightWave.activeRecipe=null;state.nightWave.remainingSpawns=0;
+    // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
+    chooseUpcomingNight();
   }
 }
 function updateClock(dt){
@@ -1268,11 +1291,12 @@ function updateClock(dt){
 
 function updateNightEnemyWave(dt){
   if(state.clock.phase!=="night")return;
-  const wave=state.nightWave,interval=NIGHT_WAVE_WINDOW/NIGHT_WAVE_SPAWNS;
+  const wave=state.nightWave,interval=NIGHT_WAVE_WINDOW/wave.totalSpawns;
   wave.elapsed+=dt;
   // Scheduled thresholds, rather than random frame rolls, keep the quota stable across frame rates.
   while(wave.remainingSpawns>0&&wave.elapsed>=wave.nextSpawnAt&&state.enemies.length<NIGHT_ENEMY_CAP){
-    const spawn=wave.activeRecipe.spawns[NIGHT_WAVE_SPAWNS-wave.remainingSpawns],side=spawn[1]===WAVE_FRONT_SECONDARY?wave.secondarySide:wave.activeSide;
+    const index=(wave.totalSpawns-wave.remainingSpawns)%wave.activeRecipe.spawns.length;
+    const spawn=wave.activeRecipe.spawns[index],side=spawn[1]===WAVE_FRONT_SECONDARY?wave.secondarySide:wave.activeSide;
     spawnEnemy(side,spawn[0]);wave.remainingSpawns--;wave.nextSpawnAt+=interval;
   }
 }
@@ -1504,9 +1528,13 @@ function hoveredBuilding(){
 
 const DEBUG_GRANT=25;
 function debugGrant(kinds){
-  // A grant is an honest deposit into the base store, the same field dropToBase() writes.
+  // Storage grants remain the explicit builder/withdrawal fallback; feeding never writes this stock.
   for(const kind of kinds) state.stored[kind]+=DEBUG_GRANT;
   state.basePulse=1; toast("granted "+DEBUG_GRANT+" "+kinds.join(" + ")); sound(520,.08);
+}
+function debugGrantXp(amount){
+  if(!Number.isSafeInteger(amount)||amount<=0||!Number.isSafeInteger(state.xp+amount))return false;
+  const counts=resourceCounts();counts.wood=amount/FEED_XP.wood;feedBase(counts,BASE.x,BASE.y);return true;
 }
 /** Sweep anything already pending when free costs is switched on, so no blueprint or
  *  accepted upgrade can sit half-delivered under a toggle that says costs are free. */
@@ -1532,7 +1560,8 @@ function debugStartWave(id){
   wave.activeRecipe=recipe;
   wave.activeSide??=MAP_SIDES[(Math.random()*MAP_SIDES.length)|0];
   wave.secondarySide=recipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;
-  wave.remainingSpawns=NIGHT_WAVE_SPAWNS; wave.elapsed=0; wave.nextSpawnAt=0;
+  wave.totalSpawns=NIGHT_WAVE_SPAWNS+xpTier()*NIGHT_TIER_BONUS_SPAWNS;
+  wave.remainingSpawns=wave.totalSpawns; wave.elapsed=0; wave.nextSpawnAt=0;
   effects.phaseHudChanged(); toast("debug wave: "+recipe.id);
 }
 /** Debug removal, not a kill: no dust roll, no defeat toast — just the same status and
@@ -1656,15 +1685,15 @@ export function acceptUpgrade(){
 // ── the skill tree ──
 // THE only writer of the two id sets (state.skillTree.revealed / .selected); the `open` flag beside
 // them is written by openSkillTree() / closeSkillTree() below and by nothing else. Taking a node
-// reveals its immediate neighbours — ONE hop, either direction along an edge — and costs and grants
-// nothing. Refusals are silent no-ops, so a UI may call this on any click without pre-checking.
+// reveals its immediate neighbours — ONE hop, either direction along an edge — and spends one
+// skill point. Refusals are silent no-ops, so a UI may call this on any click without pre-checking.
 export function selectSkillNode(id){
   const tree=state.skillTree;
   if(!SKILL_NODES_BY_ID[id])return false;                          // not a node at all
-  if(!tree.revealed.has(id)||tree.selected.has(id))return false;   // hidden, or already taken
-  tree.selected.add(id);
+  if(!tree.revealed.has(id)||tree.selected.has(id)||state.skillPoints<=0)return false;
+  state.skillPoints--;tree.selected.add(id);
   for(const neighbour of SKILL_NEIGHBORS[id])tree.revealed.add(neighbour);
-  effects.skillTreeChanged();
+  effects.skillTreeChanged();effects.phaseHudChanged();
   return true;
 }
 /**
@@ -1708,6 +1737,10 @@ export function showcaseLabels(){return state.runMode==="showcase"?{revision:sho
 // a mark on screen can never disagree with the rule that produced it.
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** XP economy read-only peeks; state mutations remain inside feeding and skill commands. */
+function xp(){return state.xp;}
+function skillPoints(){return state.skillPoints;}
+function nextXpThreshold(){return XP_TIERS[xpTier()]??null;}
 /** What the held-action timer is currently filling, or null. Read-only peek. */
 export function heldChopTarget(){ return chopState.target; }
 /** Whether temporary blueprint recruitment has saved an assignment for this worker. */
@@ -1750,13 +1783,13 @@ export {
   workerOccupancyStatus, workerOccupancyAt, durablePostStatus, vacantDurablePosts,
   workerIsLoaned, workerCoatColor, workerLoad, carriedTotal, resourceIsActive, oppositeMapSide,
   // skill tree — read-only projections of the authored graph over this run's two id sets
-  skillTreeNodes, skillTreeEdges,
+  skillTreeNodes, skillTreeEdges, xp, skillPoints, xpTier, nextXpThreshold,
   // shared numeric helpers (defined here, so nothing restates them)
   clamp, distance, rand,
   // commands that are plain gameplay functions rather than input adapters
   togglePause, cancelBuildMode, clampCamera, stopGameplayInput, cancelHeldObject,
   spawnEnemy, transitionPhase,
   // debug commands (view panel > gameplay)
-  debugGrant, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
+  debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
   debugStartWave, debugClearEnemies, debugHealAll,
 };

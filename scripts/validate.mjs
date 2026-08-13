@@ -31,6 +31,10 @@ try{
     import(pathToFileURL(join(root,"src/game/showcase-data.js")))
   ]);
 
+  assert.deepEqual(data.FEED_XP,{wood:1,stone:1,dust:5,coin:5,diamond:12});
+  assert.deepEqual(Object.keys(data.FEED_XP),data.RESOURCE_KINDS);
+  assert.deepEqual(Object.fromEntries(data.NIGHT_WAVE_RECIPES.map(recipe=>[recipe.id,recipe.minTier])),{raiderRush:0,archerLine:0,healerEscort:1,brutePush:2,twoFront:2});
+  assert.equal(data.NIGHT_TIER_BONUS_SPAWNS,3);
   assert.equal(sim.state.runMode,"normal");
   assert.equal(sim.damageDummies.length,0);
   assert.equal(sim.showcaseProps.length,0);
@@ -114,6 +118,30 @@ try{
       }finally{Math.random=old;}
     `
   }).trim());
+  const xpResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+    cwd:root,encoding:"utf8",input:`
+      import assert from "node:assert/strict";
+      import * as sim from "./src/game/simulation.js";
+      import {BASE,FEED_XP,RESOURCE_KINDS,XP_TIERS} from "./src/game/data.js";
+      const counts=()=>Object.fromEntries(RESOURCE_KINDS.map(kind=>[kind,0]));
+      const worker=(load)=>({x:BASE.x,y:BASE.y,postX:BASE.x,postY:BASE.y,spawnSource:null,job:"haul",jobTarget:BASE,homePost:null,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...counts(),...load},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,reposting:false});
+      sim.initializeRunMode("normal");assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);assert.equal(sim.xpTier(),0);
+      sim.state.carried.wood=5;sim.setPointerWorld(BASE.x,BASE.y);sim.secondaryRelease();assert.equal(sim.xp(),5);assert.equal(sim.state.carried.wood,0);
+      const hauler=worker({diamond:1});sim.state.workers.push(hauler);sim.update(1/60);assert.equal(sim.xp(),5+FEED_XP.diamond);assert.equal(hauler.carried.diamond,0);
+      assert.equal(sim.debugGrantXp(0),false);assert.equal(sim.debugGrantXp(-1),false);assert.equal(sim.debugGrantXp(1.5),false);assert.equal(sim.debugGrantXp(Number.MAX_SAFE_INTEGER),false);assert.equal(sim.debugGrantXp(Number.MAX_SAFE_INTEGER+1),false);assert.equal(sim.xp(),17);
+      sim.debugGrantXp(39-sim.xp());assert.equal(sim.xp(),39);assert.equal(sim.skillPoints(),0);sim.debugGrantXp(66);assert.equal(sim.xp(),105);assert.equal(sim.skillPoints(),2);assert.equal(sim.xpTier(),2);
+      const first=sim.skillTreeNodes().find(node=>node.status==="available");assert.equal(sim.selectSkillNode(first.id),true);assert.equal(sim.skillPoints(),1);const second=sim.skillTreeNodes().find(node=>node.status==="available");assert.equal(sim.selectSkillNode(second.id),true);assert.equal(sim.skillPoints(),0);assert.equal(sim.selectSkillNode(sim.skillTreeNodes().find(node=>node.status==="available").id),false);
+      sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,sequence=[];assert.equal(wave.totalSpawns,18);sim.update(.01);sequence.push([sim.state.enemies[0].type,sim.state.enemies[0].spawnSide]);sim.state.enemies.length=0;sim.debugGrantXp(245);assert.equal(sim.xpTier(),4);assert.equal(wave.totalSpawns,18,"active wave must retain its setup tier");
+      for(let i=1;i<18;i++){sim.update(30/18+.001);assert.equal(sim.state.enemies.length,1);sequence.push([sim.state.enemies[0].type,sim.state.enemies[0].spawnSide]);sim.state.enemies.length=0;}assert.equal(wave.remainingSpawns,0);assert.deepEqual(sequence.slice(12),sequence.slice(0,6),"bonus spawns must cycle recipe types and fronts");
+      assert.deepEqual(XP_TIERS,[40,100,200,350]);sim.validateSimulationInvariants();console.log(JSON.stringify({checks:32,waveSpawns:18}));
+    `
+  }).trim());
+  const tierOneResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+    cwd:root,encoding:"utf8",input:`
+      import assert from "node:assert/strict";import * as sim from "./src/game/simulation.js";
+      sim.initializeRunMode("normal");sim.debugGrantXp(40);assert.equal(sim.xpTier(),1);sim.debugStartWave("healerEscort");assert.equal(sim.state.nightWave.totalSpawns,15);console.log(JSON.stringify({spawns:15}));
+    `
+  }).trim());
   const html=readFileSync(join(root,"index.html"),"utf8"),overlay=readFileSync(join(root,"src/render/overlay.js"),"utf8"),debuggerSource=readFileSync(join(root,"src/debug/view-debugger.js"),"utf8");
   assert.match(html,/id="vGroundSourcing" checked/);assert.match(html,/id="vBuilderSelfSupply" checked/);assert.match(html,/id="vBuilderRadius" min="60" max="400" step="10" value="300"/);assert.match(html,/id="vBlueprintRecruiting" checked/);assert.match(html,/id="vIdleSeeksWork" checked/);assert.match(html,/id="vRecruitRadius" min="100" max="500" step="20" value="200"/);assert.ok(debuggerSource.includes('bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });'));assert.ok(debuggerSource.includes('bindV("vBlueprintRecruiting", v => { DBG.blueprintRecruiting = v; });'));assert.ok(debuggerSource.includes('bindV("vIdleSeeksWork", v => { DBG.idleSeeksWork = v; });'));assert.ok(debuggerSource.includes('bindV("vRecruitRadius", v => { TUNE.recruitRadius = v; }, v => v + "px")'));assert.ok(overlay.includes("workerOccupancyStatus(target)"));assert.ok(overlay.includes("workerOccupancyAt(state.mouse.x,state.mouse.y)"));assert.ok(overlay.includes("drawWorkerSlots(target,height,status)"));assert.ok(overlay.includes("state.workers.length>0||!!heldWorker()"));assert.match(overlay,/hollow circles are vacancies/);assert.match(overlay,/! vacant/);assert.ok(overlay.includes("const BUILD_JOB_ACCENT=css(PAL.jobBuild)"));assert.ok(overlay.includes("workerIsLoaned(worker)"));assert.equal(overlay.includes("worker.homePost"),false);assert.ok(overlay.includes('hovered?.kind==="building"&&!hovered.object.complete'));assert.ok(overlay.includes('worker.job==="build"&&worker.jobTarget===site'));assert.equal(overlay.match(/if\(state\.runMode!=="normal"\)return/g)?.length,2);
 
@@ -128,16 +156,16 @@ try{
   assert.equal(sim.damageDummies.length,0);
   assert.equal(sim.showcaseProps.length,0);
 
-  // Production commands reveal the complete graph; every selected node must already be visible.
+  // XP tiers grant the finite skill-point budget; selections spend exactly that budget.
+  sim.debugGrantXp(data.XP_TIERS.at(-1));
+  assert.equal(sim.xpTier(),data.XP_TIERS.length);assert.equal(sim.skillPoints(),data.XP_TIERS.length);
   let selected=0;
-  while(selected<100){
-    const available=sim.skillTreeNodes().filter(node=>node.status==="available");
-    if(!available.length)break;
-    for(const node of available){assert.equal(sim.selectSkillNode(node.id),true);selected++;}
+  while(sim.skillPoints()>0){
+    const available=sim.skillTreeNodes().find(node=>node.status==="available");
+    assert.ok(available);assert.equal(sim.selectSkillNode(available.id),true);selected++;
   }
-  const skills=sim.skillTreeNodes();
-  assert.equal(skills.every(node=>node.status==="selected"),true);
-  assert.equal(selected,skills.length);
+  const remaining=sim.skillTreeNodes().find(node=>node.status==="available");
+  assert.equal(sim.selectSkillNode(remaining.id),false);assert.equal(selected,data.XP_TIERS.length);
   sim.validateSimulationInvariants();
 
   // A clean module process is required to test showcase because run mode is intentionally immutable.
@@ -154,8 +182,9 @@ try{
         const expected={buildings:authored.SHOWCASE_FIXTURE_COUNTS.buildings+authored.SHOWCASE_FIXTURE_COUNTS.towers+authored.SHOWCASE_FIXTURE_COUNTS.progress,dummies:authored.SHOWCASE_FIXTURE_COUNTS.dummies,props:authored.SHOWCASE_FIXTURE_COUNTS.props,enemies:authored.SHOWCASE_FIXTURE_COUNTS.enemies,workers:authored.SHOWCASE_FIXTURE_COUNTS.workers};
         const check=()=>{sim.validateSimulationInvariants();assert.equal(sim.buildings.length,expected.buildings);assert.equal(sim.damageDummies.length,expected.dummies);assert.equal(sim.showcaseProps.length,expected.props);assert.equal(sim.state.enemies.length,expected.enemies);assert.equal(sim.state.workers.length,expected.workers);assert.equal(sim.state.enemies.every(e=>e.displayUnit),true);assert.equal(sim.state.workers.every(w=>w.displayUnit),true);};
         check();
+        assert.equal(sim.debugGrantXp(105),true);assert.equal(sim.xp(),105);assert.equal(sim.skillPoints(),2);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);check();
         const firstRevision=sim.showcaseLabels().revision;
-        for(let i=0;i<20;i++){assert.equal(sim.rebuildShowcase(),true);check();}
+        for(let i=0;i<20;i++){sim.debugGrantXp(40);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);check();}
         assert.ok(sim.showcaseLabels().revision>firstRevision);
         const prop=sim.showcaseProps[0],origin={x:prop.x,y:prop.y};sim.setPointerWorld(prop.x,prop.y);sim.secondaryPress();assert.equal(sim.heldProp(),prop);sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();assert.equal(prop.x,origin.x);assert.equal(prop.y,origin.y);assert.equal(sim.showcaseProps.includes(prop),true);
         const shock=sim.buildings.find(b=>b.type==="tower"&&b.tower.variant==="shock"),shockOrigin={x:shock.x,y:shock.y};sim.setPointerWorld(shock.x,shock.y);sim.secondaryPress();assert.equal(sim.heldBuilding(),shock);sim.rebuildShowcase();assert.equal(sim.state.heldObject,null);assert.equal(shock.x,shockOrigin.x);assert.equal(shock.y,shockOrigin.y);check();
@@ -172,7 +201,7 @@ try{
     `
   }).trim());
 
-  console.log(`validate ok | syntax ${jsFiles.length} | feature ${featureResult.checks} checks | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills ${skills.length} | labels ${showcaseResult.labels}`);
+  console.log(`validate ok | syntax ${jsFiles.length} | feature ${featureResult.checks+xpResult.checks} checks | xp waves ${tierOneResult.spawns}/${xpResult.waveSpawns} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

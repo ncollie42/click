@@ -8,7 +8,7 @@ import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
 import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
 import {initInput} from "./input.js";
-import {initViewDebugger, syncViewInputs, tickVisibility, drainScans} from "./debug/view-debugger.js";
+import {initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, drainScans} from "./debug/view-debugger.js";
 import {initShowcaseUi, updateShowcaseUi} from "./ui/showcase.js";
 
 // The overlay canvas is the input surface, the 2D overlay and the raycast target all at once.
@@ -30,7 +30,9 @@ function resizeView(){
 // surface the HUD was handed), and input before the debugger (its window keydown must stay ahead of
 // the shift+digit handler). initSkillTree() only binds listeners to markup that is always there,
 // so its position is free; it sits with the other adapters.
-connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS});
+connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS,
+  phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();}
+});
 // ── Mode-selection data flow ──
 // Browser URL is read only here. The simulation receives one initialization command and remains
 // independent of window/location; absent or unknown values preserve the normal default lifecycle.

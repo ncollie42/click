@@ -218,6 +218,13 @@
           <h4>economy</h4>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vFreeCosts"><span>free costs</span></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vUnlimitedCharges"><span>unlimited charges</span></label>
+          <div class="row"><span>feeding</span><span id="vXpReadout">xp 0 · tier 0 · 0 points</span></div>
+          <div class="btnrow">
+            <button id="vGrantXp" type="button">+25 xp</button>
+            <button id="vGrantXpBig" type="button">+100 xp</button>
+          </div>
+          <p class="hint">debug xp passes through the real grant path — thresholds,
+          points and next-night scaling all react as if fed.</p>
           <div class="btnrow">
             <button id="vGrantAll" type="button">+25 all</button>
             <button id="vGrantDust" type="button">+25 dust</button>
@@ -279,8 +286,8 @@
           <div class="btnrow">
             <button id="vOpenSkillTree" type="button">open skill tree</button>
           </div>
-          <p class="hint">temporary: the skill screen has no production trigger
-          yet. it suppresses world input without pausing, cancels placement and
+          <p class="hint">the hud point badge or k opens this same screen. it
+          suppresses world input without pausing, cancels placement and
           closes the upgrade panel on the way in, and takes nothing away on the
           way out — esc or continue closes it.</p>
         </section>
@@ -291,10 +298,14 @@
     <!-- Empty showcase roots: src/ui/showcase.js exclusively owns their children and listeners. -->
     <section id="showcasePanel" hidden aria-label="showcase controls"></section>
     <div id="showcaseLabels" hidden aria-hidden="true"></div>
+    <section id="xpHud" aria-label="experience progress">
+      <div id="xpBar"><i id="xpBarFill"></i><span id="xpBarLabel">0 / 40 xp · 40 needed</span></div>
+    </section>
     <section id="phaseHud">
       <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
       <div id="phaseProgress"><i id="phaseProgressFill"></i></div>
       <div id="runTimeRow"><span>run time</span><span id="runTime">0:00</span></div>
+      <div id="xpRow"><span id="xpReadout">xp 0 → 40</span><button id="skillPointBadge" type="button" hidden aria-label="open skill tree"><span id="skillPointCount">0</span> ✦</button></div>
       <div id="forecastLabel">next attack</div>
       <div id="forecastSides"></div>
       <div id="forecastRemaining"></div>
@@ -317,7 +328,7 @@
          either: it is there so a press on the panel's own background can focus the panel
          instead of dropping focus to <body>, from where Shift-Tab walks the document backwards. -->
     <section id="skillTreePanel" class="hidden" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="skillTreeTitle">
-      <h2 id="skillTreeTitle">skill tree</h2>
+      <header id="skillTreeHeader"><h2 id="skillTreeTitle">skill tree</h2><p id="skillTreePoints">0 points remaining</p></header>
       <div id="skillTreeViewport">
         <div id="skillTreeGraph">
           <svg id="skillTreeLinks" aria-hidden="true"></svg>
@@ -330,7 +341,7 @@
   </main>
 </div>
 <script type="importmap">
-{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}
+{"imports":{"three":"./vendor/three.module.js"}}
 </script>
 <script type="module" src="./src/main.js"></script>
 </body>

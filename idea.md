@@ -204,6 +204,17 @@ Manually clicking fog becomes annoying. There is currently no reason not to clic
 - A human explorer could eventually reveal territory.
 - We also need other ways to expand or clear fog.
 
+**Candidate answer (2026-08-13): fog is a resource — you mine it.**
+
+Fog cells are hard nodes, chipped at exactly like trees and rocks: hold-click to break, workers assignable to it, same interaction vocabulary everywhere.
+
+- **Early game it is too tough to break** — a fog cell takes so many hits that clearing one by hand is not worth the clicks. That kills the "no reason not to click everywhere" problem: the gate is cost, not a rule. The existing `hardness` upgrade ("mine tougher resources") is already the key that opens it.
+- **Same automation flow as everything else:** assign workers to a path or frontier post and they grind the fog for you; worker upgrades speed it up. Exploration climbs the exact cut→carry→feed automation ladder instead of needing its own system.
+- **Mining fog should yield something** — dust is the natural drop (the fog is the thing's breath, violet = it). Clearing frontier literally pays, and dust finally gets a faucet to match its sinks.
+- Fits the theme loop: the glow pushes fog back passively (deferred glow-radius idea), mining is the active version — the village chews the dark faster than the light grows.
+
+Open: does fog regrow at night? Regrowth would make frontier posts a holding action and pair well with hunger-scaled nights.
+
 ## Deferred: Glow Radius Stage-Up
 
 **Tags:** `Game Feel / Juice`, `Immersion`
@@ -302,6 +313,41 @@ Related open question: once camps auto-refill and blueprints recruit, does dropp
 - Decide when the player gets opportunities to select skills.
 - Possible timings: elapsed-time milestones, boss defeats, upgrade completions, exploration milestones, or after a run ends.
 - Decide whether choices are permanent, reversible, or reset each run.
+
+## Building and Tower Visual Overhaul
+
+**Tags:** `Immersion`, `Game Feel / Juice`
+
+Bring every building and tower up to the key-art style while keeping what already charms (the current stone keep stays — it moves next to the pit rather than being replaced). Shared style rules live in `docs/asset-prompts.md`: one reusable style block + per-asset prompts, so every generation matches the set.
+
+- Palette rule enforced per asset: violet/cyan only on precursor elements; villager builds stay timber/plaster/stone.
+- Tower families carry the fiction: Starter/Ballistics pure carpentry; Elemental/Special = one salvaged violet device mounted on the plain chassis.
+- First three: main base (keep + hole), house, basic tower chassis. Backlog listed in the prompts file.
+
+## Sharing: GitHub Pages
+
+**Tags:** `Retention`
+
+The game is a pure static site (~370 KB gzipped total, no backend, no build step) and the repo already lives at `github.com/ncollie42/click`. three.js is vendored at `vendor/three.module.js` so the build has zero external dependencies.
+
+**Setup (one-time):** repo Settings → Pages → Deploy from a branch → `main` / `(root)`. The game then serves at `https://ncollie42.github.io/click/`, and the Machinations bench at `.../click/docs/greed-dial.html`. Every push to main redeploys automatically.
+
+**Later considerations:** itch.io upload when it is time for real playtest feedback (that is where the genre's audience is); decide whether shared builds keep the view-debugger panel (leaving it in = free QA); a `?debug` query flag is the cheap middle ground.
+
+## Kanban Agent for Idea Flow
+
+**Tags:** `Retention` (of ideas, not players)
+
+This file is a good capture net but a bad workflow: ideas pile up with no state — nothing marks what is proposed vs decided vs in-progress vs shipped vs discarded, and nothing resurfaces stale entries.
+
+**Idea:** a recurring agent run that treats `idea.md` as a kanban backlog:
+
+- Parse sections into cards; infer state from the existing markers (`Decided`, `Deferred`, `TODO`, `Open`, `committed`).
+- Cross-check against git log to auto-move cards: an idea whose feature landed gets marked shipped with the commit hash.
+- Surface the 3 oldest untouched ideas each run — revisit, promote, or explicitly discard ("Revisit periodically" is this file's own header, currently done by nobody).
+- Output either a reorganized idea.md (states as sections) or a small `docs/board.html` artifact next to the Machinations bench.
+
+Could run as a scheduled Claude routine or just be a manual `/board` skill invoked at the start of a session. Start manual; automate only if the manual version proves worth reading.
 
 ## Stats and Pacing
 

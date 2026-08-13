@@ -34,17 +34,17 @@
 // src/render/overlay.js (2D context and backing store) and src/render/scene.js (client rect).
 // ═══════════════════════════════════════════════════════════════════════════
 import {
-  NIGHT_WAVE_RECIPES,
+  NIGHT_WAVE_RECIPES,XP_TIERS,
   DAY_DURATION,NIGHT_DURATION
 } from "../game/data.js";
 import {
   DBG, state,
   // commands — the only writes this file can make into the world
   toggleBuildMode, setBuildDockCategory,
-  closeUpgradeMenu, selectUpgrade, acceptUpgrade,
+  closeUpgradeMenu, selectUpgrade, acceptUpgrade, openSkillTree,
   // queries — pure reads
   hoverTarget, costText, upgradeList, nextHouseCost,
-  oppositeMapSide, clamp
+  xp, skillPoints, nextXpThreshold, oppositeMapSide, clamp
 } from "../game/simulation.js";
 
 // The pointer surface (<canvas id="overlay">) — handed in by main.js at init. The HUD touches
@@ -118,6 +118,13 @@ export function syncPhaseHud(){
   const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber;
   setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"));
   setText("runTime",formatDuration(clock.elapsed));
+  const currentXp=xp(),next=nextXpThreshold(),points=skillPoints(),badge=document.getElementById("skillPointBadge");
+  const previous=next?(XP_TIERS[XP_TIERS.indexOf(next)-1]||0):XP_TIERS.at(-1);
+  const xpProgress=next?clamp((currentXp-previous)/(next-previous),0,1):1;
+  setText("xpReadout",next?"xp "+currentXp+" → "+next:"xp "+currentXp);
+  setText("xpBarLabel",next?currentXp+" / "+next+" xp · "+(next-currentXp)+" needed":currentXp+" xp · max tier");
+  document.getElementById("xpBarFill").style.width=(100*xpProgress).toFixed(2)+"%";
+  setText("skillPointCount",String(points));badge.hidden=points===0;
   panel.classList.toggle("night",!isDay);
   document.getElementById("phaseProgressFill").style.width=(100*clamp((duration-clock.remaining)/duration,0,1)).toFixed(2)+"%";
   setText("forecastLabel",isDay?"next attack":"current wave");setText("forecastRemaining",isDay?"":wave.remainingSpawns+" scheduled spawns remaining");
@@ -176,6 +183,9 @@ export function initHud(pointerSurface){
   const buildDock=document.getElementById("buildDock"),stage=document.getElementById("stage");
   new ResizeObserver(()=>stage.style.setProperty("--build-dock-clearance",buildDock.offsetHeight+"px")).observe(buildDock);
   document.querySelectorAll("button.build").forEach(button=>button.addEventListener("click",()=>toggleBuildMode(button.dataset.kind)));
+
+  // production skill-tree entry; command owns modal/input semantics.
+  document.getElementById("skillPointBadge").addEventListener("click",openSkillTree);
 
   // game over
   document.getElementById("restart").addEventListener("click", ()=>location.reload());

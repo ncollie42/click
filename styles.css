@@ -12,14 +12,22 @@
   /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, toast 8, viewPanel 9,
      skill tree 10, game-over 11. The skill tree is a full-stage overlay, so it covers every panel
      above; only the end card, which ends the run outright, may cover it. */
+  #xpHud{position:absolute;z-index:3;left:50%;top:10px;transform:translateX(-50%);width:min(520px,calc(100% - 540px));min-width:260px;padding:4px;background:#292119ed;border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
+  #xpBar{position:relative;height:16px;overflow:hidden;background:#17120d;border:1px solid #0008}
+  #xpBarFill{display:block;width:0;height:100%;background:linear-gradient(90deg,#8e3f35,var(--gold));transition:width .18s ease-out}
+  #xpBarLabel{position:absolute;inset:0;display:grid;place-items:center;color:#fff1d3;font-size:9px;font-weight:bold;text-shadow:1px 1px #17120d}
   #phaseHud{position:absolute;z-index:3;right:10px;top:10px;width:245px;padding:8px 9px;background:#292119ed;color:var(--paper);border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
   #phaseHud.night{background:#17213aed;border-color:#c65b4d;color:#dce9ff}
   #phaseHeader{display:flex;justify-content:space-between;font-size:13px}
   #phaseProgress{height:5px;margin:6px 0;background:#17120d;border:1px solid #0008}
   #phaseProgressFill{display:block;height:100%;background:var(--gold)}
   #phaseHud.night #phaseProgressFill{background:#c65b4d}
-  #runTimeRow{display:flex;justify-content:space-between;font-size:9px;opacity:.72;margin-bottom:5px}
+  #runTimeRow{display:flex;justify-content:space-between;font-size:9px;opacity:.72;margin-bottom:3px}
   #runTime{font-variant-numeric:tabular-nums}
+  #xpRow{display:flex;align-items:center;justify-content:space-between;min-height:20px;margin-bottom:4px;font-size:10px;font-weight:bold;pointer-events:auto}
+  #skillPointBadge{width:auto;margin:0;padding:2px 6px;background:#6d333a;color:#fff1d3;border:1px solid #d8a441;animation:skillPointPulse 1.2s ease-in-out infinite}
+  #skillPointBadge[hidden]{display:none}
+  @keyframes skillPointPulse{50%{filter:brightness(1.45);transform:scale(1.06)}}
   #forecastLabel{font-size:9px;opacity:.72;margin-bottom:3px}
   #forecastSides{font-weight:bold;margin-bottom:4px}
   #forecastRemaining{font-size:9px;color:#d98b75;margin-bottom:3px}
@@ -74,6 +82,7 @@
   #gameOver p{margin-bottom:12px}
   #restart{background:var(--ink);color:var(--paper);text-align:center;padding:9px}
   @container game-frame (max-width:799px){
+    #xpHud{left:6px;top:6px;transform:none;width:calc(50% - 9px);min-width:0}
     #phaseHud{right:6px;top:6px;width:50%;padding:5px 6px;font-size:10px}
     #phaseHeader{font-size:11px}#phaseProgress{margin:4px 0}
     #runTimeRow,#forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
@@ -162,9 +171,11 @@
   #skillTreePanel{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
     color:#f0ddb8;background:radial-gradient(108% 80% at 50% 40%,#43210edb,#180d06 74%),#130904fa}
   #skillTreePanel.hidden{display:none}
-  #skillTreeTitle{flex:0 0 auto;width:fit-content;margin:16px auto 0;padding:0 26px 6px;
+  #skillTreeHeader{flex:0 0 auto;text-align:center}
+  #skillTreeTitle{width:fit-content;margin:16px auto 0;padding:0 26px 6px;
     font-size:23px;letter-spacing:.05em;text-align:center;color:#fdf2d8;
     border-bottom:3px solid var(--gold);filter:drop-shadow(0 1px 7px #e8ac3f99)}
+  #skillTreePoints{margin:5px 0 0;color:#d7b779;font-size:11px}
   /* min-height:0 lets the middle band shrink instead of pushing the bar off-stage. */
   #skillTreeViewport{flex:1;min-height:0;display:flex;container-type:size}
   /* THE one scale: min() is a contain fit of the authored box (--graph-ratio is all skill-tree.js
@@ -192,14 +203,15 @@
   /* Hover and keyboard focus share one answer, and the taken tile is excluded from both, so a tile
      that lights up under the cursor is always one that can still be taken. The focus-visible
      outline further down is what separates the keyboard from the pointer. */
-  #skillTreePanel .skill-node:not(.selected):hover,
-  #skillTreePanel .skill-node:not(.selected):focus-visible{
+  #skillTreePanel .skill-node:not(.selected):not(.unaffordable):hover,
+  #skillTreePanel .skill-node:not(.selected):not(.unaffordable):focus-visible{
     background:linear-gradient(#87424b,#6d333a);border-color:#d29a67;color:#fff1d3;
     box-shadow:inset 0 1px 0 #ffffff26,0 0 9px -2px #eda93a80}
   /* Taken tiles keep full contrast (they are the reward), but stop offering a pointer: the click
      is refused from here on — this is the tile carrying aria-disabled, see the note in
      src/ui/skill-tree.js. Tight blur, no spread: the halo stops before it reaches the connectors
      leaving the tile or the glyph on the tile beside it. */
+  #skillTreePanel .skill-node.unaffordable{cursor:default;filter:saturate(.25);opacity:.48}
   #skillTreePanel .skill-node.selected{cursor:default;
     background:radial-gradient(120% 120% at 50% 28%,#1a1210,#0e0a08);
     border-color:#f0c264;color:#fff6e0;

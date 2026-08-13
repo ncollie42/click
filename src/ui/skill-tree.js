@@ -4,7 +4,7 @@ import {
   // commands — the only writes this file can make into the world
   selectSkillNode, closeSkillTree,
   // queries — pure reads
-  skillTreeNodes, skillTreeEdges
+  skillTreeNodes, skillTreeEdges, skillPoints
 } from "../game/simulation.js";
 import {syncModalUi} from "./hud.js";
 
@@ -35,7 +35,8 @@ const shownNodes=new Set(),shownEdges=new Set();
 const edgeKey=edge=>edge.a<edge.b?edge.a+"|"+edge.b:edge.b+"|"+edge.a;
 
 function renderSkillTree(){
-  const nodes=skillTreeNodes(),box=graphBounds(nodes),visible=new Map();
+  const nodes=skillTreeNodes(),box=graphBounds(nodes),visible=new Map(),points=skillPoints();
+  document.getElementById("skillTreePoints").textContent=points+" point"+(points===1?"":"s")+" remaining";
   // Preserve focus by node ID across whole-layer replacement.
   const focusedId=document.activeElement?.closest(".skill-node")?.dataset.nodeId;
   for(const node of nodes)if(node.status!=="hidden")visible.set(node.id,node);
@@ -76,8 +77,10 @@ function renderSkillTree(){
     // Taking a node is one-way and unrepeatable, so it is neither a toggle (aria-pressed) nor the
     // current item of a set (aria-current): aria-disabled is the true one, and unlike the `disabled`
     // property it leaves the tile reachable, so the name below can still be read back.
-    if(taken)tile.setAttribute("aria-disabled","true");
-    tile.title=node.name;tile.setAttribute("aria-label",node.name+(taken?" · taken":""));
+    const inert=taken||points===0;
+    if(inert)tile.setAttribute("aria-disabled","true");
+    if(!taken&&points===0)tile.classList.add("unaffordable");
+    tile.title=node.name;tile.setAttribute("aria-label",node.name+(taken?" · taken":points===0?" · no skill points":""));
     // aria-hidden so a screen reader reads the name above rather than spelling the glyph out.
     const glyph=document.createElement("span");glyph.className="skill-glyph";glyph.textContent=node.icon;glyph.setAttribute("aria-hidden","true");
     tile.appendChild(glyph);tiles.push(tile);
@@ -123,9 +126,8 @@ export function initSkillTree(pointerSurface){
   surface = pointerSurface;
   document.getElementById("skillTreeNodes").addEventListener("click",event=>{
     const tile=event.target.closest(".skill-node");
-    // Unconditional: selectSkillNode() refuses a taken id silently, which is the same answer the
-    // aria-disabled tile gives, so the two can never disagree about what a click does.
-    if(tile)selectSkillNode(tile.dataset.nodeId);
+    // Simulation remains authoritative; aria-disabled makes the zero-point refusal honest visually.
+    if(tile&&!tile.matches('[aria-disabled="true"]'))selectSkillNode(tile.dataset.nodeId);
   });
   document.getElementById("skillTreeContinue").addEventListener("click",()=>{closeSkillTree();});
   panel().addEventListener("keydown",onPanelKeydown);

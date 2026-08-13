@@ -48,6 +48,10 @@ BASE.footprint=FOOTPRINT_3x3;
 // upgrade costs) is keyed by these names, and iteration order here is the order
 // costs, tallies and grants are read in.
 export const RESOURCE_KINDS=["wood","stone","dust","coin","diamond"];
+// Feeding values are read only by simulation.js; no runtime path may assign into this table.
+export const FEED_XP={wood:1,stone:1,dust:5,coin:5,diamond:12};
+// Tier thresholds are read only by simulation.js; no runtime path may assign into this array.
+export const XP_TIERS=[40,100,200,350];
 
 // ── houses and workers ──────────────────────────────────────────────────────
 export const HOUSE_SLOTS=2,HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
@@ -112,13 +116,15 @@ export const MAP_SIDE={NORTH:"north",EAST:"east",SOUTH:"south",WEST:"west"},MAP_
 export const WAVE_FRONT_SECONDARY="secondary";
 export const ENEMY_POOL=["raider","raider","archer","healer","brute"];
 export const NIGHT_WAVE_SPAWNS=12,NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
-// Authored order/composition changes tactical shape without deriving stats from night number.
+// Per-tier bonus spawns are read only by simulation.js; no runtime path may assign into this value.
+export const NIGHT_TIER_BONUS_SPAWNS=3;
+// Authored order/composition shapes the forecast; simulation.js alone reads minTier, and no runtime path may assign it.
 export const NIGHT_WAVE_RECIPES=[
-  {id:"raiderRush",spawns:[["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
-  {id:"archerLine",spawns:[["raider","primary"],["archer","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"]]},
-  {id:"healerEscort",spawns:[["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
-  {id:"brutePush",spawns:[["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"]]},
-  {id:"twoFront",spawns:[["raider","primary"],["raider","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"],["brute","primary"],["brute","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"]]}
+  {id:"raiderRush",minTier:0,spawns:[["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
+  {id:"archerLine",minTier:0,spawns:[["raider","primary"],["archer","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"]]},
+  {id:"healerEscort",minTier:1,spawns:[["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
+  {id:"brutePush",minTier:2,spawns:[["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"]]},
+  {id:"twoFront",minTier:2,spawns:[["raider","primary"],["raider","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"],["brute","primary"],["brute","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"]]}
 ];
 
 // ── day / night pacing ──────────────────────────────────────────────────────
