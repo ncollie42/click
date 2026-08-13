@@ -1,40 +1,5 @@
-// Owns: raw browser input — pointer, wheel, keyboard, blur/cancel — and the screen-to-world
-// conversion that turns an event into a simulation command. Owns no gameplay state and no DOM UI.
-// ═══════════════════════════════════════════════════════════════════════════
-// INPUT ADAPTER
-// Every listener here ends in either a simulation COMMAND or a camera placement call. Nothing in
-// this file draws, and nothing in it reads or writes a HUD element.
-//
-// Ownership / data flow
-//   Reads:    `state` from src/game/simulation.js, read-only, for the three facts a handler needs
-//             before it can decide: whether a camera pan is in progress, whether the run is
-//             over / paused, and whether the skill-tree screen is up. It never assigns into it.
-//   Writes:   only through simulation commands (setPointerWorld, setPointerOutside, primaryPress,
-//             primaryRelease, secondaryPress, secondaryRelease, pointerCancelled, windowBlurred,
-//             pressKey, releaseKey, beginCameraPan, endCameraPan, dragCameraTo, zoomCameraBy,
-//             offsetCamera, clampCamera, togglePause, cancelBuildMode, closeUpgradeMenu,
-//             closeSkillTree) and through src/render/scene.js's placeCamera(), which re-derives
-//             the camera from the simulation's camera state. There is no third way out of here.
-//   Asks:     modalOpen() from src/ui/hud.js — a pointer-down must not reach gameplay while a modal
-//             owns input. That is the ONLY guard for the upgrade panel, which leaves most of the
-//             canvas exposed; the skill tree also covers the surface, so its presses never arrive
-//             here at all. The HUD is the lower module of the two, so this is a plain import and
-//             the dependency runs input -> hud and never back.
-//             HOOKS.cameraChanged() — injected by main.js. The view debugger's yaw/zoom sliders
-//             mirror the camera, so a programmatic camera change (wheel zoom) has to push back into
-//             them. Injected rather than imported so this file never learns a debugger exists.
-//
-// ── Pointer data flow ──
-// Written by: the handlers below, through setPointerWorld()/setPointerOutside().
-// Read by:    the simulation's update() (collection, drop delivery) and the scene (hover feedback).
-// Format:     world-space simulation pixels, produced by scene.js's groundFromEvent(), which
-//             raycasts the ground plane — the 3D equivalent of the old inverse camera transform,
-//             correct at any pitch/yaw.
-//
-// The pointer surface (<canvas id="overlay">) is handed in by main.js rather than looked up here,
-// so the element keeps its documented three owners: main.js (listeners, classes and focus),
-// src/render/overlay.js (2D context and backing store), src/render/scene.js (client rect).
-// ═══════════════════════════════════════════════════════════════════════════
+// Owns raw browser input and converts pointer events to world-space simulation commands.
+// Reads simulation state only for input guards; camera/debug synchronization leaves through HOOKS.
 import {
   state,
   // commands — player intent
@@ -117,8 +82,7 @@ function onKeyDown(event){
 function onKeyUp(event){ releaseKey(event.code); }
 
 // ── registration ────────────────────────────────────────────────────────────
-// Every listener this adapter owns, in one auditable list, in the order the single-file build
-// registered them. Called once, by main.js, after initHud() (the pointer-down guard needs the HUD)
+// Every listener this adapter owns, in registration order. Called once by main.js after initHud()
 // and before the view debugger (whose shift+digit handler must stay the later keydown listener).
 export function initInput(pointerSurface, hooks={}){
   surface = pointerSurface;

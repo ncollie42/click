@@ -1,29 +1,5 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// PLACEMENT GRID MATH
-// The pure lattice helpers, and nothing else. Every function here is a total,
-// side-effect-free map over numbers and footprint records: no state reads, no
-// mutation, no allocation the caller does not receive back.
-//
-// Ownership / data flow
-//   Owns:       coordinate conversion, snapping, footprint cell bounds / cell
-//               lists / world rectangles, the world-bounds test, and footprint
-//               lookup by building type.
-//   Does NOT own: occupancy (which cells are taken), the build margin test, or
-//               the placement verdict. canPlace() composes those out of these
-//               helpers and the live world arrays, and stays in the simulation.
-//   Imports:    definitions from data.js only (CELL / GRID_ORIGIN_* / W / H /
-//               the footprint records / BUILDING_TYPES). data.js imports
-//               nothing, so this pair can never form a cycle, and neither
-//               module touches `document`, `window`, THREE or run state.
-//   Read by:    simulation.js — the seeder, canPlace() and the commit path — and
-//               the Three.js preview/selector layer in main.js, which must derive
-//               every pad and preview rectangle from footprintWorldRect() rather
-//               than restate a size.
-//
-// Units: cell coords (cx,cy) are integers; world coords are simulation pixels,
-// the same space as W/H, BASE, the mouse and every building x/y.
-// worldToCell and cellToWorld are exact inverses when applied to a cell center.
-// ═══════════════════════════════════════════════════════════════════════════
+// Owns pure placement-lattice math over data.js. Occupancy and placement policy remain in simulation.js.
+// Cell coordinates are integers; world coordinates are simulation pixels.
 
 import {CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,W,H,FOOTPRINT_1x1,BUILDING_TYPES} from "./data.js";
 

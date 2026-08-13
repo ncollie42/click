@@ -143,6 +143,27 @@ const ENEMY_LOOK = {
   healer:{body:PAL.healer, cap:PAL.healerCap, r:.29, len:.40},
   brute: {body:PAL.brute, cap:PAL.bruteCap, r:.34, len:.54},
 };
+export function makeDamageDummy(){
+  const g=new THREE.Group();
+  const post=meshOf(new THREE.CylinderGeometry(.18,.24,1.45,8),flat(PAL.timber));post.position.y=.72;
+  const target=meshOf(new THREE.CylinderGeometry(.72,.72,.18,12),flat(PAL.plasterLit));target.rotation.x=Math.PI/2;target.position.y=1.35;
+  const bull=meshOf(new THREE.CylinderGeometry(.32,.32,.2,12),flat(PAL.bad));bull.rotation.x=Math.PI/2;bull.position.set(0,1.35,.03);
+  const base=meshOf(new THREE.BoxGeometry(1.15,.16,.75),flat(PAL.masonryDark));base.position.y=.08;
+  g.add(post,target,bull,base);g.userData={target,bull};return g;
+}
+
+export function makeShowcaseProp(model){
+  const g=new THREE.Group();
+  if(model==="barrel"){
+    const body=meshOf(new THREE.CylinderGeometry(.48,.54,.95,10),flat(PAL.timber));body.position.y=.5;
+    for(const y of [.18,.82]){const band=meshOf(new THREE.TorusGeometry(.51,.055,4,10),flat(PAL.metal));band.rotation.x=Math.PI/2;band.position.y=y;g.add(band);}g.add(body);
+  }else{
+    const box=meshOf(new THREE.BoxGeometry(1,1,1),flat(PAL.wood));box.position.y=.5;
+    const brace=meshOf(new THREE.BoxGeometry(1.08,.12,.12),flat(PAL.timberDark));brace.position.set(0,.5,.51);brace.rotation.z=Math.PI/4;g.add(box,brace);
+  }
+  return g;
+}
+
 export function makeEnemy(type){
   const g = new THREE.Group();
   const L = ENEMY_LOOK[type] || ENEMY_LOOK.raider;

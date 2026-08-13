@@ -18,7 +18,7 @@ Each run seeds 80 trees, 24 stone nodes, and 5 diamond deposits onto distinct ce
 
 ## Placement Grid
 
-Everything that is *placed* lands on one shared square lattice. The simulation owns it (`CELL`, `GRID_ORIGIN_X/Y`, `GRID_COLS/GRID_ROWS` near the top of the script); rendering only consumes it.
+Everything that is *placed* lands on one shared square lattice. `src/game/data.js` owns its dimensions, `src/game/grid.js` owns pure lattice math, and simulation/render consumers share those definitions.
 
 - **Cell size is 32 simulation pixels.** The same unit as world width/height, base position, mouse position, and every building `x`/`y`. The world is 1536x1024, so the lattice addresses 49x33 cells.
 - **The anchor is the centre cell.** A building's stored `x`/`y` is always a cell *centre*, never a corner. The origin is deliberately shifted back by half a cell so centres land on exact multiples of 32, which puts the base (768, 512) on a centre and makes it a valid alignment reference.
@@ -46,6 +46,7 @@ Everything that is *placed* lands on one shared square lattice. The simulation o
 | Tree | 1x1 | Blocks only while standing |
 | Stone node | 1x1 | Blocks only while not depleted |
 | Diamond deposit | 1x1 | Blocks only while not depleted |
+| Showcase props | Authored odd footprint | Showcase-only; validated with the same placement rules |
 
 The base is never placed by the player, but it reserves ground exactly like a building: a 3x3 footprint on its own cell centre, tested by the same occupancy rule and drawn with the same pad. There is no keep-out circle and no dirt clearing under it — the cells immediately outside its 3x3 are buildable.
 
@@ -69,6 +70,10 @@ Footprint occupancy answers one question only: *which cells does this object res
 ### What stays continuous
 
 The grid governs *placement only*. Workers, enemies, the player cursor, loose resource drops, projectiles, and all movement remain free-floating in continuous world pixels. There is no pathfinding, no tile-based movement, no rotation, and no persistence of the grid between runs — `seedWorld()` simply re-rolls node anchors onto fresh unique cells each run.
+
+## Showcase Validation
+
+`?mode=showcase` installs an authored, inert gallery alongside production tower combat and damage dummies. Its fixture manifest validates registry coverage, IDs, sections, footprints, margins, and overlap at import. Run `node scripts/validate.mjs` for deterministic normal/showcase stress, fixture rebuild/reset checks, and complete skill-graph reveal.
 
 ## Building Categories
 

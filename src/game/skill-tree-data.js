@@ -1,51 +1,5 @@
-// Owns: the authored skill graph — node records, the undirected edge list, and the integrity rules
-// they must satisfy. Leaf module — imports nothing, and owns no run state.
-// ═══════════════════════════════════════════════════════════════════════════
-// AUTHORED SKILL TREE
-// THE single source for the skill graph's SHAPE: every node's stable id, its
-// placeholder name and glyph, its authored graph coordinates, and the edges
-// that connect them. Nothing here knows what a skill DOES — nodes carry no cost,
-// no stat and no effect, on purpose, so the graph can be re-authored freely
-// without touching a single gameplay rule.
-//
-// Ownership / data flow
-//   Written by: nobody. Every value is authored, frozen, and may only change by
-//               editing this file. No debug flag, no view panel binding and no
-//               simulation path may assign into these records — the same rule
-//               data.js states, restated here because this module is its sibling.
-//   Read by:    simulation.js, which owns WHICH nodes a run has revealed or
-//               selected (state.skillTree) and never writes back into the graph,
-//               and — through the simulation's queries only — the UI layer.
-//   Imports:    none, deliberately. This module must stay a leaf so nothing can
-//               create an import cycle through it. It never touches `document`,
-//               `window`, THREE, the canvas, or any mutable run state.
-//
-// Anything a run can CHANGE deliberately does not live here: revealed/selected
-// membership is run state and belongs to simulation.js, exactly like resources
-// and buildings do. This file only ever answers "what does the tree look like".
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ── node records ────────────────────────────────────────────────────────────
-// Format: {id,name,icon,x,y}, plus `root:true` on exactly ONE node.
-//   id     stable and unique; the UI, the run state sets and any later save data
-//          all key off it, so an id is never reused for a different node.
-//   name   the short display string, placeholder for now — the same field the
-//          building / upgrade / tower tables in data.js carry.
-//   icon   one glyph, the same convention UPGRADES / TOWER_VARIANTS use.
-//   x,y    authored GRAPH coordinates — not world pixels and not screen pixels.
-//          The root sits at the origin, +x runs right, +y runs OUTWARD (deeper),
-//          and a depth is 1.5 units down. Whoever draws the tree scales and pans
-//          them, so retuning the layout can never move a building, a tower or
-//          anything else measured in simulation pixels. The set is authored to an
-//          exactly 2:1 bounding box, with the root centred across it and sitting
-//          on the TOP edge (y:0 is minY). The drawer scales that box UNIFORMLY
-//          into the graph band, which runs about 2.2:1 on a narrow frame and
-//          tends toward 16:9 on a wide one. The contain fit turns over at a band
-//          ratio of 1.78, so at every size the frame reaches the box fits to the
-//          band's HEIGHT and the spare width shows as even margins down both
-//          sides; a squarer box would leave more of them empty.
-// Naming: <branch><depth><sibling>. The digit is the authored hop count from the
-// root, which is also the reveal depth — handy while the names are placeholders.
+// Owns the frozen authored skill graph and validates it at import.
+// Coordinates are graph units, not world pixels; runtime reveal/selection belongs to simulation.js.
 const NODES=[
   {id:"root",name:"origin",icon:"✦",x:0,y:0,root:true},
   // depth 1 — the three branches that leave the root, thrown wide apart
@@ -68,16 +22,7 @@ const NODES=[
   {id:"beta4",name:"beta apex",icon:"☆",x:1,y:6.2}         // the deepest row, and the bottom edge
 ];
 
-// ── edges ───────────────────────────────────────────────────────────────────
-// Authored SEPARATELY from the nodes so no node encodes its own topology: one
-// list to read when the shape is in question, and adding a link never means
-// editing two records that could then disagree.
-// UNDIRECTED: {a,b} and {b,a} name the same edge and only one of them is ever
-// written. Reveal walks an edge in both directions (see SKILL_NEIGHBORS below),
-// so "nearby" always means the same thing from either end.
-// The graph is a graph, not a tree: alpha2b—beta2 is a cross-link between two
-// depth-2 nodes on different branches, which is exactly the case that would
-// break a parent/child model.
+// Undirected edges are authored separately; alpha2b—beta2 intentionally makes this a graph.
 const EDGES=[
   {a:"root",b:"alpha1"},{a:"root",b:"beta1"},{a:"root",b:"gamma1"},
   {a:"alpha1",b:"alpha2a"},{a:"alpha1",b:"alpha2b"},
@@ -91,23 +36,7 @@ const EDGES=[
   {a:"beta3",b:"beta4"}
 ];
 
-/**
- * Graph integrity, as a PURE function over any {nodes,edges} pair — it reads no
- * module state, so the real graph and a hand-made broken one are checked by the
- * identical code. Returns a (possibly empty) array of problem strings rather
- * than throwing, so the gate below can report all of them at once. Not exported:
- * that gate is the only caller, and the rest of the repo sees only the result.
- *
- * The five rules, each of which would silently break reveal:
- *   * every node has a unique, non-empty string id      (lookups must be single)
- *   * exactly one node with a usable id is flagged root (the one starting point)
- *   * both endpoints of every edge name a real node     (no dangling neighbour)
- *   * no self-edge and no duplicate edge                (a node is not its own
- *                                                        neighbour; a link is
- *                                                        authored exactly once)
- *   * every node is reachable from the root             (reveal only ever walks
- *                                                        outward along edges)
- */
+// Validate IDs, root, edge integrity, and reachability before exporting authored data.
 function validateSkillTree(graph){
   const problems=[],nodes=graph?.nodes||[],edges=graph?.edges||[],ids=new Set(),near=new Map();
   for(const node of nodes){
@@ -127,9 +56,6 @@ function validateSkillTree(graph){
     if(seen.has(key)){problems.push("duplicate edge: "+key);continue;}
     seen.add(key);near.get(a).push(b);near.get(b).push(a);
   }
-  // Reachability, over the edges that survived the rules above. Reveal starts at the root and only
-  // ever steps along an edge, so a node no chain reaches can never be shown — an island, or a root
-  // whose own edges were deleted, is a graph that imports clean and then never grows.
   if(roots.length===1){
     const reached=new Set([roots[0].id]);
     for(let frontier=[roots[0].id];frontier.length;){
@@ -142,30 +68,17 @@ function validateSkillTree(graph){
   return problems;
 }
 
-// Init-time gate: an authored mistake fails the import, loudly, instead of shipping a graph the
-// reveal walk cannot use — a dangling neighbour, two starting points, or a branch nothing reaches.
 const PROBLEMS=validateSkillTree({nodes:NODES,edges:EDGES});
 if(PROBLEMS.length)throw new Error("skill-tree-data.js: "+PROBLEMS.join("; "));
 
-// ── the frozen exports ──────────────────────────────────────────────────────
-// Everything below is deep-frozen: the arrays reject push/splice and the records
-// reject assignment (modules are strict mode, so a write THROWS rather than
-// passing silently). The read-only contract is therefore enforced here, not just
-// documented, and the simulation's projections hand out copies on top of that.
 export const SKILL_NODES=Object.freeze(NODES.map(node=>Object.freeze({...node})));
 export const SKILL_EDGES=Object.freeze(EDGES.map(edge=>Object.freeze({...edge})));
-/** The one node a fresh run starts on, derived from the flag validate() just proved is single. */
 export const SKILL_TREE_ROOT_ID=SKILL_NODES.find(node=>node.root).id;
-// Both lookups below are null-prototype: an id that is not a node reads as `undefined` and NOT as
-// something inherited from Object.prototype, so a caller testing `SKILL_NODES_BY_ID[id]` can never
-// be fooled by "constructor" or "__proto__" into treating a string as a node.
+// Null-prototype lookups make arbitrary IDs read undefined rather than inherited properties.
 const byId=Object.create(null),neighbours=Object.create(null);
 for(const node of SKILL_NODES){
   byId[node.id]=node;
   neighbours[node.id]=Object.freeze(SKILL_EDGES.filter(edge=>edge.a===node.id||edge.b===node.id).map(edge=>edge.a===node.id?edge.b:edge.a));
 }
-/** id -> node record. THE lookup; nothing else may scan SKILL_NODES to resolve an id. */
 export const SKILL_NODES_BY_ID=Object.freeze(byId);
-/** id -> its immediate neighbours, both directions of every edge folded in. THE adjacency
- *  answer, so reveal never re-derives "nearby" from coordinates or from an edge's direction. */
 export const SKILL_NEIGHBORS=Object.freeze(neighbours);

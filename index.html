@@ -1,38 +1,4 @@
-<!--
-  Wooddrop — markup only. Everything below is structure the modules under src/
-  find by id; no behaviour lives in this file and there is no inline script.
-
-  Module layout (loaded by <script type="module" src="./src/main.js"> at the
-  bottom; "three" comes from the importmap beside it):
-    src/game/data.js        authored, immutable definitions — a leaf module
-    src/game/grid.js        pure placement-lattice math
-    src/game/skill-tree-data.js
-                            the authored skill graph — a second leaf module
-    src/game/simulation.js  the sole owner of mutable gameplay state; DOM-free
-                            and three.js-free. Commands in, queries out.
-    src/render/palette.js -> models.js -> scene.js -> overlay.js
-                            the presentation layer, read-only over the sim.
-                            #scene is the WebGL canvas, #overlay the 2D one
-                            stacked above it.
-    src/ui/hud.js           build dock, phase panel, prompt, toast, upgrade
-                            modal, pause badge, game-over card
-    src/ui/skill-tree.js    the #skillTreePanel overlay: connector svg, node
-                            tiles, open/closed class. Read-only over the sim.
-    src/input.js            pointer / wheel / keyboard, on #overlay and window
-    src/debug/view-debugger.js
-                            the #viewPanel side panel: tabs, controls, scan
-    src/main.js             composition + the animation loop
-
-  The simulation is deliberately 2D. Game (x, y) maps to world (x/16, 0, y/16)
-  in the render layer, so targeting, ranges and hit tests never learn about the
-  camera — only draw code does.
-
-  Placement runs on one 32px square grid (search "Placement grid" / "footprint").
-  Anything PLACED — buildings, deployables, resource nodes — is anchored on a cell
-  centre and reserves an odd-sized footprint of whole cells; canPlace() is the only
-  occupancy authority. Everything that MOVES — workers, enemies, drops, the cursor —
-  stays continuous. Service radius, attack range and effect radius stay circular.
--->
+<!-- Wooddrop markup only. Runtime ownership and execution order are documented in src/main.js. -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -310,6 +276,9 @@
       </div>
       <button id="vRestart" type="button">restart run</button>
     </section>
+    <!-- Empty showcase roots: src/ui/showcase.js exclusively owns their children and listeners. -->
+    <section id="showcasePanel" hidden aria-label="showcase controls"></section>
+    <div id="showcaseLabels" hidden aria-hidden="true"></div>
     <section id="phaseHud">
       <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
       <div id="phaseProgress"><i id="phaseProgressFill"></i></div>

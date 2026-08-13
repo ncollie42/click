@@ -28,6 +28,7 @@ import {PAL, css, DROP_COLOR, TOWER_TOP} from "./palette.js";
 import {
   S,WU,HU,gx,gz, flat, meshOf, isOutline, disposeGroup, FLOOR_TOP,
   makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeWorker, makeCorpse,
+  makeDamageDummy, makeShowcaseProp,
   makeBase, makeKing, makeBuilding, makeBlueprint, handMeshFor
 } from "./models.js";
 import {
@@ -45,10 +46,10 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, resourceDrops, buildings, workerCorpses, particles,
+  trees, rocks, diamonds, resourceDrops, buildings, damageDummies, showcaseProps, workerCorpses, particles,
   badgeAction, hoveredBuilding,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
-  heldWorker, heldBuilding, workerCoatColor, workerLoad,
+  heldWorker, heldBuilding, heldProp, workerCoatColor, workerLoad,
   clamp, distance
 } from "../game/simulation.js";
 
@@ -77,6 +78,7 @@ export const VIEW_TUNE = {
 };
 
 function workerToolKind(worker){
+  if(worker.displayUnit)return worker.displayTool;
   if(worker.job==="harvest")return worker.jobTarget?.kind;
   if(worker.job==="staff")return BUILDING_TYPES[worker.jobTarget?.type]?.resource;
   if(worker.job==="build")return "build";
@@ -335,6 +337,18 @@ const syncDrops = makeLayer(e=>makeDrop(e.kind), (g,r)=>{
   g.scale.setScalar(1);
   const fading = r.ttl!==null && r.ttl<2 && Math.floor(r.ttl*7)%2===0;
   g.userData.body.visible = !fading;
+});
+// ── Showcase render consumption flow ──
+// Written by simulation.js's fixture/damage/held-object commands; iterated read-only here.
+// Pools own meshes and dispose them as fixture resets replace live object identities.
+const syncDummies = makeLayer(makeDamageDummy,(g,d)=>{
+  setXZ(g,d,d.defeatedTimer>0?.08:0);g.rotation.z=d.defeatedTimer>0?Math.PI/2:0;g.scale.y=view.heightScale/100;
+  g.userData.target.material.emissive.setHex(d.flash?PAL.hurtGlow:0x000000);
+});
+const syncShowcaseProps = makeLayer(p=>makeShowcaseProp(p.model),(g,p)=>{
+  const held=p===heldProp()&&state.mouse.inside;
+  if(held)g.position.set(gx(state.mouse.x),2.2+Math.sin(performance.now()/200)*.14,gz(state.mouse.y));else setXZ(g,p);
+  g.rotation.z=held?Math.sin(performance.now()/140)*.1:0;g.scale.y=view.heightScale/100;
 });
 const syncEnemies = makeLayer(e=>makeEnemy(e.type), (g,e)=>{
   const def = ENEMY_TYPES[e.type], s = def.size;
@@ -1245,6 +1259,11 @@ function drawZones(){
       else  ring(m.x,m.y,WORKER_LEASH,css(PAL.bad),.7);
       ring(m.x, m.y, 16, a?css(PAL.ok):css(PAL.bad), .8);
     } else {
+      const prop=heldProp();
+      if(prop){
+        const a=snapToCellCenter(m.x,m.y),ok=canPlace(a.x,a.y,null,null,prop);
+        showFootprint(null,a.x,a.y,ok);showSelector(cellWorldRect(a.x,a.y),{color:css(ok?PAL.cellOk:PAL.cellBad),opacity:.9,pulse:indicatorPulse(t)});
+      }
       const b = heldBuilding();
       if(b){
         const a = snapToCellCenter(m.x, m.y), ok = canPlace(a.x, a.y, b.type, b);
@@ -1290,6 +1309,7 @@ export function drawScene(){
   syncTrees(trees); syncRocks(rocks); syncDiamonds(diamonds);
   syncDrops(resourceDrops); syncCorpses(workerCorpses);
   syncEnemies(state.enemies); syncWorkers(state.workers);
+  syncDummies(damageDummies);syncShowcaseProps(showcaseProps);
   syncBuildings(); syncParticles(); syncHand();
 
   const basePulse = 1 + state.basePulse*.1;
@@ -1337,6 +1357,8 @@ export function scanSubjects(){
   for(const d of resourceDrops) out.push([d,.3]);
   for(const w of state.workers) out.push([w,.8]);
   for(const e of state.enemies) out.push([e,.8]);
+  for(const d of damageDummies) out.push([d,1.2]);
+  for(const p of showcaseProps) out.push([p,.8]);
   for(const b of buildings)     out.push([b,1.0]);
   return out;
 }

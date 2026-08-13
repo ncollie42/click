@@ -1,29 +1,5 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// AUTHORED GAME DATA
-// THE single source for every immutable definition the game is authored from:
-// world dimensions, the placement lattice, footprints, resource kinds, building
-// and upgrade tables, tower variants, enemy stats, wave recipes, and the pacing
-// constants that are never written at runtime.
-//
-// Ownership / data flow
-//   Written by: nobody. Every value here is authored, read-only at runtime, and
-//               may only change by editing this file. No debug flag, no view
-//               panel binding and no simulation path may assign into these
-//               tables (see the DBG rule in simulation.js, which restates the same
-//               contract from the consumer side).
-//   Read by:    grid.js (lattice + footprints only), simulation.js (everything
-//               gameplay), and main.js (the render / UI layer). Both consumers
-//               only ever read.
-//   Imports:    none, deliberately. This module must stay a leaf so nothing can
-//               create an import cycle through it. It never touches `document`,
-//               `window`, THREE, the canvas, or any mutable run state.
-//
-// Anything that IS written at runtime deliberately does NOT live here: mutable
-// run state (`state`, the entity arrays), the world seeding constants next to
-// seedWorld(), and the debug-tunable feel constants the view panel reassigns
-// all stay in simulation.js (TUNE) and main.js (VIEW_TUNE), because a `const`
-// re-exported from here could not be reassigned by its readers.
-// ═══════════════════════════════════════════════════════════════════════════
+// Owns immutable gameplay definitions. DOM-free leaf read by simulation, grid, render, and showcase data.
+// Mutable run/debug values remain with their owning simulation or render modules.
 
 // ── frame and world dimensions ──────────────────────────────────────────────
 export const VIEW_W=960,VIEW_H=540;          // Fixed 16:9 logical frame; CSS scales both axes together.
@@ -150,9 +126,7 @@ export const KING={range:95,damage:2,rate:.85};
 
 // ── player feel ─────────────────────────────────────────────────────────────
 // Only the constants the view debugger can NEVER write live here. The tunable
-// siblings are fields of a mutable holder in whichever module READS them,
-// because the view panel reassigns them at runtime and an imported binding
-// cannot be reassigned by its importer: TUNE in simulation.js (chopTime,
-// vacuumRadius, suckRate, chopYield, clickDamage, gameSpeed) and VIEW_TUNE in
-// main.js (handArc, showVacuumRing, shotSpeed, shotArc, shotSize).
+// siblings are fields of mutable holders in the modules that read them:
+// TUNE in simulation.js and VIEW_TUNE in render/scene.js. The debugger mutates
+// holder fields because imported bindings cannot be reassigned.
 export const STEADY_HAND_RATE=1.8;  // the "steady hand" upgrade's fill multiplier

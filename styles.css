@@ -1,4 +1,4 @@
-/* styles.css — owns all wooddrop presentation; extracted verbatim from the index.html style block. */
+/* Owns all Wooddrop presentation. */
   :root{
     --ink:#292119; --paper:#f1dfb7; --red:#a94634; --gold:#d29a39;
     --shadow:3px 3px 0 #17120d99;
@@ -82,6 +82,22 @@
     .cost,.purpose{font-size:9px}#buildTabs{width:min(440px,100%);padding:2px}.dock-tab{padding:4px;font-size:10px}
     #upgradePanel{max-height:calc(100% - 12px)}
   }
+
+  /* ── showcase-only DOM ────────────────────────────────────────────── */
+  #showcasePanel{position:absolute;z-index:7;right:8px;top:8px;width:220px;padding:7px;background:#162c30ed;color:#e9dfbd;border:2px solid #70d8d1;box-shadow:var(--shadow)}
+  #showcasePanel[hidden],#showcaseLabels[hidden],#phaseHud[hidden],#buildDock[hidden]{display:none}
+  #showcasePanel h2{font-size:13px;margin-bottom:5px;color:#9ee9df}
+  #showcasePanel nav{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+  #showcasePanel button{margin:0;padding:4px;font-size:10px;text-align:center;background:#29474a;color:#f1dfb7;border-color:#598987}
+  #showcasePanel button:hover{background:#386064;border-color:#9ee9df}
+  #showcasePanel button:focus-visible,#showcasePanel a:focus-visible{outline:2px solid #f4ce70;outline-offset:2px}
+  #showcasePanel .showcase-actions{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-top:5px}
+  #showcasePanel .showcase-actions a{grid-column:1/-1;padding:4px;text-align:center;color:#9ee9df}
+  #showcasePanel .showcase-readout{display:block;margin-top:5px;padding:4px;background:#0b1b1d;font-size:9px;min-height:27px}
+  #showcaseLabels{position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden}
+  #showcaseLabels span{position:absolute;transform:translate(-50%,-100%);padding:2px 4px;white-space:nowrap;background:#17120dcc;color:#f1dfb7;border:1px solid #70d8d188;font-size:8px;text-shadow:1px 1px #000}
+  @container game-frame (max-width:799px){#showcasePanel{width:190px;max-height:46%;overflow:auto}#showcasePanel nav{grid-template-columns:1fr 1fr}#showcaseLabels span{font-size:7px}}
+  @container game-frame (max-width:459px){.showcase-active #showcasePanel{right:4px;top:auto;bottom:4px;width:calc(100% - 8px);max-height:38%}.showcase-active #viewPanel{left:4px;top:4px;max-height:55%}}
 
   /* ── 3D layers ───────────────────────────────────────────────────── */
   #scene,#overlay{position:absolute;inset:0;width:100%;height:100%;display:block}

@@ -28,7 +28,7 @@ import {
   NIGHT_TELEGRAPH_TIME
 } from "../game/data.js";
 import {
-  state, trees, rocks, diamonds, buildings,
+  state, trees, rocks, diamonds, buildings, damageDummies,
   badgeAction, chopProgress, heldChopTarget, primaryHeld,
   buildingCost, towerUpgradeList, carriedTotal, oppositeMapSide, clamp
 } from "../game/simulation.js";
@@ -131,6 +131,8 @@ export function drawOverlay(){
     const s = ENEMY_TYPES[e.type].size;
     marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e.hp/e.max, "#c65343"));
   }
+  // Simulation-owned dummies reuse neutral health bars; they never enter enemy identity/reward UI.
+  for(const d of damageDummies)marks(d.x,d.y,42,48,rowsFor(d.hp/d.max,"#d6c36d"));
   for(const w of state.workers)
     if(w.hp<WORKER_HP) bar(w.x,w.y,30,w.hp/WORKER_HP,40,null,css(PAL.hpGood));
   if(state.baseHp<state.baseMax) bar(BASE.x,BASE.y,84,state.baseHp/state.baseMax,90,null,css(PAL.bad));

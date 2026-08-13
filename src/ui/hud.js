@@ -19,7 +19,7 @@
 //                            (consumer end): every hook is a pure sink. It may read simulation
 //                            state, it must never write it, and it must not call back into a
 //                            command. They run synchronously inside commands and inside update(),
-//                            in the exact order the old inline DOM calls ran.
+//                            synchronously in simulation command/update order.
 //             modalOpen()  — the one host predicate both the simulation and the scene ask for. It
 //                            answers for either modal (see the block below); nothing keeps a copy.
 //             syncModalUi() — repaint that predicate onto #game, for the other modal's adapter.
@@ -28,7 +28,7 @@
 // Imported by: src/main.js (composition), src/input.js (modalOpen, for the pointer-down guard),
 // src/ui/skill-tree.js (syncModalUi, when its panel opens or closes) and
 // src/debug/view-debugger.js (syncBuildHud, after it flips DBG.unlimitedCharges). Nothing is
-// imported back from any of them — the HUD is the lowest of the four browser adapters, so the
+// imported back from any of them — the HUD is the lowest browser adapter, so the
 // pointer surface it needs for the build cursor is HANDED IN by main.js rather than looked up here.
 // That keeps <canvas id="overlay"> at its documented three owners: main.js (listeners, classes and focus),
 // src/render/overlay.js (2D context and backing store) and src/render/scene.js (client rect).

@@ -1,37 +1,5 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// SIMULATION
-// THE single owner of every mutable gameplay value in the game: the run state
-// object, the entity collections, world seeding, construction, resources,
-// workers, enemies, towers, waves, upgrades and update(dt). Nothing outside
-// this module may declare gameplay state, and nothing outside it may write the
-// state it exports.
-//
-// Ownership / data flow
-//   Owns (writes):  state, trees, rocks, diamonds, resourceDrops, buildings,
-//                   workerCorpses, particles, chopState, TUNE, DBG.
-//   Reads:          authored values from ./data.js, lattice math from ./grid.js,
-//                   and the frozen skill graph from ./skill-tree-data.js. None
-//                   of the three is ever mutated here (see the DBG rule); the
-//                   graph in particular is shape only — this module owns the
-//                   run's revealed/selected sets over it, never the nodes.
-//   Exposes:        commands (player intent -> state change) and queries
-//                   (pure reads for render / UI). The exported collections are
-//                   LIVE references, handed out read-only by contract: a
-//                   consumer may iterate and project them, never splice, push
-//                   or assign into them. Every mutation has a command here.
-//   Never touches:  document, window, localStorage, THREE, the canvas,
-//                   requestAnimationFrame or any DOM lookup. Player-visible
-//                   feedback leaves through the injected `effects` boundary
-//                   below, never through a DOM call.
-//
-// Consumer contract (restated at the other end in src/main.js):
-//   * main.js drives this module: it maps pointer/keyboard events onto the
-//     commands, calls update(dt) TUNE.gameSpeed times per frame, then draws
-//     from the queries. It must not reach past a command to mutate state.
-//   * update(dt) advances exactly one whole simulation step. Raising game speed
-//     runs more steps; it never stretches dt (a 3x dt would let enemies skip
-//     past melee range).
-// ═══════════════════════════════════════════════════════════════════════════
+// Owns all mutable gameplay and showcase state. Commands mutate it; render/UI queries only read it.
+// update() dispatches to explicit normal/showcase pipelines; browser effects leave through connect().
 
 import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
@@ -53,6 +21,8 @@ import {
 } from "./grid.js";
 // The authored skill graph: shape only. This module owns state.skillTree over it, never the nodes.
 import {SKILL_NODES,SKILL_EDGES,SKILL_TREE_ROOT_ID,SKILL_NODES_BY_ID,SKILL_NEIGHBORS} from "./skill-tree-data.js";
+// Authored showcase coordinates are immutable input; all live fixture objects remain owned here.
+import {SHOWCASE_MANIFEST} from "./showcase-data.js";
 
 // ── runtime-tunable gameplay constants ──────────────────────────────────────
 // The view debugger REASSIGNS these while the game runs. An imported binding is
@@ -61,7 +31,7 @@ import {SKILL_NODES,SKILL_EDGES,SKILL_TREE_ROOT_ID,SKILL_NODES_BY_ID,SKILL_NEIGH
 // ONE exported mutable holder: the debugger writes TUNE.chopTime and every
 // reader in here sees the new value on its next read, with no rebinding anywhere.
 //
-// Written by: src/main.js's bindV() calls in the view panel, and nothing else.
+// Written by: src/debug/view-debugger.js bindings, and nothing else.
 // Read by:    this module only (the presentational siblings — hand arc, vacuum
 //             ring visibility, shot speed/arc/size — stay in the render layer as
 //             VIEW_TUNE, because the simulation never reads them). The one
@@ -90,7 +60,7 @@ export const TUNE = {
 // command exported below.
 // Invariant (consumer end, restated in main.js): the adapter's implementations
 // are called SYNCHRONOUSLY from inside commands and update(), in the exact
-// order the old inline DOM calls ran, so feedback ordering is unchanged.
+// command/update order, so feedback ordering is deterministic.
 const NO_EFFECTS = {
   toast(){},                 // (message) player-facing notification line
   sound(){},                 // (freq, duration) one blip
@@ -128,6 +98,15 @@ const rocks = [];
 const diamonds = [];
 const resourceDrops = [];
 const buildings = [];
+// ── Showcase resource ownership flow ──
+// Written by: initializeRunMode()/rebuildShowcase() create and reset live sandbox fixtures.
+// Read by:    combat below and the read-only render/UI consumers.
+// Format:     dummies carry production-compatible combat status; props carry grid positions/footprints.
+// Lifetime:   showcase initialization until rebuild or page reload; absent from normal mode.
+const damageDummies = [];
+const showcaseProps = [];
+const showcaseLabelRecords=[];
+let showcaseRevision=0;
 // ── Worker corpse ownership flow ──
 // Written by: killWorker() creates one immutable visual snapshot per final death.
 // Read by:    draw() only; corpses never enter interaction, placement, targeting, or update systems.
@@ -136,6 +115,7 @@ const buildings = [];
 const workerCorpses = [];
 const particles = [];
 const state = {
+  runMode:"normal",
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
   baseHp:100,baseMax:100,gameOver:false,paused:false,dayEnemyTimer:DAY_ENEMY_SPAWN.min,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
@@ -145,7 +125,7 @@ const state = {
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
   nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
-  upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,buildStacks:{spikes:5,landmine:3,tar:3},
+  upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,showcaseFocus:null,buildStacks:{spikes:5,landmine:3,tar:3},
   // revealed: every node the player can SEE; selected: the subset taken, always a subset of it.
   // Two id sets over the frozen graph, written only by selectSkillNode() and read only by the
   // skill tree queries — the nodes have no cost and no effect, so nothing else consults them.
@@ -202,14 +182,11 @@ function seedWorld(){
   const attempt=()=>{
     const occupied=[],takenCells=new Set();
     // Bounded rejection sampling: a batch ends by satisfying `count` or by reporting a shortfall.
-    // `minGap` is a SCATTER rule, not a placement rule: it only spreads a batch out at seed time so the
-    // map does not clump. It is NOT the old circular building-spacing ring, which cell occupancy in
-    // canPlace() replaced outright — placed objects are separated by cells, never by a distance.
+    // `minGap` spreads seeded nodes; live placement uses cell occupancy instead.
     const place=(count,minGap,make,accept=()=>true)=>{
       let tries=0;
       while(count>0&&tries++<SEED_CELL_TRIES){
-        // Sample broadly in world space, then quantize with the shared helpers — keeps the old scatter
-        // instead of stepping cells in order, which would read as obvious uniform rows.
+        // Sample broadly, then quantize; stepping cells in order would create visible rows.
         const c=worldToCell(rand(30,W-30),rand(35,H-25));
         if(takenCells.has(cellKey(c.cx,c.cy)))continue;          // one node per cell, no exceptions
         if(!footprintInWorldBounds(c.cx,c.cy,RESOURCE_FOOTPRINT))continue;
@@ -220,8 +197,7 @@ function seedWorld(){
       }
       return count===0;
     };
-    // Fewer, richer nodes: each has 10× the old durability and therefore yields 10× as many drops.
-    // Nodes carry RESOURCE_FOOTPRINT so grid consumers read one shared definition instead of per-kind sizes.
+    // Nodes carry RESOURCE_FOOTPRINT so grid consumers share one definition.
     return place(80,45,(x,y)=>trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:trees.length%3,footprint:RESOURCE_FOOTPRINT}))
       && place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT}))
       && place(5,110,(x,y)=>diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT}),
@@ -237,6 +213,89 @@ function seedWorld(){
 }
 seedWorld();
 
+const RUN_MODES=new Set(["normal","showcase"]);
+const RESOURCE_KIND_SET=new Set(RESOURCE_KINDS);
+let initializedMode=null;
+function invariant(condition,message){if(!condition)throw new Error("simulation invariant: "+message);}
+function assertCombatKind(target){
+  invariant(target&&["enemy","damage-dummy"].includes(target.combatKind),"unknown combat kind "+target?.combatKind);
+  return target.combatKind;
+}
+function assertHeldKind(held){
+  invariant(held&&["worker","building","showcase-prop"].includes(held.kind),"unknown held kind "+held?.kind);
+  return held.kind;
+}
+function makeShowcaseWorker(f,index){
+  return {x:f.x,y:f.y,postX:f.x,postY:f.y,spawnSource:null,job:f.job,jobTarget:null,taskTarget:null,returning:false,starved:false,carried:resourceCounts(),hp:WORKER_HP,attackCooldown:0,hitCooldown:0,step:index*.4,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,displayUnit:true,displayTool:f.tool||null,showcaseKey:"worker:"+f.id,showcaseLabel:f.label,showcaseSection:f.section};
+}
+function clearShowcaseLive(){
+  cancelHeldObject();closeUpgradeMenu();resetChop();state.showcaseFocus=null;
+  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=0;state.workers.length=state.enemies.length=0;
+  invariant(!state.heldObject,"held object survived showcase teardown");
+}
+function buildShowcaseFixtures(){
+  clearShowcaseLive();
+  for(const f of SHOWCASE_MANIFEST.resourceNodes){const common={x:f.x,y:f.y,hp:10,max:10,shake:0,footprint:RESOURCE_FOOTPRINT,showcaseKey:"resource-node:"+f.id,showcaseLabel:f.label,showcaseSection:f.section};if(f.id==="wood")trees.push({...common,stump:0,variant:0});else if(f.id==="stone")rocks.push({...common,depleted:0});else diamonds.push({...common,depleted:0});}
+  for(const f of SHOWCASE_MANIFEST.looseResources)resourceDrops.push({kind:f.id,x:f.x,y:f.y,groundY:f.y,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null,showcaseKey:"loose-resource:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
+  const addComplete=(type,x,y,label,section,key)=>{const b=createBuilding(type,x,y);b.complete=true;b.pulse=0;b.showcaseKey=key;b.showcaseLabel=label;b.showcaseSection=section;if(type==="tower"){const v=TOWER_VARIANTS.basic;b.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:v.maxHp,maxHp:v.maxHp};}if(type==="house")b.spawnTimer=WORKER_SPAWN_TIME;buildings.push(b);return b;};
+  for(const f of SHOWCASE_MANIFEST.buildings)addComplete(f.id,f.x,f.y,f.label,f.section,"building:"+f.id);
+  for(const f of SHOWCASE_MANIFEST.towers){const b=addComplete("tower",f.x,f.y,TOWER_VARIANTS[f.id].name,f.section,"tower:"+f.id),v=TOWER_VARIANTS[f.id];b.tower={variant:f.id,cooldown:0,flash:0,hitFlash:0,hp:v.maxHp,maxHp:v.maxHp};}
+  for(const f of SHOWCASE_MANIFEST.progress){const b=createBuilding(f.type,f.x,f.y);b.showcaseKey="progress:"+f.id;b.showcaseLabel=f.label;b.showcaseSection=f.section;if(f.state==="blueprint"){b.complete=false;b.delivered={wood:Math.floor(b.cost.wood/2),stone:Math.floor(b.cost.stone/2)};}else{const v=TOWER_VARIANTS[f.variant];b.complete=true;b.tower={variant:f.variant,cooldown:0,flash:0,hitFlash:0,hp:v.maxHp,maxHp:v.maxHp};const cost=TOWER_VARIANTS[f.upgrade].cost;b.activeUpgrade={id:f.upgrade,kind:"tower",delivered:Object.fromEntries(RESOURCE_KINDS.map(k=>[k,Math.floor((cost[k]||0)/2)]))};}buildings.push(b);}
+  SHOWCASE_MANIFEST.enemies.forEach((f,i)=>{const d=ENEMY_TYPES[f.id];state.enemies.push({combatKind:"enemy",type:f.id,x:f.x,y:f.y,hp:d.hp,max:d.hp,attackCooldown:0,healCooldown:1,wob:i*.5,flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null,displayUnit:true,showcaseKey:"enemy:"+f.id,showcaseLabel:d.name,showcaseSection:f.section});});
+  SHOWCASE_MANIFEST.workers.forEach((f,i)=>state.workers.push(makeShowcaseWorker(f,i)));
+  for(const f of SHOWCASE_MANIFEST.dummies)damageDummies.push({combatKind:"damage-dummy",id:f.id,x:f.x,y:f.y,homeX:f.homeX,homeY:f.homeY,hp:f.hp,max:f.hp,flash:0,defeatedTimer:0,status:{burn:null,slow:null},spawnSide:MAP_SIDE.SOUTH,recentDamage:0,hitCount:0,showcaseKey:"dummy:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
+  state.showcaseFocus=damageDummies[0]||null;
+  for(const f of SHOWCASE_MANIFEST.props)showcaseProps.push({id:f.id,model:f.model,x:f.x,y:f.y,homeX:f.x,homeY:f.y,footprint:f.footprint,showcaseKey:"prop:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
+  showcaseLabelRecords.push(
+    {key:"fixed:base",entity:BASE,label:"base",section:"units",height:88},
+    {key:"fixed:king",entity:state.king,label:"king",section:"units",height:34}
+  );
+  for(const items of [[...trees,...rocks,...diamonds],resourceDrops,buildings,state.workers,state.enemies,damageDummies,showcaseProps])
+    for(const entity of items)if(entity.showcaseLabel)showcaseLabelRecords.push({key:entity.showcaseKey,entity,label:entity.showcaseLabel,section:entity.showcaseSection,height:entity.type==="tower"?70:38});
+  invariant(new Set(showcaseLabelRecords.map(record=>record.key)).size===showcaseLabelRecords.length,"duplicate showcase label key");
+  showcaseRevision++;
+  validateSimulationInvariants();
+}
+// First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
+// and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
+export function initializeRunMode(mode="normal"){
+  if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
+  if(initializedMode&&initializedMode!==mode)throw new Error("run mode already initialized as "+initializedMode);
+  initializedMode=mode;state.runMode=mode;
+  if(mode==="normal"){invariant(!damageDummies.length&&!showcaseProps.length,"normal mode contains showcase entities");validateSimulationInvariants();return;}
+  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.buildDockCategory=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
+}
+export function rebuildShowcase(){if(state.runMode!=="showcase")return false;buildShowcaseFixtures();return true;}
+
+export function validateSimulationInvariants(){
+  invariant(RUN_MODES.has(state.runMode),"invalid run mode "+state.runMode);
+  invariant(Number.isFinite(state.baseHp)&&state.baseHp>=0&&state.baseHp<=state.baseMax,"illegal base health");
+  const collections=[trees,rocks,diamonds,resourceDrops,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles];
+  for(const collection of collections)for(const item of collection)invariant(Number.isFinite(item.x)&&Number.isFinite(item.y),"non-finite entity coordinates");
+  for(const enemy of state.enemies){
+    invariant(assertCombatKind(enemy)==="enemy","non-enemy in enemy collection");
+    invariant(ENEMY_TYPES[enemy.type],"unknown enemy type "+enemy.type);
+    invariant(enemy.hp>=0&&enemy.hp<=enemy.max,"illegal enemy health");
+  }
+  for(const dummy of damageDummies){invariant(assertCombatKind(dummy)==="damage-dummy","non-dummy in dummy collection");invariant(dummy.hp>=0&&dummy.hp<=dummy.max,"illegal dummy health");}
+  for(const drop of resourceDrops){
+    invariant(RESOURCE_KIND_SET.has(drop.kind),"unknown resource drop kind "+drop.kind);
+    invariant(drop.target===null||drop.target==="hand","invalid resource drop target "+drop.target);
+    if(drop.claimedBy!==undefined)invariant(state.workers.includes(drop.claimedBy),"resource claimed by unknown worker");
+  }
+  for(const kind of RESOURCE_KINDS){invariant(Number.isFinite(state.carried[kind])&&state.carried[kind]>=0,"illegal carried "+kind);invariant(Number.isFinite(state.stored[kind])&&state.stored[kind]>=0,"illegal stored "+kind);}
+  for(const kind of Object.keys(state.carried))invariant(RESOURCE_KIND_SET.has(kind),"unknown carried resource "+kind);
+  for(const kind of Object.keys(state.stored))invariant(RESOURCE_KIND_SET.has(kind),"unknown stored resource "+kind);
+  for(const worker of state.workers){invariant(worker.hp>=0&&worker.hp<=WORKER_HP,"illegal worker health");if(worker.taskTarget)invariant(resourceDrops.includes(worker.taskTarget)||trees.includes(worker.taskTarget)||rocks.includes(worker.taskTarget)||diamonds.includes(worker.taskTarget),"worker task target left owned collection");}
+  for(const building of buildings)if(building.tower)invariant(building.tower.hp>=0&&building.tower.hp<=building.tower.maxHp,"illegal tower health");
+  for(const id of state.skillTree.selected)invariant(state.skillTree.revealed.has(id)&&SKILL_NODES_BY_ID[id],"selected skill is not revealed");
+  for(const id of state.skillTree.revealed)invariant(SKILL_NODES_BY_ID[id],"unknown revealed skill "+id);
+  if(state.heldObject){const held=state.heldObject,kind=assertHeldKind(held);invariant(Number.isFinite(held.originX)&&Number.isFinite(held.originY),"invalid held origin");if(kind==="worker")invariant(!state.workers.includes(held.object),"held worker still installed");else if(kind==="building")invariant(!buildings.includes(held.object),"held building still installed");else invariant(showcaseProps.includes(held.object),"held prop lost ownership");}
+  if(state.runMode==="normal")invariant(!damageDummies.length&&!showcaseProps.length&&!showcaseLabelRecords.length,"normal mode contains showcase entities");
+  else invariant(state.enemies.every(enemy=>enemy.displayUnit)&&state.workers.every(worker=>worker.displayUnit),"showcase display units are not inert");
+  return true;
+}
+
 function clampCamera(){
   const camera=state.camera,halfW=VIEW_W/(2*camera.zoom),halfH=VIEW_H/(2*camera.zoom);
   camera.x=halfW>=W/2?W/2:clamp(camera.x,halfW,W-halfW);
@@ -248,6 +307,8 @@ function startPrimaryClick(){state.primaryClick.held=true;}
 function stopPrimaryClick(){state.primaryClick.held=false;resetChop();}
 function stopGameplayInput(cancelPlacement=false){
   stopPrimaryClick();state.collecting=false;state.camera.panning=false;state.keys.clear();
+  // Held props remain simulation-owned but cancellation must restore their authored coordinates.
+  if(heldProp())cancelHeldObject();
   if(cancelPlacement){state.buildMode=null;setBuildDockCategory(null);effects.buildHudChanged();}
 }
 function togglePause(){
@@ -266,12 +327,14 @@ function spawnEnemy(side=null,enemyType=null){
   let x,y;
   if(attackSide===MAP_SIDE.WEST){x=8;y=rand(20,H-20);}else if(attackSide===MAP_SIDE.EAST){x=W-8;y=rand(20,H-20);}
   else if(attackSide===MAP_SIDE.NORTH){x=rand(20,W-20);y=8;}else{x=rand(20,W-20);y=H-8;}
-  state.enemies.push({type,spawnSide:attackSide,x,y,hp:def.hp,max:def.hp,attackCooldown:0,healCooldown:rand(.5,2),wob:rand(0,6),flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null});
+  state.enemies.push({combatKind:"enemy",type,spawnSide:attackSide,x,y,hp:def.hp,max:def.hp,attackCooldown:0,healCooldown:rand(.5,2),wob:rand(0,6),flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null});
 }
 function enemyAt(x,y){
   let target=null,best=Infinity;
-  for(const enemy of state.enemies){
-    const d=distance(x,y,enemy.x,enemy.y),hitRadius=24*ENEMY_TYPES[enemy.type].size;
+  const candidates=state.runMode==="showcase"?damageDummies:state.enemies;
+  for(const enemy of candidates){
+    if(enemy.displayUnit||enemy.defeatedTimer>0)continue;
+    const d=distance(x,y,enemy.x,enemy.y),hitRadius=assertCombatKind(enemy)==="damage-dummy"?24:24*ENEMY_TYPES[enemy.type].size;
     if(d<hitRadius&&d<best){best=d;target=enemy;}
   }
   return target;
@@ -284,10 +347,12 @@ function killEnemy(enemy,announce=true){
   if(droppedDust)spawnResource("dust",enemy.x+rand(-7,7),enemy.y);
   burst(enemy.x,enemy.y,"#4b3b50",12);if(announce||droppedDust)toast(droppedDust?"enemy defeated — dust dropped":"enemy defeated");sound(150,.12);
 }
-function hitEnemy(enemy,quiet=false){
-  enemy.hp-=TUNE.clickDamage;enemy.flash=.16;
-  burst(enemy.x,enemy.y,"#d25b49",5);if(!quiet)sound(610,.045);
-  if(enemy.hp<=0)killEnemy(enemy);
+function hitCombatTarget(target,quiet=false){
+  const kind=assertCombatKind(target);
+  if(kind==="damage-dummy")damageDummy(target,TUNE.clickDamage);
+  else if(kind==="enemy"){target.hp-=TUNE.clickDamage;target.flash=.16;burst(target.x,target.y,"#d25b49",5);if(target.hp<=0)killEnemy(target);}
+  else invariant(false,"unhandled combat kind "+kind);
+  if(!quiet)sound(610,.045);
 }
 function blastButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-34&&y<=building.y+34;}
 function manualTowerButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-42&&y<=building.y+34;}
@@ -299,23 +364,32 @@ function workerNodeAt(x,y){
 }
 function pickUpMovableAt(x,y){
   let worker=null,best=24;
-  for(const candidate of state.workers){const d=distance(x,y,candidate.x,candidate.y);if(d<best){worker=candidate;best=d;}}
+  for(const candidate of state.workers){if(candidate.displayUnit)continue;const d=distance(x,y,candidate.x,candidate.y);if(d<best){worker=candidate;best=d;}}
   if(worker){
     clearWorkerTask(worker);state.workers.splice(state.workers.indexOf(worker),1);
     state.heldObject={kind:"worker",object:worker,originX:worker.x,originY:worker.y};state.collecting=false;toast("worker lifted — release to assign");return true;
   }
   const building=buildings.find(item=>item.complete&&item.type==="tower"&&towerVariant(item).movable&&manualTowerButtonHit(item,x,y));
-  if(!building)return false;
-  state.heldObject={kind:"building",object:building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;
-  toast(towerVariant(building).name+" picked up — release right to place");return true;
+  if(building){state.heldObject={kind:"building",object:building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;toast(towerVariant(building).name+" picked up — release right to place");return true;}
+  // Explicit secondary-action priority: workers, movable Shock Towers, showcase props, then vacuum.
+  if(state.runMode==="showcase"){
+    const prop=showcaseProps.find(item=>distance(x,y,item.x,item.y)<24);
+    if(prop){state.heldObject={kind:"showcase-prop",object:prop,originX:prop.x,originY:prop.y};state.collecting=false;toast(prop.id+" picked up — release right to place");return true;}
+  }
+  return false;
 }
 function heldWorker(){return state.heldObject?.kind==="worker"?state.heldObject.object:null;}
 function heldBuilding(){return state.heldObject?.kind==="building"?state.heldObject.object:null;}
-function cancelHeldObject(){
-  if(!state.heldObject)return;
-  const held=state.heldObject,object=held.object;object.x=held.originX;object.y=held.originY;
-  if(held.kind==="worker")state.workers.push(object);else buildings.push(object);state.heldObject=null;
+function heldProp(){return state.heldObject?.kind==="showcase-prop"?state.heldObject.object:null;}
+function installHeldAtOrigin(held){
+  const object=held.object;object.x=held.originX;object.y=held.originY;
+  const kind=assertHeldKind(held);
+  if(kind==="worker")state.workers.push(object);
+  else if(kind==="building")buildings.push(object);
+  else if(kind==="showcase-prop")invariant(showcaseProps.includes(object),"held prop left its owned collection");
+  else invariant(false,"unhandled held kind "+kind);
 }
+function cancelHeldObject(){if(!state.heldObject)return;installHeldAtOrigin(state.heldObject);state.heldObject=null;}
 // Assignment priority is resolved once so drop behavior and held-worker preview cannot drift.
 function workerAssignmentAt(worker,x,y){
   if(x<20||y<20||x>W-20||y>H-20)return null;
@@ -343,9 +417,16 @@ function dropHeldObject(){
     else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast("invalid ground — worker returned");}
     state.heldObject=null;sound(260,.06);return true;
   }
+  if(held.kind==="showcase-prop"){
+    const prop=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
+    if(anchor&&canPlace(anchor.x,anchor.y,null,null,prop)){prop.x=anchor.x;prop.y=anchor.y;toast(prop.id+" placed");}
+    else{prop.x=held.originX;prop.y=held.originY;toast("invalid ground — "+prop.id+" returned");}
+    invariant(showcaseProps.includes(prop),"placed prop left its owned collection");state.heldObject=null;sound(260,.06);return true;
+  }
   // Relocation validates the tower's own 3x3 footprint at the snapped anchor, excluding itself.
   // Only x/y are ever touched: cooldown, hp, variant and upgrade state ride along on the same object,
   // and an invalid drop restores the exact origin recorded at pickup.
+  invariant(assertHeldKind(held)==="building","unhandled held drop kind "+held.kind);
   const building=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
   if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)){building.x=anchor.x;building.y=anchor.y;toast(towerVariant(building).name+" placed");}
   else{building.x=held.originX;building.y=held.originY;toast("invalid ground — tower returned");}
@@ -354,11 +435,11 @@ function dropHeldObject(){
 function activateManualTower(building){
   const tower=building.tower,variant=towerVariant(building);if(!variant.manual)return;
   if(tower.cooldown>0){toast(variant.name+" recharging: "+tower.cooldown.toFixed(1)+"s");return;}
+  if(state.runMode==="showcase"&&!damageDummies.some(dummy=>dummy.defeatedTimer<=0&&distance(building.x,building.y,dummy.x,dummy.y)<=variant.effectRadius))return;
   tower.cooldown=variant.cooldown;tower.flash=.35;
-  for(const enemy of [...state.enemies]){
-    if(distance(building.x,building.y,enemy.x,enemy.y)>variant.effectRadius)continue;
-    damageEnemy(enemy,variant.damage,variant.accent,7,building);
-  }
+  eachTowerCombatTarget(enemy=>{
+    if(distance(building.x,building.y,enemy.x,enemy.y)<=variant.effectRadius)damageCombatTarget(enemy,variant.damage,variant.accent,7,building);
+  });
   burst(building.x,building.y,variant.accent,24);toast("shock pulse fired");sound(variant.sound,.28);
 }
 function detonateBlast(building){
@@ -411,9 +492,9 @@ const PRIMARY_ACTIONS={
  */
 function resolvePrimaryAction(x,y){
   const enemy=enemyAt(x,y);
-  // enemyAt() only walks the live roster; the hp guard also rejects a corpse
-  // still referenced mid-frame before killEnemy() splices it out.
-  if(enemy&&enemy.hp>0&&state.enemies.includes(enemy))
+  // enemyAt() selects the mode's attackable roster: production enemies normally, dummies in
+  // showcase. The membership guard rejects stale references after death/reset/rebuild.
+  if(enemy&&enemy.hp>0&&(assertCombatKind(enemy)==="damage-dummy"?damageDummies.includes(enemy):state.enemies.includes(enemy)))
     return {target:enemy,kind:PRIMARY_ACTIONS.enemy.kind,resource:null,icon:PRIMARY_ACTIONS.enemy.icon};
   const node=playerResourceAt(x,y);   // already skips stumps and depleted nodes
   if(!node)return null;
@@ -440,7 +521,7 @@ function updatePrimaryClick(dt){
   if(chopState.t<TUNE.chopTime)return;
   chopState.t=0;
   const quiet=primary.audioCooldown>0;
-  if(hit.kind==="attack")hitEnemy(hit.target,quiet);
+  if(hit.kind==="attack")hitCombatTarget(hit.target,quiet);
   else hitResource(hit.target,hit.resource,false,quiet);
   if(!quiet)primary.audioCooldown=.25;
 }
@@ -680,8 +761,8 @@ function occupiedCellBounds(entity,footprint=entity.footprint||FOOTPRINT_1x1){
 // `ignoreBuilding` drops one existing instance from the occupancy scan: a relocating Shock Tower must
 // not collide with itself. (Pickup already splices it out of `buildings`; passing it keeps the rule
 // true regardless of that ordering.)
-function canPlace(x,y,type=null,ignoreBuilding=null){
-  const footprint=buildingFootprint(type),c=worldToCell(x,y);
+function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null){
+  const footprint=ignoreProp?.footprint||buildingFootprint(type),c=worldToCell(x,y);
   // Whole footprint, not just the anchor: a 3x3 one cell from the border overhangs the map.
   if(!footprintInWorldBounds(c.cx,c.cy,footprint))return false;
   const rect=footprintWorldRect(c.cx,c.cy,footprint);
@@ -697,6 +778,9 @@ function canPlace(x,y,type=null,ignoreBuilding=null){
   // may sit in touching cells but never share one.
   for(const b of buildings)
     if(b!==ignoreBuilding&&cellBoundsOverlap(bounds,occupiedCellBounds(b,buildingFootprint(b.type))))return false;
+  // Props reserve authored cells only while placed; this collection is empty in normal runs.
+  for(const prop of showcaseProps)
+    if(prop!==ignoreProp&&cellBoundsOverlap(bounds,occupiedCellBounds(prop,prop.footprint)))return false;
   return true;
 }
 
@@ -827,8 +911,27 @@ function updateHazard(building,dt){
     hazard.cooldown=.55;hazard.flash=.18;enemy.hp-=2;enemy.flash=.14;burst(enemy.x,enemy.y,"#c9c2b5",4);if(enemy.hp<=0)killEnemy(enemy,false);
   }
 }
+function damageDummy(dummy,damage,color="#d25b49",count=5){
+  if(!damageDummies.includes(dummy)||dummy.defeatedTimer>0)return false;
+  dummy.hp=Math.max(0,dummy.hp-damage);dummy.flash=.16;dummy.recentDamage=damage;dummy.recentTimer=2;dummy.hitCount++;state.showcaseFocus=dummy;burst(dummy.x,dummy.y,color,count);
+  if(dummy.hp<=0){dummy.defeatedTimer=1;dummy.status={burn:null,slow:null};return false;}return true;
+}
 function damageEnemy(enemy,damage,color,count=5,source=null){
-  if(!state.enemies.includes(enemy))return false;if(source?.tower&&buildings.includes(source))enemy.retaliationTower=source;enemy.hp-=damage;enemy.flash=.16;burst(enemy.x,enemy.y,color,count);if(enemy.hp<=0){killEnemy(enemy,false);return false;}return true;
+  if(!state.enemies.includes(enemy)||enemy.displayUnit)return false;if(source?.tower&&buildings.includes(source))enemy.retaliationTower=source;enemy.hp-=damage;enemy.flash=.16;burst(enemy.x,enemy.y,color,count);if(enemy.hp<=0){killEnemy(enemy,false);return false;}return true;
+}
+function damageCombatTarget(target,damage,color,count=5,source=null){
+  const kind=assertCombatKind(target);
+  if(kind==="damage-dummy")return damageDummy(target,damage,color,count);
+  if(kind==="enemy")return damageEnemy(target,damage,color,count,source);
+  invariant(false,"unhandled combat kind "+kind);
+}
+function visitStableTargets(targets,visit){
+  for(let i=0;i<targets.length;){const target=targets[i];visit(target);if(targets[i]===target)i++;}
+}
+function eachTowerCombatTarget(visit){
+  if(state.runMode==="normal"){visitStableTargets(state.enemies,visit);return;}
+  if(state.runMode==="showcase"){visitStableTargets(damageDummies,dummy=>{if(dummy.defeatedTimer<=0)visit(dummy);});return;}
+  invariant(false,"invalid run mode "+state.runMode);
 }
 function applySlow(enemy,duration,multiplier){
   enemy.status??={burn:null,slow:null};const current=enemy.status.slow;
@@ -840,25 +943,25 @@ function pushEnemyToSpawn(enemy,distanceAmount){
   enemy.x=clamp(enemy.x,8,W-8);enemy.y=clamp(enemy.y,8,H-8);
 }
 function nearestTowerTarget(building,range){
-  let target=null,best=range;for(const enemy of state.enemies){const d=distance(building.x,building.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}}return target;
+  let target=null,best=range;eachTowerCombatTarget(enemy=>{const d=distance(building.x,building.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}});return target;
 }
 function applyBurn(enemy,building,variant){
   enemy.status??={burn:null};const current=enemy.status.burn,continues=current?.source===building;enemy.status.burn={remaining:variant.burnDuration,tickCooldown:continues?current.tickCooldown:variant.burnInterval,damage:variant.burnDamage,interval:variant.burnInterval,source:building};
 }
 function lineIntersectsEnemy(x1,y1,x2,y2,enemy,width){
   // Closest point on finite beam: project enemy-center vector onto beam, clamp t to [0,1], then compare distance to beam half-width plus enemy radius.
-  const dx=x2-x1,dy=y2-y1,lengthSquared=dx*dx+dy*dy,t=clamp(((enemy.x-x1)*dx+(enemy.y-y1)*dy)/lengthSquared,0,1),closestX=x1+t*dx,closestY=y1+t*dy,enemyRadius=10*ENEMY_TYPES[enemy.type].size;
+  const dx=x2-x1,dy=y2-y1,lengthSquared=dx*dx+dy*dy,t=clamp(((enemy.x-x1)*dx+(enemy.y-y1)*dy)/lengthSquared,0,1),closestX=x1+t*dx,closestY=y1+t*dy,enemyRadius=assertCombatKind(enemy)==="damage-dummy"?10:10*ENEMY_TYPES[enemy.type].size;
   return distance(enemy.x,enemy.y,closestX,closestY)<=width/2+enemyRadius;
 }
 function fireTowerAttack(building,variant,target){
   const tower=building.tower,color=variant.impactColor||variant.accent;tower.targetX=target.x;tower.targetY=target.y;tower.flash=.2;
   if(variant.attackMode==="splash"){
-    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;for(const enemy of [...state.enemies])if(distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageEnemy(enemy,variant.damage,color,8,building);burst(impactX,impactY,color,18);
+    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;eachTowerCombatTarget(enemy=>{if(distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageCombatTarget(enemy,variant.damage,color,8,building);});burst(impactX,impactY,color,18);
   }else if(variant.attackMode==="line"){
     const angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*variant.range,endY=building.y+Math.sin(angle)*variant.range;tower.targetX=endX;tower.targetY=endY;
-    for(const enemy of [...state.enemies])if(lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageEnemy(enemy,variant.damage,color,7,building);
+    eachTowerCombatTarget(enemy=>{if(lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageCombatTarget(enemy,variant.damage,color,7,building);});
   }else{
-    const alive=damageEnemy(target,variant.damage,color,["burn","slow","push"].includes(variant.attackMode)?8:5,building);
+    const alive=damageCombatTarget(target,variant.damage,color,["burn","slow","push"].includes(variant.attackMode)?8:5,building);
     if(alive&&variant.attackMode==="burn")applyBurn(target,building,variant);
     else if(alive&&variant.attackMode==="slow")applySlow(target,variant.slowDuration,variant.slowMultiplier);
     else if(alive&&variant.attackMode==="push"){pushEnemyToSpawn(target,variant.pushDistance);burst(target.x,target.y,color,10);}
@@ -870,8 +973,8 @@ function updateTower(building,dt){
   const tower=building.tower,variant=towerVariant(building);tower.cooldown=Math.max(0,tower.cooldown-dt);tower.flash=Math.max(0,tower.flash-dt);tower.hitFlash=Math.max(0,(tower.hitFlash||0)-dt);
   if(variant.manual||tower.cooldown>0)return;
   if(variant.attackMode==="periodic area"){
-    const targets=state.enemies.filter(enemy=>distance(building.x,building.y,enemy.x,enemy.y)<=variant.effectRadius);if(!targets.length)return;
-    tower.cooldown=variant.cooldown;tower.flash=.4;for(const enemy of targets)damageEnemy(enemy,variant.damage,variant.accent,5,building);sound(variant.sound,.22);return;
+    let attacked=false;eachTowerCombatTarget(enemy=>{if(distance(building.x,building.y,enemy.x,enemy.y)>variant.effectRadius)return;if(!attacked){tower.cooldown=variant.cooldown;tower.flash=.4;attacked=true;}damageCombatTarget(enemy,variant.damage,variant.accent,5,building);});
+    if(attacked)sound(variant.sound,.22);return;
   }
   const target=nearestTowerTarget(building,variant.range);if(!target)return;tower.cooldown=variant.cooldown;fireTowerAttack(building,variant,target);
 }
@@ -975,7 +1078,7 @@ function updateEnemyStatuses(enemy,dt){
   enemy.status??={burn:null,slow:null};const burn=enemy.status.burn,slow=enemy.status.slow;
   if(burn){
     if(!buildings.includes(burn.source)||burn.source.tower?.variant!=="fire")enemy.status.burn=null;
-    else{burn.remaining-=dt;burn.tickCooldown-=dt;while(burn.tickCooldown<=0&&burn.remaining>=0){burn.tickCooldown+=burn.interval;if(!damageEnemy(enemy,burn.damage,"#ef6a32",5,burn.source))return false;}if(burn.remaining<=0)enemy.status.burn=null;}
+    else{burn.remaining-=dt;burn.tickCooldown-=dt;while(burn.tickCooldown<=0&&burn.remaining>=0){burn.tickCooldown+=burn.interval;if(!damageCombatTarget(enemy,burn.damage,"#ef6a32",5,burn.source))return false;}if(burn.remaining<=0)enemy.status.burn=null;}
   }
   if(slow){slow.duration-=dt;if(slow.duration<=0)enemy.status.slow=null;}return true;
 }
@@ -1001,15 +1104,44 @@ function destroyTower(building){
   if(state.upgradeMenu.building===building)closeUpgradeMenu();burst(building.x,building.y,"#8f5141",22);toast(towerVariant(building).name+" destroyed");sound(70,.35);
 }
 function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
-function update(dt){
-  if(state.gameOver||state.paused){stopPrimaryClick();return;}
-  updatePrimaryClick(dt);updateClock(dt);updateNightEnemyWave(dt);
+function updateCamera(dt){
   const keys=state.keys,camera=state.camera;
   let panX=(keys.has("KeyD")||keys.has("ArrowRight"))-(keys.has("KeyA")||keys.has("ArrowLeft"));
   let panY=(keys.has("KeyS")||keys.has("ArrowDown"))-(keys.has("KeyW")||keys.has("ArrowUp"));
   if(panX||panY){const length=Math.hypot(panX,panY),speed=430/camera.zoom;camera.x+=panX/length*speed*dt;camera.y+=panY/length*speed*dt;clampCamera();}
-  state.coinTimer-=dt;
-  if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(14,22);}
+}
+function updateTransientTimers(dt){
+  state.basePulse=Math.max(0,state.basePulse-dt*3);state.toastTimer=Math.max(0,state.toastTimer-dt);state.collectCooldown-=dt;
+  if(state.collecting&&state.mouse.inside&&state.collectCooldown<=0){collectDrop(true);state.collectCooldown=TUNE.suckRate;}
+  if(state.toastTimer<=0)effects.toastExpired();
+}
+function updateResourceNodes(dt){
+  for(const tree of trees)tree.shake=Math.max(0,tree.shake-dt*7);
+  for(const rock of rocks)rock.shake=Math.max(0,rock.shake-dt*7);
+  for(const diamond of diamonds)diamond.shake=Math.max(0,diamond.shake-dt*7);
+}
+function updateLooseResources(dt,expire){
+  for(let i=resourceDrops.length-1;i>=0;i--){
+    const drop=resourceDrops[i];
+    if(expire&&drop.ttl!==null&&!drop.target&&!drop.claimedBy){drop.ttl-=dt;if(drop.ttl<=0){resourceDrops.splice(i,1);continue;}}
+    drop.spin+=dt*4;
+    if(drop.target==="hand"){drop.t+=dt*7;const ease=1-Math.pow(1-clamp(drop.t,0,1),3);drop.x+=(state.mouse.x-drop.x)*ease*.35;drop.y+=(state.mouse.y-drop.y)*ease*.35;if(drop.t>=1){resourceDrops.splice(i,1);state.carried[drop.kind]++;}continue;}
+    drop.vy+=170*dt;drop.x+=drop.vx*dt;drop.y+=drop.vy*dt;
+    if(drop.y>=drop.groundY){drop.y=drop.groundY;drop.vx*=.72;drop.vy*=-.22;if(Math.abs(drop.vy)<10){drop.vy=0;drop.vx=0;drop.ground=true;}}
+  }
+}
+function updateBuildings(dt,includeHazards){
+  for(const building of buildings){building.pulse=Math.max(0,building.pulse-dt*3);if(building.complete&&building.tower)updateTower(building,dt);if(includeHazards&&building.complete&&building.hazard)updateHazard(building,dt);}
+  if(includeHazards)for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove)buildings.splice(i,1);
+  const held=heldBuilding();if(held?.tower)updateTower(held,dt);
+}
+function updateParticles(dt){
+  for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
+}
+function updateNormal(dt){
+  if(state.gameOver||state.paused){stopPrimaryClick();return;}
+  updatePrimaryClick(dt);updateClock(dt);updateNightEnemyWave(dt);updateCamera(dt);
+  state.coinTimer-=dt;if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(14,22);}
   for(const enemy of [...state.enemies]){
     if(!updateEnemyStatuses(enemy,dt))continue;
     const def=ENEMY_TYPES[enemy.type];
@@ -1034,49 +1166,33 @@ function update(dt){
     }
   }
   if(state.gameOver)return;
-  updateKing(dt);
-  state.basePulse=Math.max(0,state.basePulse-dt*3);
-  state.toastTimer=Math.max(0,state.toastTimer-dt);
-  state.collectCooldown-=dt;
-  if(state.collecting&&state.mouse.inside&&state.collectCooldown<=0){
-    // One pickup per short interval makes a drag vacuum nearby pieces without requiring repeated clicks.
-    collectDrop(true);
-    state.collectCooldown=TUNE.suckRate;
-  }
-  if(state.toastTimer<=0)effects.toastExpired();
-  // Harvested nodes stay exhausted; only their hit-shake animation decays.
-  for(const tree of trees)tree.shake=Math.max(0,tree.shake-dt*7);
-  for(const rock of rocks)rock.shake=Math.max(0,rock.shake-dt*7);
-  for(const diamond of diamonds)diamond.shake=Math.max(0,diamond.shake-dt*7);
-  for(let i=resourceDrops.length-1;i>=0;i--){
-    const drop=resourceDrops[i];
-    if(drop.ttl!==null&&!drop.target&&!drop.claimedBy){drop.ttl-=dt;if(drop.ttl<=0){resourceDrops.splice(i,1);continue;}}
-    drop.spin+=dt*4;
-    if(drop.target==="hand"){
-      drop.t+=dt*7;
-      const ease=1-Math.pow(1-clamp(drop.t,0,1),3);
-      drop.x+=(state.mouse.x-drop.x)*ease*.35;
-      drop.y+=(state.mouse.y-drop.y)*ease*.35;
-      if(drop.t>=1){resourceDrops.splice(i,1);state.carried[drop.kind]++;}
-      continue;
-    }
-    drop.vy+=170*dt;
-    drop.x+=drop.vx*dt;drop.y+=drop.vy*dt;
-    if(drop.y>=drop.groundY){drop.y=drop.groundY;drop.vx*=.72;drop.vy*=-.22;if(Math.abs(drop.vy)<10){drop.vy=0;drop.vx=0;drop.ground=true;}}
-  }
-  updateWorkerSpawns(dt);
-  for(const building of buildings){
-    building.pulse=Math.max(0,building.pulse-dt*3);
-    if(building.complete&&building.tower)updateTower(building,dt);
-    if(building.complete&&building.hazard)updateHazard(building,dt);
-  }
-  for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove)buildings.splice(i,1);
-  const held=heldBuilding();if(held?.tower)updateTower(held,dt);
+  updateKing(dt);updateTransientTimers(dt);updateResourceNodes(dt);updateLooseResources(dt,true);
+  updateWorkerSpawns(dt);updateBuildings(dt,true);
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
-  for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
-  // One whole step is done: the adapter refreshes the hover prompt and the phase HUD.
-  effects.afterUpdate();
+  updateParticles(dt);effects.afterUpdate();
+}
+
+// Dedicated showcase policy: deliberately lists the sandbox stages instead of branching inside the
+// production pipeline. Clock/waves/spawns/enemy AI/worker AI/houses/economy/defeat are absent.
+function updateShowcase(dt){
+  if(state.paused){stopPrimaryClick();return;}
+  updatePrimaryClick(dt);updateCamera(dt);updateTransientTimers(dt);updateResourceNodes(dt);updateLooseResources(dt,false);
+  for(const dummy of damageDummies){
+    dummy.flash=Math.max(0,dummy.flash-dt);dummy.recentTimer=Math.max(0,(dummy.recentTimer||0)-dt);
+    if(dummy.defeatedTimer>0){dummy.defeatedTimer-=dt;if(dummy.defeatedTimer<=0){dummy.x=dummy.homeX;dummy.y=dummy.homeY;dummy.hp=dummy.max;dummy.status={burn:null,slow:null};}continue;}
+    updateEnemyStatuses(dummy,dt);
+  }
+  updateBuildings(dt,false);updateParticles(dt);effects.afterUpdate();
+}
+
+// main.js supplies dt; the explicit mode dispatch keeps both pipelines auditable.
+function update(dt){
+  switch(state.runMode){
+    case "normal": return updateNormal(dt);
+    case "showcase": return updateShowcase(dt);
+    default: invariant(false,"invalid run mode "+state.runMode);
+  }
 }
 
 function toast(message){
@@ -1240,8 +1356,7 @@ function debugHealAll(){
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── pointer position ──
-// state.mouse is world-space simulation pixels. main.js raycasts the ground
-// plane to get them; this module never learns about screens or cameras-as-DOM.
+// state.mouse is world-space simulation pixels. input.js obtains it from scene.js ground raycasts.
 export function setPointerWorld(x,y){ state.mouse.x=x; state.mouse.y=y; state.mouse.inside=true; }
 export function setPointerOutside(){ state.mouse.inside=false; }
 
@@ -1249,7 +1364,7 @@ export function setPointerOutside(){ state.mouse.inside=false; }
 // Press arms the held bar through leftClick()'s full priority chain; the modal
 // re-check between the two halves is the original ordering (leftClick may open
 // the upgrade panel, and a press that did so must not also start a swing).
-export function primaryPress(){ leftClick(); if(!effects.isModalOpen()) startPrimaryClick(); }
+export function primaryPress(){const action=resolvePrimaryAction(state.mouse.x,state.mouse.y);if(action?.target?.combatKind==="damage-dummy")state.showcaseFocus=action.target;leftClick();if(!effects.isModalOpen())startPrimaryClick();}
 export function primaryRelease(){ stopPrimaryClick(); }
 
 // ── the secondary (right) action ──
@@ -1271,8 +1386,8 @@ export function pressKey(code){ state.keys.add(code); }
 export function releaseKey(code){ state.keys.delete(code); }
 
 // ── camera ──
-// The camera lives in state because update() pans it with the movement keys and
-// therefore steps with game speed. main.js owns the projection; these own the
+// The camera lives in state because update() pans it with movement keys and
+// therefore steps with game speed. scene.js owns projection; these own the
 // numbers. dragCameraTo/setCameraZoom clamp on the way out; zoomCameraBy and
 // offsetCamera deliberately do not, because the wheel handler interleaves them
 // with two ground raycasts and clamps once at the end.
@@ -1281,6 +1396,8 @@ export function endCameraPan(){ state.camera.panning=false; }
 export function dragCameraTo(x,y){ const camera=state.camera; camera.x+=camera.dragX-x; camera.y+=camera.dragY-y; clampCamera(); }
 export function zoomCameraBy(factor){ const camera=state.camera; camera.zoom=clamp(camera.zoom*factor,.2,5); }
 export function setCameraZoom(zoom){ state.camera.zoom=zoom; clampCamera(); }
+/** Showcase UI camera command; section coordinates remain authored in showcase-data.js. */
+export function focusShowcaseSection(id){const section=SHOWCASE_MANIFEST.sections[id];if(state.runMode!=="showcase"||!section)return false;state.camera.x=section.x;state.camera.y=section.y;state.camera.zoom=section.zoom;clampCamera();return true;}
 /** Wheel zoom-toward-cursor correction: shift by the ground delta, unclamped (the caller clamps). */
 export function offsetCamera(dx,dy){ state.camera.x+=dx; state.camera.y+=dy; }
 
@@ -1376,6 +1493,11 @@ export function closeSkillTree(){
 
 // ── debug-owned writes into ordinary state (view panel > gameplay) ──
 export function setCapacity(value){ state.capacity=value; }
+export function resetDamageDummies(){if(state.runMode!=="showcase")return false;for(const d of damageDummies){d.x=d.homeX;d.y=d.homeY;d.hp=d.max;d.flash=0;d.defeatedTimer=0;d.status={burn:null,slow:null};d.recentDamage=0;d.recentTimer=0;d.hitCount=0;}state.showcaseFocus=damageDummies[0]||null;validateSimulationInvariants();return true;}
+export function resetShowcaseProps(){if(state.runMode!=="showcase")return false;if(heldProp())cancelHeldObject();for(const p of showcaseProps){p.x=p.homeX;p.y=p.homeY;}validateSimulationInvariants();return true;}
+export function showcaseSections(){return SHOWCASE_MANIFEST.sections;}
+export function focusedDummyReadout(){const d=state.showcaseFocus;return d&&damageDummies.includes(d)?{id:d.id,hp:d.hp,max:d.max,recentDamage:d.recentTimer>0?d.recentDamage:0,hitCount:d.hitCount,defeated:d.defeatedTimer>0}:null;}
+export function showcaseLabels(){return state.runMode==="showcase"?{revision:showcaseRevision,labels:showcaseLabelRecords}:null;}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // QUERIES — pure reads for the render / UI layers. None of them mutate.
@@ -1404,7 +1526,7 @@ function skillTreeEdges(){
 
 export {
   // live collections — iterate, never mutate
-  state, trees, rocks, diamonds, resourceDrops, buildings, workerCorpses, particles,
+  state, trees, rocks, diamonds, resourceDrops, buildings, damageDummies, showcaseProps, workerCorpses, particles,
   // debug flags (the gameplay pane's own bindings are the only writers)
   DBG,
   // the step
@@ -1419,7 +1541,7 @@ export {
   // costs and progress
   buildingCost, costText, upgradeList, towerUpgradeList, nextHouseCost,
   // world lookups the render layer projects
-  storageServiceRadius, workerAssignmentAt, heldWorker, heldBuilding,
+  storageServiceRadius, workerAssignmentAt, heldWorker, heldBuilding, heldProp,
   workerCoatColor, workerLoad, carriedTotal, resourceIsActive, oppositeMapSide,
   // skill tree — read-only projections of the authored graph over this run's two id sets
   skillTreeNodes, skillTreeEdges,
