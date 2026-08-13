@@ -50,17 +50,21 @@ BASE.footprint=FOOTPRINT_3x3;
 export const RESOURCE_KINDS=["wood","stone","dust","coin","diamond"];
 
 // ── houses and workers ──────────────────────────────────────────────────────
-export const HOUSE_SLOTS=2,HOUSE_COST={wood:8,stone:6},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
+export const HOUSE_SLOTS=2,HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
+// Worker capacities are authored here; future upgrades may modify their effective values at runtime.
+export const RESOURCE_NODE_JOB_SLOTS=1,BLUEPRINT_JOB_SLOTS=2;
 export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
 
 // ── buildings ───────────────────────────────────────────────────────────────
 // Every entry carries an explicit `footprint` (odd cells, anchor-centered). The tower chassis is the
 // only 3x3; every other building and deployable is 1x1. Tower VARIANTS inherit the chassis footprint -
 // upgrading never resizes an already-placed tower, so variants deliberately declare no footprint.
+// `jobSlots` is authored, runtime-read-only permanent staffing capacity for a completed building;
+// absence means the type is not a durable post and has zero capacity.
 export const BUILDING_TYPES = {
-  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155,footprint:FOOTPRINT_1x1},
-  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155,footprint:FOOTPRINT_1x1},
-  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},serviceRadius:175,footprint:FOOTPRINT_1x1},
+  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_1x1},
+  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_1x1},
+  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},serviceRadius:175,jobSlots:2,footprint:FOOTPRINT_1x1},
   house:{name:"house",resource:null,cost:HOUSE_COST,footprint:FOOTPRINT_1x1},
   obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},footprint:FOOTPRINT_1x1},
   tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},footprint:FOOTPRINT_3x3},

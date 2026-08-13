@@ -214,6 +214,12 @@ function bindControls(){
   // economy — free costs bypasses the DELIVERY, it does not zero a cost or top up a store.
   bindV("vFreeCosts", v=>{ DBG.freeCosts=v; debugSweepFreeCosts(); });
   bindV("vUnlimitedCharges", v=>{ DBG.unlimitedCharges=v; syncBuildHud(); });
+  bindV("vGroundSourcing", v => { DBG.groundSourcing = v; });
+  bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });
+  bindV("vBuilderRadius", v => { TUNE.builderSourceRadius = v; }, v => v + "px");
+  bindV("vBlueprintRecruiting", v => { DBG.blueprintRecruiting = v; });
+  bindV("vIdleSeeksWork", v => { DBG.idleSeeksWork = v; });
+  bindV("vRecruitRadius", v => { TUNE.recruitRadius = v; }, v => v + "px");
   bindBtn("vGrantAll",     ()=>debugGrant(RESOURCE_KINDS));
   bindBtn("vGrantDust",    ()=>debugGrant(["dust"]));
   bindBtn("vGrantCoin",    ()=>debugGrant(["coin"]));

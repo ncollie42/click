@@ -50,6 +50,126 @@ Explicitly postponed:
 - Buildings cost resources to construct; drag resources into their blueprints.
 - A special building type can pull in nearby resources automatically.
 
+## Theme (committed): The Thing in the Ground
+
+**Tags:** `Immersion`, `Core Gameplay`
+
+**Genre tags (what the game is, store-page vocabulary):**
+`tower defense` · `village builder` · `clicker` · `incremental` · `settlement` · `cozy` · `roguelite` · `kingdom clicker` · `simulation` · `resource management`
+
+**The anchor — five lines:**
+
+> A cozy village is built around a buried thing nobody understands.
+> Feeding it makes the village stronger. Feeding it makes the thing louder.
+> Its glow is your light — and their beacon. The light ends in a hard line; the night waits just past it.
+> The night belongs to it: what comes in the dark comes because of it, not because of you.
+> Whether it is a machine or a god is deliberately unanswered. The villagers argue about it too.
+
+**Palette rule:** violet means *it* — the pit, its cracks, its orb, its dust. Timber, plaster, stone and sage mean *us*. Color is information, never decoration. Villager-built structures stay crude and human, even when wrapped around precursor things.
+
+**Mechanical anchors the theme commits to:**
+
+- Base delivery = feeding = XP (the sink, never a store).
+- Hunger scales the night: waves grow with total fed, not night count — the greed dial.
+- Glow = radius: feeding visibly widens the light circle. Useful (vision, aura, later fog) and dangerous (the beacon they march toward). The dial is drawn on the ground.
+- Enemies are connected to the thing — drawn to it, or made by it. Not random raiders.
+
+---
+
+Longer rationale, kept for reference: villagers dig it up, wall it in with their own timber and stone, and feed it because feeding it makes them stronger.
+
+**What it explains, using only what already exists:**
+
+- **Dust** leaks from the machine. It accounts for the violet already running through the palette.
+- **The obelisk** is precursor technology, and is already the building that grants global upgrades.
+- **Tower families already encode the split.** `Starter` and `Ballistics` are villager carpentry and masonry. `Elemental` and `Special` — fire, freeze, teleport, laser, pulse, shock — are salvaged devices switched back on. The distinction is authored in `data.js` and currently carries no fiction.
+- **Base delivery granting XP** becomes a machine that returns knowledge rather than goods, which is exactly what a sink should be.
+- **The skill tree** is what the villagers learn from it. The existing `✦ ◈ ◆ ◇` glyph set already reads precursor.
+- **The floating orb** is a guardian that woke with the engine, replacing the king with the same role and a coherent origin.
+- **Night gloom** is what the machine holds back, or what it attracts.
+
+**Why not the alternatives:** committing to pure medieval means deleting the arcane towers and dust; committing to pure science fiction means deleting the villagers, the timber and the cozy manual gathering loop that is the game's main appeal. This theme keeps both and makes the contrast the point.
+
+**Palette rule this implies:** violet means precursor, and nothing else. Villager-built objects stay timber, plaster, stone and sage. Anything glowing violet was not made by the people living there. Applied consistently, colour becomes information rather than decoration.
+
+**Asset consequence:** structures the villagers build around precursor objects should be visibly crude and human — rough timber beams, uneven stone, simple joints. The contrast between humble containment and alien content carries the theme in a single silhouette.
+
+## Base Delivery Grants XP, Not Storage
+
+**Tags:** `Core Gameplay`, `Retention`
+
+Dropping resources at the base converts them to XP instead of storing them. Different kinds are worth different amounts.
+
+If storage is removed, `dropToBase` is the last remaining writer to `state.stored` and otherwise has no purpose. This gives the base a permanent role and keeps the rule that everything is a sink and nothing is a bank.
+
+**What it solves:**
+
+- Surplus stops being dead weight. Excess wood on the ground is unbanked XP rather than clutter.
+- Rare kinds get a destination. Diamond and dust currently have almost no sinks.
+- It answers the open question in *Skill Tree* about when the player earns picks. XP thresholds are a natural trigger, and the graph is already authored and unwired.
+
+**Risk:** if every gathered resource converts to progress, gathering is never the wrong choice and the work-versus-defense tension flattens. Candidate limits: diminishing returns per phase, a cap per day, conversion only during daylight, or rare kinds worth far more so bulk hauling is not the optimal XP route.
+
+**Open:** does XP feed run-local upgrades, the persistent skill tree, or both?
+
+**Decided (2026-08-13):** there is no separate "hunger" stat — **XP is the number.** `state.xp` grows with deposits (authored per-kind values), never decays, and wave difficulty is matched to it. XP thresholds grant skill picks (the skill tree's production trigger). The orb defender does NOT auto-scale with XP — it improves only through explicit upgrades. The glow-ring / crack visual stage-up is deferred (see *Deferred: Glow Radius Stage-Up*).
+
+### Machine Hunger: Feeding Scales the Night
+
+The strongest version of the XP sink: **wave pressure scales with what you have fed the base, not with night count.** Deliver greedily and the thing gets louder; the night answers.
+
+- Difficulty becomes player-paced — a greed dial. This solves the "gathering is never the wrong choice" risk better than caps or diminishing returns, because banking XP *is* the risky move.
+- Surplus on the ground becomes a live decision: haul it in before dark for power, or leave it lying as safety.
+- Feeding milestones give run structure for free: the thing wakes in stages — boss triggers, new enemy types, possibly the run's end condition.
+- Telegraph it physically: rumble, brighter violet, wider pull radius. The player should *feel* they overfed before the wave proves it.
+
+Whether the base is a machine or a living creature is deliberately undecided — the villagers do not know either. Commit only to the loop and the palette rule (violet = it, timber = us).
+
+## Black Hole Base and Floating Orb
+
+**Tags:** `Immersion`, `Game Feel / Juice`
+
+Replace the castle with a black hole that visibly pulls things inward, and replace the king with a floating orb that attacks.
+
+The fiction matches the mechanics: a base that consumes what you feed it and returns nothing is the correct read for an XP sink. The pull could be literal, drawing nearby loose drops inward, which also doubles as the auto-collect fantasy.
+
+The orb replaces the king as the base's automatic defender and removes the medieval framing without removing the role.
+
+**Open:** does the pull actually consume drops (a hazard near the base), or is it purely visual? A base that eats resources the player did not intend to spend would be a strong tension but a bad surprise.
+
+## Aura Buildings
+
+**Tags:** `Core Gameplay`
+
+Buildings whose only output is a radius effect on whatever stands inside it. No production, no attack — they make everything nearby better.
+
+The structural pieces already exist: `serviceRadius` / `effectRadius` in `BUILDING_TYPES`, the `buildingRadius()` query, and ring rendering in the scene layer.
+
+**Why this is worth having:**
+
+- It converts a labor problem into a placement decision. Faster gathering by placing one building beats faster gathering by dragging three more workers, which is the filter in *Cursor Attention Is the Real Resource*.
+- It gives camps and clustering a reason to exist. If a boost is a radius, then where things sit relative to each other finally matters.
+- A healing aura attacks the worker-death churn directly — dead workers currently cost a manual re-drag every time.
+
+**Candidates:**
+
+- **Chopping / mining speed.** Shortens `WORKER_HIT_COOLDOWN` inside the radius.
+- **Healing (church, shrine).** Regen for workers in radius. Also a candidate answer to the open *Healing the Main Base* question.
+- **Carry capacity.** Workers in radius carry more per trip, so fewer trips.
+- **Movement speed.** Shortens the walk, which is the least interesting part of every loop.
+- **Tower fire rate or damage.** The combat-side twin.
+- **Repair.** Heals towers and structures rather than people.
+- **Light.** Pushes back the night overlay. This is the seed of BEACONFALL's lighthouse — a radius that holds off darkness and could later be upgraded into a weapon.
+
+**Open questions:**
+
+- Do auras stack, or does the strongest one win? Stacking invites a degenerate pile of overlapping circles; highest-wins stays readable.
+- Always-on, or conditional? An always-on boost is just a stat edit with a building attached. A boost that needs staffing, fuel delivery, or only works during the day is a decision.
+- Where does the effect read — a ring on the emitter, a tell on each affected unit, or both? Without the second one, the player cannot tell whether a given worker is actually benefiting.
+- Do economy auras and combat auras compete for the same placement budget? Making them compete is what turns them into the work-vs-defense tension rather than a free upgrade.
+
+**Sequencing note:** do not tune a gathering-speed aura before the chop-vs-build rate ratio is measured. It is a multiplier on a number that is still moving.
+
 ## Ground Clutter
 
 **Question:** If the ground is the only place loose resources live, how do we keep it readable?
@@ -83,6 +203,32 @@ Manually clicking fog becomes annoying. There is currently no reason not to clic
 
 - A human explorer could eventually reveal territory.
 - We also need other ways to expand or clear fog.
+
+## Deferred: Glow Radius Stage-Up
+
+**Tags:** `Game Feel / Juice`, `Immersion`
+
+Parked from the base/XP design: feeding visibly widens the thing's light circle — glow radius drawn on the ground as the difficulty readout, cracks spreading a ring of cells at each XP threshold, rumble/pulse on crossing. The player should feel "I just made it worse" a full day before the night proves it. Revisit once XP-scaled waves are in and tuned; the mechanic works without the visual, the visual is the juice pass.
+
+## TODO: Worker State Machine Rework
+
+**Tags:** `Core Gameplay`
+
+Workers currently encode their behavior in scattered booleans (`returning`, `starved`, `returnAfterCombat`, `taskTarget`, `combatTarget`, `staffingArrivedAt`) with implicit priority rules in `updateWorker`. That IS a state machine — written in flags.
+
+**Target shape:**
+
+- **Tagged union for state:** `worker.state = {type:"...", ...payload}`, one update function per `type`, dispatched on the tag. Illegal combinations become unrepresentable instead of policed.
+- **Two layers:** `job` stays the ROLE (long-term, what placement/recruiting assigns); the tagged state is the OBJECTIVE (short-term: fetching this drop, fleeing, returning to post).
+- Refactor behavior-preserving first — same observable behavior, flags folded into the union one at a time. New behaviors land after, as new tags.
+
+Sequencing note: small visible behaviors (flee, idle texture, opportunistic pickup) do not require this refactor and should not wait for it. Refactor when the flags actually start hurting.
+
+## Recruitment Legibility
+
+Shipped with blueprint recruiting: borrowed workers carry a marker while they have a `homePost` loan, and hovering a blueprint draws lines to its assigned builders. Keep both only while they make temporary assignments easier to understand in play.
+
+Related open question: once camps auto-refill and blueprints recruit, does dropping a worker directly on a resource node still earn its place? Track it by noticing how often you still do it. If "basically never," delete the `harvest` job and route everything through camps.
 
 ## Assigning NPC Work
 

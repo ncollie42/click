@@ -229,6 +229,18 @@
           calls a full delivery makes. It never edits an authored cost and never
           writes to the base store — the grant buttons are the only thing here
           that adds resources, and they add nothing else.</p>
+          <h4>builder sourcing</h4>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vGroundSourcing" checked><span>ground sourcing</span></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vBuilderSelfSupply" checked><span>starved builders self-supply</span></label>
+          <label><span class="row"><span>builder source radius</span><span id="o_vBuilderRadius"></span></span>
+            <input autocomplete="off" type="range" id="vBuilderRadius" min="60" max="400" step="10" value="300"></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vBlueprintRecruiting" checked><span>blueprint recruiting</span></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vIdleSeeksWork" checked><span>idle guards seek work + tidy drops</span></label>
+          <label><span class="row"><span>recruit radius</span><span id="o_vRecruitRadius"></span></span>
+            <input autocomplete="off" type="range" id="vRecruitRadius" min="100" max="500" step="20" value="200"></label>
+          <p class="hint">ground sourcing changes only which source a builder
+          prefers; recruiting borrows idle guards and returns them. Neither ever
+          edits a cost or grants resources.</p>
           <h4>time</h4>
           <label id="vSpeedRow"><span class="row"><span>game speed</span><span id="o_vSpeed"></span></span>
             <input autocomplete="off" type="range" id="vSpeed" min="1" max="6" step="1" value="1"></label>

@@ -6,7 +6,7 @@ import {
   GRID_COLS,
   FOOTPRINT_1x1,RESOURCE_FOOTPRINT,
   RESOURCE_KINDS,
-  HOUSE_SLOTS,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,
+  HOUSE_SLOTS,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,BLUEPRINT_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
   ENEMY_TYPES,MAP_SIDE,MAP_SIDES,WAVE_FRONT_SECONDARY,
@@ -46,6 +46,9 @@ export const TUNE = {
   chopYield:1,       // drops spawned per completed player chop      [slider vYield]
   clickDamage:1,     // hp removed per completed player swing        [slider vDamage]
   gameSpeed:1,       // whole simulation steps per rendered frame    [slider vSpeed]
+  builderSourceRadius:300, // blueprint-centered loose-drop scan [slider vBuilderRadius]
+  recruitRadius:200, // blueprint guard recruitment radius           [slider vRecruitRadius]
+  fleeHpThreshold:1, // worker hp that triggers the survival interrupt
 };
 
 // ── effect boundary ─────────────────────────────────────────────────────────
@@ -151,7 +154,11 @@ const DBG={
   freeCosts:false,          // blueprints + accepted upgrades finish on placement/accept
   unlimitedCharges:false,   // stack:true deployables never decrement state.buildStacks
   invulnBase:false,         // enemy hits on the base subtract nothing
-  instantWorkers:false      // houses ignore their spawn timer
+  instantWorkers:false,     // houses ignore their spawn timer
+  groundSourcing:true,      // builders prefer loose drops before covered storage
+  builderSelfSupply:true,   // starved builders mine one bounded, needed resource at a time
+  blueprintRecruiting:true, // incomplete buildings borrow nearby idle guards
+  idleSeeksWork:true         // house-posted guards fill vacant durable jobs
 };
 
 // ── Global upgrade ownership flow ──
@@ -226,7 +233,8 @@ function assertHeldKind(held){
   return held.kind;
 }
 function makeShowcaseWorker(f,index){
-  return {x:f.x,y:f.y,postX:f.x,postY:f.y,spawnSource:null,job:f.job,jobTarget:null,taskTarget:null,returning:false,starved:false,carried:resourceCounts(),hp:WORKER_HP,attackCooldown:0,hitCooldown:0,step:index*.4,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,displayUnit:true,displayTool:f.tool||null,showcaseKey:"worker:"+f.id,showcaseLabel:f.label,showcaseSection:f.section};
+  // homePost is null or {job,jobTarget,postX,postY}; temporary jobs restore that saved assignment.
+  return {x:f.x,y:f.y,postX:f.x,postY:f.y,spawnSource:null,job:f.job,jobTarget:null,homePost:null,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:resourceCounts(),hp:WORKER_HP,attackCooldown:0,hitCooldown:0,step:index*.4,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,reposting:false,displayUnit:true,displayTool:f.tool||null,showcaseKey:"worker:"+f.id,showcaseLabel:f.label,showcaseSection:f.section};
 }
 function clearShowcaseLive(){
   cancelHeldObject();closeUpgradeMenu();resetChop();state.showcaseFocus=null;
@@ -366,7 +374,7 @@ function pickUpMovableAt(x,y){
   let worker=null,best=24;
   for(const candidate of state.workers){if(candidate.displayUnit)continue;const d=distance(x,y,candidate.x,candidate.y);if(d<best){worker=candidate;best=d;}}
   if(worker){
-    clearWorkerTask(worker);state.workers.splice(state.workers.indexOf(worker),1);
+    clearWorkerSelfSupply(worker);state.workers.splice(state.workers.indexOf(worker),1);
     state.heldObject={kind:"worker",object:worker,originX:worker.x,originY:worker.y};state.collecting=false;toast("worker lifted — release to assign");return true;
   }
   const building=buildings.find(item=>item.complete&&item.type==="tower"&&towerVariant(item).movable&&manualTowerButtonHit(item,x,y));
@@ -381,6 +389,34 @@ function pickUpMovableAt(x,y){
 function heldWorker(){return state.heldObject?.kind==="worker"?state.heldObject.object:null;}
 function heldBuilding(){return state.heldObject?.kind==="building"?state.heldObject.object:null;}
 function heldProp(){return state.heldObject?.kind==="showcase-prop"?state.heldObject.object:null;}
+// Canonical completed-building assignment. Construction inheritance, placement, and vacancy filling share it.
+function builtJobAssignment(building){
+  if(building.type==="lumber"||building.type==="quarry")return {job:"staff",jobTarget:building,postX:building.x,postY:building.y+16};
+  if(building.type==="stockpile")return {job:"haul",jobTarget:building,postX:building.x,postY:building.y+18};
+  return {job:"guard",jobTarget:null,postX:building.x,postY:building.y+(building.type==="house"?23:18)};
+}
+function workerStaffsPost(worker,building){const assignment=builtJobAssignment(building);return worker.job===assignment.job&&worker.jobTarget===building;}
+function resourceNodeKind(node){return trees.includes(node)?"wood":rocks.includes(node)?"stone":diamonds.includes(node)?"diamond":null;}
+function assignedWorkers(target,excludeWorker=null){
+  const candidates=state.workers.concat(heldWorker()&&!state.workers.includes(heldWorker())?[heldWorker()]:[]).filter(worker=>worker!==excludeWorker);
+  if(buildings.includes(target))return candidates.filter(worker=>target.complete?workerStaffsPost(worker,target):worker.job==="build"&&worker.jobTarget===target);
+  return candidates.filter(worker=>(worker.job==="harvest"&&worker.jobTarget?.node===target)||worker.selfSupply?.node===target);
+}
+/** Read-only assignment/reservation status for an active node or completed durable building. */
+function workerOccupancyStatus(target,excludeWorker=null){
+  if(state.runMode!=="normal")return null;
+  const kind=resourceNodeKind(target);
+  if(kind){if(!resourceIsActive(target,kind))return null;return {target,assigned:assignedWorkers(target,excludeWorker).length,capacity:RESOURCE_NODE_JOB_SLOTS};}
+  if(!buildings.includes(target))return null;
+  const capacity=target.complete?(BUILDING_TYPES[target.type].jobSlots||0):BLUEPRINT_JOB_SLOTS;if(!capacity)return null;
+  return {target,assigned:assignedWorkers(target,excludeWorker).length,capacity};
+}
+function workerOccupancyAt(x,y){
+  let nearest=null,best=Infinity;
+  for(const nodes of [trees,rocks,diamonds])for(const node of nodes){const status=workerOccupancyStatus(node),d=distance(x,y,node.x,node.y);if(status&&d<38&&d<best){nearest=status;best=d;}}
+  for(const building of buildings){const status=workerOccupancyStatus(building),d=distance(x,y,building.x,building.y);if(status&&d<42&&d<best){nearest=status;best=d;}}
+  return nearest;
+}
 function installHeldAtOrigin(held){
   const object=held.object;object.x=held.originX;object.y=held.originY;
   const kind=assertHeldKind(held);
@@ -395,25 +431,26 @@ function workerAssignmentAt(worker,x,y){
   if(x<20||y<20||x>W-20||y>H-20)return null;
   const near=predicate=>buildings.find(item=>predicate(item)&&distance(x,y,item.x,item.y)<42);
   const blueprint=near(item=>!item.complete),node=workerNodeAt(x,y),staff=near(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")),stockpile=near(item=>item.complete&&item.type==="stockpile"),house=near(item=>item.complete&&item.type==="house");
-  if(blueprint)return {job:"build",target:blueprint,postX:blueprint.x,postY:blueprint.y+20,zoneX:blueprint.x,zoneY:blueprint.y,zoneRadius:WORKER_LEASH};
-  if(node)return {job:"harvest",target:node,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};
-  if(staff)return {job:"staff",target:staff,postX:staff.x,postY:staff.y+16,zoneX:staff.x,zoneY:staff.y,zoneRadius:BUILDING_TYPES[staff.type].serviceRadius};
-  if(stockpile)return {job:"haul",target:stockpile,postX:stockpile.x,postY:stockpile.y+18,zoneX:stockpile.x,zoneY:stockpile.y,zoneRadius:storageServiceRadius(stockpile)};
+  if(blueprint){const status=workerOccupancyStatus(blueprint,worker);if(status.assigned>=status.capacity)return null;return {job:"build",target:blueprint,postX:blueprint.x,postY:blueprint.y+20,zoneX:blueprint.x,zoneY:blueprint.y,zoneRadius:WORKER_LEASH};}
+  if(node){const status=workerOccupancyStatus(node.node,worker);if(status.assigned>=status.capacity)return null;return {job:"harvest",target:node,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};}
+  if(staff){const status=workerOccupancyStatus(staff,worker);if(status.assigned>=status.capacity)return null;return {job:"staff",target:staff,postX:staff.x,postY:staff.y+16,zoneX:staff.x,zoneY:staff.y,zoneRadius:BUILDING_TYPES[staff.type].serviceRadius};}
+  if(stockpile){const status=workerOccupancyStatus(stockpile,worker);if(status.assigned>=status.capacity)return null;return {job:"haul",target:stockpile,postX:stockpile.x,postY:stockpile.y+18,zoneX:stockpile.x,zoneY:stockpile.y,zoneRadius:storageServiceRadius(stockpile)};}
   if(house)return {job:"guard",target:null,postX:house.x,postY:house.y+23,zoneX:house.x,zoneY:house.y+23,zoneRadius:WORKER_LEASH};
   if(distance(x,y,BASE.x,BASE.y)<BASE.r+18)return {job:"haul",target:BASE,postX:BASE.x,postY:BASE.y+25,zoneX:BASE.x,zoneY:BASE.y,zoneRadius:BASE_ZONE};
   return {job:"guard",target:null,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};
 }
 function assignWorker(worker,x,y){
   const assignment=workerAssignmentAt(worker,x,y);if(!assignment)return null;
-  clearWorkerTask(worker);worker.x=x;worker.y=y;worker.postX=assignment.postX;worker.postY=assignment.postY;worker.job=assignment.job;worker.jobTarget=assignment.target;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.returning=false;worker.starved=false;
-  if(worker.job!=="haul")for(const kind of RESOURCE_KINDS){while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,x+rand(-8,8),y+rand(-5,5));}}
+  const scatterGuardLoad=worker.job==="guard"||worker.reposting;
+  clearWorkerSelfSupply(worker);worker.x=x;worker.y=y;worker.postX=assignment.postX;worker.postY=assignment.postY;worker.job=assignment.job;worker.jobTarget=assignment.target;worker.homePost=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.fleeing=false;worker.fleeSafeTime=0;worker.reposting=false;worker.returning=false;worker.starved=false;
+  if(scatterGuardLoad||worker.job!=="haul")for(const kind of RESOURCE_KINDS){while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,x+rand(-8,8),y+rand(-5,5));}}
   return worker.job;
 }
 function dropHeldObject(){
   const held=state.heldObject;if(!held)return false;
   if(held.kind==="worker"){
     const worker=held.object,result=state.mouse.inside&&assignWorker(worker,state.mouse.x,state.mouse.y);
-    if(result){state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):result;toast("worker assigned: "+assignment);}
+    if(result){worker.staffingArrivedAt=null;state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):result;toast("worker assigned: "+assignment);}
     else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast("invalid ground — worker returned");}
     state.heldObject=null;sound(260,.06);return true;
   }
@@ -719,6 +756,9 @@ function completeBuilding(building){
   if(def.resource)state.capacity+=2;
   if(building.type==="tower"){const variant=TOWER_VARIANTS.basic;building.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp};}
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
+  // Resolve the transition as one transaction. updateWorkerSpawns() runs before workers, so leaving
+  // an earlier builder unresolved until the next tick would expose its durable vacancy to autofill.
+  resolveBuildingCompletionWorkers(building);
   burst(building.x,building.y-12,"#ead28d",18);
   const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?"basic tower complete — hover it to choose one variant":def.name+" complete";
   toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);effects.buildHudChanged();
@@ -787,14 +827,28 @@ function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null){
 function completeHouses(){return buildings.filter(building=>building.complete&&building.type==="house");}
 function nextHouseCost(){const count=completeHouses().length;return {wood:HOUSE_COST.wood+HOUSE_COST_ESCALATION.wood*count,stone:HOUSE_COST.stone+HOUSE_COST_ESCALATION.stone*count};}
 function sourceWorkerCount(source){const held=heldWorker();return state.workers.filter(worker=>worker.spawnSource===source).length+(held?.spawnSource===source?1:0);}
+/** Durable-post compatibility view adds arrival to shared occupancy. */
+function durablePostStatus(building){
+  if(state.runMode!=="normal")return null;
+  const status=workerOccupancyStatus(building);if(!status)return null;
+  const assigned=assignedWorkers(building);
+  return {building,capacity:status.capacity,assigned:status.assigned,arrived:assigned.filter(worker=>state.workers.includes(worker)&&worker.staffingArrivedAt===building).length};
+}
+function vacantDurablePosts(){return buildings.filter(building=>{const status=durablePostStatus(building);return status&&status.assigned<status.capacity;});}
 function createHouseWorker(house){
   if(!house.complete||house.type!=="house")return null;
   const postX=house.x,postY=house.y+23;
-  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:house,job:"guard",jobTarget:null,taskTarget:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false};
+  // homePost is null or {job,jobTarget,postX,postY}; temporary jobs restore that saved assignment.
+  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:house,job:"guard",jobTarget:null,homePost:null,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,reposting:false};
 }
 function spawnHouseWorker(house){
   const worker=createHouseWorker(house);if(!worker)return;
-  state.workers.push(worker);burst(worker.postX,worker.postY,"#ead28d",9);sound(720,.12);
+  if(state.runMode==="normal"){
+    let nearest=null,best=Infinity;
+    for(const post of vacantDurablePosts()){const d=distance(house.x,house.y,post.x,post.y);if(d<best){best=d;nearest=post;}}
+    if(nearest){Object.assign(worker,builtJobAssignment(nearest));worker.staffingArrivedAt=null;}
+  }
+  state.workers.push(worker);burst(house.x,house.y+23,"#ead28d",9);sound(720,.12);
 }
 function updateWorkerSpawns(dt){
   for(const house of completeHouses()){
@@ -807,12 +861,64 @@ function updateWorkerSpawns(dt){
 function resourceIsActive(node,kind){return kind==="wood"?node.stump<=0:node.depleted<=0;}
 function workerLoad(worker){return RESOURCE_KINDS.reduce((total,kind)=>total+worker.carried[kind],0);}
 function clearWorkerTask(worker){if(worker.taskTarget?.claimedBy===worker)delete worker.taskTarget.claimedBy;worker.taskTarget=null;}
+function clearWorkerSelfSupply(worker){clearWorkerTask(worker);worker.selfSupply=null;}
+function releaseWorkerHome(worker){
+  clearWorkerSelfSupply(worker);
+  const homePost=worker.homePost;worker.homePost=null;
+  const node=homePost?.jobTarget?.node,nodeKind=node&&resourceNodeKind(node);
+  if(homePost&&(homePost.jobTarget===null||buildings.includes(homePost.jobTarget)||(nodeKind&&resourceIsActive(node,nodeKind)))){
+    worker.job=homePost.job;worker.jobTarget=homePost.jobTarget;worker.postX=homePost.postX;worker.postY=homePost.postY;return;
+  }
+  worker.job="guard";worker.jobTarget=null;worker.postX=worker.x;worker.postY=worker.y;
+}
+const WORKER_RECRUIT_CADENCE=.5;
+let nextWorkerRecruitAt=0;
+function guardIdleAtSpawn(worker){
+  const house=worker.spawnSource;
+  return worker.job==="guard"&&worker.jobTarget===null&&!worker.combatTarget&&!worker.retaliationTarget&&!worker.returnAfterCombat&&!worker.fleeing&&!worker.homePost&&house&&buildings.includes(house)&&house.complete&&house.type==="house"&&distance(worker.postX,worker.postY,house.x,house.y+23)<=4;
+}
+function recruitBlueprintBuilders(){
+  if(!DBG.blueprintRecruiting||state.runMode!=="normal")return;
+  for(const building of buildings){
+    if(building.complete)continue;
+    while(workerOccupancyStatus(building).assigned<workerOccupancyStatus(building).capacity){
+      let nearest=null,best=Infinity;
+      for(const worker of state.workers){
+        if(worker.job!=="guard"||worker.combatTarget||worker.retaliationTarget||worker.returnAfterCombat||worker.fleeing||worker.homePost)continue;
+        const d=distance(worker.x,worker.y,building.x,building.y);if(d<=TUNE.recruitRadius&&d<best){nearest=worker;best=d;}
+      }
+      if(!nearest)break;
+      nearest.homePost={job:nearest.job,jobTarget:nearest.jobTarget,postX:nearest.postX,postY:nearest.postY};
+      nearest.job="build";nearest.jobTarget=building;nearest.postX=building.x;nearest.postY=building.y+20;
+    }
+  }
+}
+function recruitIdleGuards(){
+  if(!DBG.idleSeeksWork||state.runMode!=="normal")return;
+  for(const post of vacantDurablePosts()){
+    while(workerOccupancyStatus(post).assigned<workerOccupancyStatus(post).capacity){
+      let nearest=null,best=Infinity;
+      for(const worker of state.workers){
+        if(!guardIdleAtSpawn(worker))continue;
+        const d=distance(worker.x,worker.y,post.x,post.y);if(d<=TUNE.recruitRadius&&d<best){nearest=worker;best=d;}
+      }
+      if(!nearest)break;
+      Object.assign(nearest,builtJobAssignment(post));nearest.staffingArrivedAt=null;nearest.reposting=true;
+    }
+  }
+}
+function recruitWorkers(){
+  if(state.runMode!=="normal"||(!DBG.blueprintRecruiting&&!DBG.idleSeeksWork)||state.clock.elapsed<nextWorkerRecruitAt)return;
+  // Both independent sweeps share one game-time cadence; blueprints never enter the durable-post sweep.
+  nextWorkerRecruitAt=state.clock.elapsed+WORKER_RECRUIT_CADENCE;
+  recruitBlueprintBuilders();recruitIdleGuards();
+}
 function targetIsClaimed(target){
   const owner=target.claimedBy;if(owner&&(!state.workers.includes(owner)||owner.taskTarget!==target)){delete target.claimedBy;return false;}return !!owner;
 }
 function nearestWorkerNode(worker,kind,centerX=worker.postX,centerY=worker.postY,radius=WORKER_LEASH){
   const nodes=kind==="wood"?trees:kind==="stone"?rocks:diamonds;let choice=null,best=Infinity;
-  for(const node of nodes){const scopeDistance=distance(centerX,centerY,node.x,node.y),d=distance(worker.x,worker.y,node.x,node.y);if(resourceIsActive(node,kind)&&scopeDistance<=radius&&d<best){choice=node;best=d;}}
+  for(const node of nodes){const scopeDistance=distance(centerX,centerY,node.x,node.y),d=distance(worker.x,worker.y,node.x,node.y),occupancy=workerOccupancyStatus(node,worker);if(resourceIsActive(node,kind)&&occupancy.assigned<occupancy.capacity&&scopeDistance<=radius&&d<best){choice=node;best=d;}}
   return choice;
 }
 function moveWorker(worker,x,y,dt,stop=12){
@@ -823,7 +929,7 @@ function moveWorker(worker,x,y,dt,stop=12){
 function workerCoatColor(worker){return worker.job==="haul"?"#4d7892":worker.job==="build"?"#d29a39":worker.job==="guard"?"#856347":"#d4b079";}
 function killWorker(worker){
   const at=state.workers.indexOf(worker);if(at<0)return false;
-  clearWorkerTask(worker);worker.combatTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;
+  clearWorkerSelfSupply(worker);worker.homePost=null;worker.combatTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.fleeing=false;worker.fleeSafeTime=0;worker.reposting=false;
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,worker.x+rand(-7,7),worker.y+rand(-5,5));}
   state.workers.splice(at,1);
   // Snapshot only rendering data: the source slot is free as soon as the mutable worker leaves state.workers.
@@ -849,38 +955,99 @@ function nearestBuildStorage(building,worker){
   return {storage:choice,covered};
 }
 function buildNeed(building,kind,worker){
-  let reserved=0;for(const other of state.workers)if(other!==worker&&other.job==="build"&&other.jobTarget===building)reserved+=other.carried[kind]+(other.taskTarget?.kind===kind?1:0);
+  let reserved=0;
+  for(const other of state.workers)if(other!==worker&&other.job==="build"&&other.jobTarget===building){
+    reserved+=other.carried[kind]+(other.taskTarget?.kind===kind?1:0);
+    if(other.selfSupply?.kind===kind&&!other.carried[kind]&&other.taskTarget?.kind!==kind)reserved++;
+  }
   return Math.max(0,buildingCost(building)[kind]-building.delivered[kind]-reserved);
 }
 function inheritBuiltJob(worker,building){
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,building.x+rand(-8,8),building.y+rand(-5,5));}
-  clearWorkerTask(worker);worker.returning=false;worker.starved=false;
-  if(building.type==="lumber"||building.type==="quarry"){worker.job="staff";worker.jobTarget=building;worker.postX=building.x;worker.postY=building.y+16;}
-  else if(building.type==="stockpile"){worker.job="haul";worker.jobTarget=building;worker.postX=building.x;worker.postY=building.y+18;}
-  else{worker.job="guard";worker.jobTarget=null;worker.postX=building.x;worker.postY=building.y+(building.type==="house"?23:18);}
+  clearWorkerSelfSupply(worker);worker.returning=false;worker.starved=false;
+  const assignment=builtJobAssignment(building),occupancy=workerOccupancyStatus(building,worker);
+  if(worker.homePost&&(!occupancy||occupancy.assigned>=occupancy.capacity))releaseWorkerHome(worker);
+  else{
+    if(occupancy&&occupancy.assigned>=occupancy.capacity)Object.assign(worker,{job:"guard",jobTarget:null,postX:assignment.postX,postY:assignment.postY});
+    else Object.assign(worker,assignment);
+    worker.homePost=null;
+  }
+  worker.staffingArrivedAt=null;
+}
+function resolveBuildingCompletionWorkers(building){
+  // Snapshot preserves state.workers order while inheritance mutates the fields used by this filter.
+  const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);
+  for(const worker of builders)inheritBuiltJob(worker,building);
+}
+function nearestBuildDrop(building,worker){
+  let nearest=null,best=Infinity;
+  for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||!["wood","stone"].includes(resource.kind)||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>TUNE.builderSourceRadius)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
+  return nearest;
+}
+function claimBuildDrop(worker,resource){if(!resource)return false;worker.starved=false;worker.taskTarget=resource;resource.claimedBy=worker;return true;}
+function nearestBuilderSelfSupply(worker,building){
+  let choice=null,best=Infinity;
+  for(const kind of ["wood","stone"]){
+    if(buildNeed(building,kind,worker)<=0)continue;
+    const nodes=kind==="wood"?trees:rocks;
+    for(const node of nodes){
+      if(!resourceIsActive(node,kind)||distance(building.x,building.y,node.x,node.y)>TUNE.builderSourceRadius)continue;
+      const occupancy=workerOccupancyStatus(node,worker),d=distance(worker.x,worker.y,node.x,node.y);
+      if(occupancy.assigned<occupancy.capacity&&d<best){choice={kind,node};best=d;}
+    }
+  }
+  return choice;
+}
+function updateBuilderSelfSupply(worker,building,dt){
+  if(state.runMode!=="normal"||!DBG.builderSelfSupply){clearWorkerSelfSupply(worker);return false;}
+  let supply=worker.selfSupply;
+  if(supply&&buildNeed(building,supply.kind,worker)<=0){clearWorkerSelfSupply(worker);supply=null;}
+  if(!supply){
+    supply=nearestBuilderSelfSupply(worker,building);
+    if(!supply)return false;
+    worker.selfSupply=supply;worker.starved=false;
+  }
+  if(worker.taskTarget){
+    const drop=worker.taskTarget;
+    if(!resourceDrops.includes(drop)||drop.target||drop.claimedBy!==worker){clearWorkerTask(worker);return true;}
+    worker.starved=false;
+    if(drop.ground&&moveWorker(worker,drop.x,drop.y,dt,10)){
+      const at=resourceDrops.indexOf(drop);if(at>=0){worker.carried[drop.kind]++;resourceDrops.splice(at,1);}
+      delete drop.claimedBy;worker.taskTarget=null;worker.selfSupply=null;
+    }else if(!drop.ground)moveWorker(worker,drop.x,drop.y,dt,10);
+    return true;
+  }
+  if(!resourceIsActive(supply.node,supply.kind)){clearWorkerSelfSupply(worker);return true;}
+  worker.starved=false;
+  if(moveWorker(worker,supply.node.x,supply.node.y,dt,20)&&worker.hitCooldown<=0){
+    worker.hitCooldown=WORKER_HIT_COOLDOWN;const firstNewDrop=resourceDrops.length;hitResource(supply.node,supply.kind,true);
+    const drop=resourceDrops[firstNewDrop];invariant(drop?.kind===supply.kind,"self-supply mining did not create its physical drop");drop.claimedBy=worker;worker.taskTarget=drop;
+  }
+  return true;
 }
 function updateBuilder(worker,dt){
   const building=worker.jobTarget;
-  if(!building||!buildings.includes(building)){clearWorkerTask(worker);worker.job="guard";worker.jobTarget=null;worker.starved=false;return;}
+  if(!building||!buildings.includes(building)){releaseWorkerHome(worker);worker.starved=false;return;}
   if(building.complete){inheritBuiltJob(worker,building);return;}
   if(workerLoad(worker)>0){
-    worker.starved=false;if(!moveWorker(worker,building.x,building.y,dt,16))return;
+    worker.selfSupply=null;worker.starved=false;if(!moveWorker(worker,building.x,building.y,dt,16))return;
     const cost=buildingCost(building);for(const kind of ["wood","stone"]){const amount=Math.min(worker.carried[kind],cost[kind]-building.delivered[kind]);worker.carried[kind]-=amount;building.delivered[kind]+=amount;handoffParticles(building.x,building.y,kind,amount,worker.x,worker.y);}
-    building.pulse=1;if(building.delivered.wood>=cost.wood&&building.delivered.stone>=cost.stone){completeBuilding(building);inheritBuiltJob(worker,building);}return;
+    building.pulse=1;if(building.delivered.wood>=cost.wood&&building.delivered.stone>=cost.stone)completeBuilding(building);return;
   }
+  if(worker.selfSupply&&updateBuilderSelfSupply(worker,building,dt))return;
   if(worker.taskTarget&&(!resourceDrops.includes(worker.taskTarget)||worker.taskTarget.target||worker.taskTarget.claimedBy!==worker))clearWorkerTask(worker);
   if(worker.taskTarget){
     worker.starved=false;const resource=worker.taskTarget;if(moveWorker(worker,resource.x,resource.y,dt,10)){const at=resourceDrops.indexOf(resource);if(at>=0){worker.carried[resource.kind]++;resourceDrops.splice(at,1);}delete resource.claimedBy;worker.taskTarget=null;}return;
   }
+  if(DBG.groundSourcing&&claimBuildDrop(worker,nearestBuildDrop(building,worker)))return;
   const source=nearestBuildStorage(building,worker),storage=source.storage;
-  if(!source.covered){worker.starved=true;moveWorker(worker,worker.postX,worker.postY,dt);return;}
+  if(!source.covered){if(updateBuilderSelfSupply(worker,building,dt))return;worker.starved=["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);return;}
   if(storage){
     worker.starved=false;if(!moveWorker(worker,storage.x,storage.y,dt,storage===BASE?BASE.r-4:18))return;
     const stock=storageStock(storage);let room=WORKER_CARRY;for(const kind of ["wood","stone"]){const amount=Math.min(room,stock[kind],buildNeed(building,kind,worker));stock[kind]-=amount;worker.carried[kind]+=amount;room-=amount;}if(storage!==BASE)storage.pulse=1;return;
   }
-  let nearest=null,best=Infinity;
-  for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||!["wood","stone"].includes(resource.kind)||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>WORKER_LEASH)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
-  if(nearest){worker.starved=false;worker.taskTarget=nearest;nearest.claimedBy=worker;return;}
+  if(claimBuildDrop(worker,nearestBuildDrop(building,worker)))return;
+  if(updateBuilderSelfSupply(worker,building,dt))return;
   worker.starved=["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);
 }
 
@@ -985,6 +1152,37 @@ function updateGuard(worker,dt){
   if(target){worker.combatTarget=target;if(moveWorker(worker,target.x,target.y,dt,WORKER_MELEE-2))workerAttack(worker,target);return;}
   moveWorker(worker,worker.postX,worker.postY,dt);
 }
+function guardWalkPickup(worker){
+  if(!DBG.idleSeeksWork||state.runMode!=="normal"||(worker.job!=="guard"&&!worker.reposting)||worker.fleeing||workerLoad(worker)!==0)return;
+  let nearest=null,best=20;
+  for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<=best){nearest=resource;best=d;}}
+  if(!nearest)return;
+  nearest.claimedBy=worker;worker.taskTarget=nearest;
+  const at=resourceDrops.indexOf(nearest);if(at>=0){worker.carried[nearest.kind]++;resourceDrops.splice(at,1);}
+  delete nearest.claimedBy;worker.taskTarget=null;
+}
+function settleGuardPickup(worker){
+  if(workerLoad(worker)===0)return;
+  for(const kind of RESOURCE_KINDS){
+    if(!worker.carried[kind])continue;
+    const blueprint=buildings.find(building=>building!==BASE&&!building.complete&&distance(worker.postX,worker.postY,building.x,building.y)<=60&&buildNeed(building,kind,worker)>0);
+    if(blueprint){worker.carried[kind]--;blueprint.delivered[kind]++;blueprint.pulse=1;handoffParticles(blueprint.x,blueprint.y,kind,1,worker.x,worker.y);const cost=buildingCost(blueprint);if(blueprint.delivered.wood>=cost.wood&&blueprint.delivered.stone>=cost.stone)completeBuilding(blueprint);continue;}
+    const stockpile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(worker.postX,worker.postY,building.x,building.y)<=60);
+    if(stockpile){worker.carried[kind]--;stockpile.storage[kind]++;stockpile.pulse=1;continue;}
+    worker.carried[kind]--;spawnResource(kind,worker.postX,worker.postY);
+  }
+}
+function nearestWorkerSafety(worker){
+  let safe=BASE,best=distance(worker.x,worker.y,BASE.x,BASE.y);
+  for(const building of buildings){if(!building.complete||building.type!=="tower")continue;const d=distance(worker.x,worker.y,building.x,building.y);if(d<best){safe=building;best=d;}}
+  return safe;
+}
+function updateWorkerFlee(worker,dt){
+  let danger=false;for(const enemy of state.enemies)if(distance(worker.x,worker.y,enemy.x,enemy.y)<=WORKER_LEASH*1.5){danger=true;break;}
+  worker.fleeSafeTime=danger?0:(worker.fleeSafeTime||0)+dt;
+  if(worker.fleeSafeTime>=3){worker.fleeing=false;worker.fleeSafeTime=0;worker.retaliationTarget=null;return false;}
+  worker.combatTarget=null;worker.retaliationTarget=null;const safe=nearestWorkerSafety(worker);moveWorker(worker,safe.x,safe.y,dt);return true;
+}
 function updateHauler(worker,dt){
   const storage=worker.jobTarget,task=worker.taskTarget;
   if(task&&(!resourceDrops.includes(task)||task.target||task.claimedBy!==worker))clearWorkerTask(worker);
@@ -1017,16 +1215,28 @@ function updateGatherer(worker,dt){
 }
 function updateWorker(worker,dt){
   worker.step+=dt;worker.hitCooldown-=dt;worker.attackCooldown-=dt;worker.combatTarget=null;
+  if(state.runMode==="normal"&&!worker.fleeing&&worker.hp<=TUNE.fleeHpThreshold){
+    for(const enemy of state.enemies)if(distance(worker.x,worker.y,enemy.x,enemy.y)<=WORKER_LEASH){clearWorkerSelfSupply(worker);worker.combatTarget=null;worker.fleeing=true;worker.fleeSafeTime=0;break;}
+  }
+  if(worker.fleeing&&updateWorkerFlee(worker,dt))return;
   let threat=null,best=WORKER_MELEE;
   for(const enemy of state.enemies){const d=distance(worker.x,worker.y,enemy.x,enemy.y);if(d<best){best=d;threat=enemy;}}
-  if(threat){clearWorkerTask(worker);workerAttack(worker,threat);return;}
+  if(threat){clearWorkerSelfSupply(worker);workerAttack(worker,threat);return;}
   const attacker=worker.retaliationTarget;
   if(attacker&&state.enemies.includes(attacker)&&distance(worker.postX,worker.postY,attacker.x,attacker.y)<=WORKER_LEASH+WORKER_MELEE){
-    clearWorkerTask(worker);worker.combatTarget=attacker;if(moveWorker(worker,attacker.x,attacker.y,dt,WORKER_MELEE))workerAttack(worker,attacker);return;
+    clearWorkerSelfSupply(worker);worker.combatTarget=attacker;if(moveWorker(worker,attacker.x,attacker.y,dt,WORKER_MELEE))workerAttack(worker,attacker);return;
   }
   if(worker.retaliationTarget)worker.returnAfterCombat=true;
   worker.retaliationTarget=null;
-  if(worker.returnAfterCombat){clearWorkerTask(worker);if(moveWorker(worker,worker.postX,worker.postY,dt)){worker.returnAfterCombat=false;}return;}
+  if(worker.returnAfterCombat){clearWorkerTask(worker);guardWalkPickup(worker);if(moveWorker(worker,worker.postX,worker.postY,dt)){settleGuardPickup(worker);worker.returnAfterCombat=false;}return;}
+  const staffingTarget=worker.jobTarget&&workerStaffsPost(worker,worker.jobTarget)&&durablePostStatus(worker.jobTarget)?worker.jobTarget:null;
+  if(worker.staffingArrivedAt&&worker.staffingArrivedAt!==staffingTarget)worker.staffingArrivedAt=null;
+  if(staffingTarget&&worker.staffingArrivedAt!==staffingTarget){
+    if(worker.reposting)guardWalkPickup(worker);
+    if(moveWorker(worker,worker.postX,worker.postY,dt)){if(worker.reposting)settleGuardPickup(worker);worker.staffingArrivedAt=staffingTarget;worker.reposting=false;}
+    else return;
+  }
+  if(worker.job==="guard"&&worker.reposting){guardWalkPickup(worker);if(moveWorker(worker,worker.postX,worker.postY,dt)){settleGuardPickup(worker);worker.reposting=false;}return;}
   if(worker.job==="build")updateBuilder(worker,dt);
   else if(worker.job==="guard")updateGuard(worker,dt);
   else if(worker.job==="haul")updateHauler(worker,dt);
@@ -1093,7 +1303,7 @@ function selectEnemyTarget(enemy){
 }
 function destroyTower(building){
   const at=buildings.indexOf(building);if(at<0)return;buildings.splice(at,1);for(const enemy of state.enemies){if(enemy.retaliationTower===building)enemy.retaliationTower=null;if(enemy.status?.burn?.source===building)enemy.status.burn=null;}
-  for(const worker of state.workers)if(worker.jobTarget===building){clearWorkerTask(worker);worker.job="guard";worker.jobTarget=null;worker.postX=worker.x;worker.postY=worker.y;}
+  for(const worker of state.workers)if(worker.jobTarget===building)releaseWorkerHome(worker);
   if(state.upgradeMenu.building===building)closeUpgradeMenu();burst(building.x,building.y,"#8f5141",22);toast(towerVariant(building).name+" destroyed");sound(70,.35);
 }
 function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
@@ -1160,7 +1370,7 @@ function updateNormal(dt){
   }
   if(state.gameOver)return;
   updateKing(dt);updateTransientTimers(dt);updateResourceNodes(dt);updateLooseResources(dt,true);
-  updateWorkerSpawns(dt);updateBuildings(dt,true);
+  updateWorkerSpawns(dt);updateBuildings(dt,true);recruitWorkers();
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
   updateParticles(dt);effects.afterUpdate();
@@ -1500,6 +1710,8 @@ export function showcaseLabels(){return state.runMode==="showcase"?{revision:sho
 
 /** What the held-action timer is currently filling, or null. Read-only peek. */
 export function heldChopTarget(){ return chopState.target; }
+/** Whether temporary blueprint recruitment has saved an assignment for this worker. */
+function workerIsLoaned(worker){ return !!worker?.homePost; }
 /** Is the primary button down right now? */
 export function primaryHeld(){ return state.primaryClick.held; }
 
@@ -1535,7 +1747,8 @@ export {
   buildingCost, costText, upgradeList, towerUpgradeList, nextHouseCost,
   // world lookups the render layer projects
   storageServiceRadius, workerAssignmentAt, heldWorker, heldBuilding, heldProp,
-  workerCoatColor, workerLoad, carriedTotal, resourceIsActive, oppositeMapSide,
+  workerOccupancyStatus, workerOccupancyAt, durablePostStatus, vacantDurablePosts,
+  workerIsLoaned, workerCoatColor, workerLoad, carriedTotal, resourceIsActive, oppositeMapSide,
   // skill tree — read-only projections of the authored graph over this run's two id sets
   skillTreeNodes, skillTreeEdges,
   // shared numeric helpers (defined here, so nothing restates them)

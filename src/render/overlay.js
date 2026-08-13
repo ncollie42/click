@@ -29,8 +29,8 @@ import {
 } from "../game/data.js";
 import {
   state, trees, rocks, diamonds, buildings, damageDummies,
-  badgeAction, chopProgress, heldChopTarget, primaryHeld,
-  buildingCost, towerUpgradeList, carriedTotal, oppositeMapSide, clamp
+  badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget,
+  buildingCost, towerUpgradeList, carriedTotal, heldWorker, workerIsLoaned, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, oppositeMapSide, clamp
 } from "../game/simulation.js";
 
 const canvas = document.getElementById("overlay");   // 2D overlay sits above the WebGL scene
@@ -78,6 +78,19 @@ function label(text, x, y, hpx, color="#f1dfb7", size=BARS.text){
   ctx.fillStyle = "#17120dcc"; ctx.fillText(text, p.x+1, p.y+1);
   ctx.fillStyle = color; ctx.fillText(text, p.x, p.y);
 }
+/** Dark slot tray: hollow circles are vacancies; filled circles are assigned workers. */
+function drawWorkerSlots(target,hpx,status){
+  const p=project(target.x,target.y,hpx*BARS.lift);if(p.depth>1)return;
+  const s=barScale(),r=3.4*s,gap=3*s,pad=4*s;
+  const w=status.capacity*r*2+Math.max(0,status.capacity-1)*gap+pad*2,h=r*2+pad*2;
+  roundPath(p.x-w/2,p.y-h/2,w,h,3*s);ctx.fillStyle="#17120ddd";ctx.fill();
+  for(let i=0;i<status.capacity;i++){
+    const x=p.x-w/2+pad+r+i*(r*2+gap);
+    ctx.beginPath();ctx.arc(x,p.y,r,0,Math.PI*2);
+    if(i<status.assigned){ctx.fillStyle="#f0dfb0";ctx.fill();}
+    else{ctx.fillStyle="#292119";ctx.fill();ctx.strokeStyle="#f0dfb0";ctx.lineWidth=1.35*s;ctx.stroke();}
+  }
+}
 
 // ── delivery readout, shared by blueprints and upgrades ─────────────────────
 const RES_ABBR = {wood:"w", stone:"s", dust:"d", coin:"◉", diamond:"◆"};
@@ -101,6 +114,38 @@ function drawDelivery(x, y, name, cost, delivered, accent="#d4a443"){
   label(costLine(cost,delivered), x, y, 34, "#e8dcbc", 8.5);
 }
 
+const BUILD_JOB_ACCENT=css(PAL.jobBuild);
+function workerDrawPosition(worker,held){
+  return worker===held&&state.mouse.inside?state.mouse:worker;
+}
+function addBuilderLine(worker,held,sitePoint){
+  const at=workerDrawPosition(worker,held),p=project(at.x,at.y,18);
+  if(p.depth>1)return;
+  ctx.moveTo(p.x,p.y);ctx.lineTo(sitePoint.x,sitePoint.y);
+}
+/** Hover-only construction links. One shared path keeps the transient work allocation-free. */
+function drawRecruitmentLines(){
+  if(state.runMode!=="normal")return;
+  const hovered=hoverTarget(),site=hovered?.kind==="building"&&!hovered.object.complete?hovered.object:null;
+  if(!site)return;
+  const sitePoint=project(site.x,site.y,12);if(sitePoint.depth>1)return;
+  const held=heldWorker();ctx.save();ctx.beginPath();
+  for(const worker of state.workers)if(worker.job==="build"&&worker.jobTarget===site)addBuilderLine(worker,held,sitePoint);
+  if(held&&held.job==="build"&&held.jobTarget===site)addBuilderLine(held,held,sitePoint);
+  ctx.strokeStyle=BUILD_JOB_ACCENT;ctx.globalAlpha=.28;ctx.lineWidth=Math.max(1,barScale());ctx.lineCap="round";ctx.stroke();ctx.restore();
+}
+function drawLoanMarker(worker,held){
+  if(!workerIsLoaned(worker))return;
+  const at=workerDrawPosition(worker,held),p=project(at.x,at.y,38);if(p.depth>1)return;
+  const r=3.5*barScale();ctx.fillStyle=BUILD_JOB_ACCENT;ctx.beginPath();
+  ctx.moveTo(p.x,p.y-r);ctx.lineTo(p.x+r,p.y);ctx.lineTo(p.x,p.y+r);ctx.lineTo(p.x-r,p.y);ctx.closePath();ctx.fill();
+}
+function drawLoanMarkers(){
+  if(state.runMode!=="normal")return;
+  const held=heldWorker();for(const worker of state.workers)drawLoanMarker(worker,held);
+  if(held)drawLoanMarker(held,held);
+}
+
 export function drawOverlay(){
   // Draw in 960x540 space; the transform scales it up to device pixels crisply.
   ctx.setTransform(overlayScale,0,0,overlayScale,0,0);
@@ -112,6 +157,7 @@ export function drawOverlay(){
     ctx.fillRect(0,0,VIEW_W,VIEW_H);
   }
   drawNightTelegraph();
+  drawRecruitmentLines();
 
   // Health only. Swing progress lives in the action badge now (drawActionBadge),
   // so a node you are cutting shows its remaining yield here and the fill of the
@@ -121,12 +167,22 @@ export function drawOverlay(){
 
   // Widths keep each track near the reference's ~9:1 ratio; the frame padding
   // adds height, so a narrow track reads as a squat blob rather than a bar.
-  for(const t of trees)
-    if(t.stump<=0) marks(t.x,t.y,58,52, rowsFor(t.hp/t.max, css(PAL.hpGood)));
-  for(const r of rocks)
-    if(r.depleted<=0) marks(r.x,r.y,34,46, rowsFor(r.hp/r.max, "#bcbab3"));
-  for(const n of diamonds)
-    if(n.depleted<=0) marks(n.x,n.y,38,46, rowsFor(n.hp/n.max, css(PAL.diamond)));
+  const hasWorkers=state.workers.length>0||!!heldWorker();
+  const hoveredOccupancy=hasWorkers&&state.mouse.inside?workerOccupancyAt(state.mouse.x,state.mouse.y):null;
+  const occupancyVisible=target=>{const status=workerOccupancyStatus(target);return status&&hasWorkers&&(status.assigned>0||hoveredOccupancy?.target===target);};
+  const drawOccupancy=(target,height)=>{const status=workerOccupancyStatus(target);if(status)drawWorkerSlots(target,height,status);};
+  for(const t of trees)if(t.stump<=0){
+    marks(t.x,t.y,58,52, rowsFor(t.hp/t.max, css(PAL.hpGood)));
+    if(occupancyVisible(t))drawOccupancy(t,72);
+  }
+  for(const r of rocks)if(r.depleted<=0){
+    marks(r.x,r.y,34,46, rowsFor(r.hp/r.max, "#bcbab3"));
+    if(occupancyVisible(r))drawOccupancy(r,49);
+  }
+  for(const n of diamonds)if(n.depleted<=0){
+    marks(n.x,n.y,38,46, rowsFor(n.hp/n.max, css(PAL.diamond)));
+    if(occupancyVisible(n))drawOccupancy(n,53);
+  }
   for(const e of state.enemies){
     const s = ENEMY_TYPES[e.type].size;
     marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e.hp/e.max, "#c65343"));
@@ -135,6 +191,7 @@ export function drawOverlay(){
   for(const d of damageDummies)marks(d.x,d.y,42,48,rowsFor(d.hp/d.max,"#d6c36d"));
   for(const w of state.workers)
     if(w.hp<WORKER_HP) bar(w.x,w.y,30,w.hp/WORKER_HP,40,null,css(PAL.hpGood));
+  drawLoanMarkers();
   if(state.baseHp<state.baseMax) bar(BASE.x,BASE.y,84,state.baseHp/state.baseMax,90,null,css(PAL.bad));
 
   for(const b of buildings){
@@ -142,9 +199,13 @@ export function drawOverlay(){
     // share one name / bar / tally stack instead of two invented formats.
     if(!b.complete){
       drawDelivery(b.x, b.y, BUILDING_TYPES[b.type].name, buildingCost(b), b.delivered);
+      if(occupancyVisible(b))drawOccupancy(b,74);
       if(b.starved) label("! starved", b.x, b.y, 22, "#e08a76");
       continue;
     }
+    const staffing=durablePostStatus(b);
+    if(staffing&&staffing.arrived<staffing.capacity)label("! vacant",b.x,b.y,30,"#72c9b2");
+    if(staffing&&occupancyVisible(b))drawOccupancy(b,48);
     if(b.type==="tower" && b.tower && b.tower.hp<b.tower.maxHp)
       bar(b.x,b.y,56,b.tower.hp/b.tower.maxHp,52,null,css(PAL.hpGood));
     if(b.activeUpgrade){
