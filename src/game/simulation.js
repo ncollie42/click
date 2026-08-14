@@ -13,7 +13,7 @@ import {
   ENEMY_POOL,
   NIGHT_WAVE_SPAWNS,NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_TIER_BONUS_SPAWNS,NIGHT_WAVE_RECIPES,
   DAY_DURATION,NIGHT_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
-  KING,STEADY_HAND_RATE
+  KING,STEADY_HAND_RATE,FIREBALL
 } from "./data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -76,6 +76,7 @@ const NO_EFFECTS = {
   pauseChanged(){},          // (paused)
   levelChanged(){},          // xp progress or the level itself moved
   draftChanged(){},          // an offer appeared, was consumed, or was replaced by the next one
+  handChanged(){},           // the held-card list moved: a card arrived, was spent, or lost a charge
   buildHudChanged(){},       // build dock buttons / stack counts / house cost moved
   buildDockChanged(){},      // (category) which dock category is open
   upgradeMenuOpened(){},     // state.upgradeMenu is populated; show and render the panel
@@ -140,9 +141,19 @@ const state = {
   // xp is the run TOTAL ever fed; levelXp is only the progress into the current level, so the two
   // never have to be reconstructed from each other. Both are written by feedBase() alone.
   xp:0,levelXp:0,level:0,skillPoints:0,
-  // The draft's whole run ledger: queued level-ups, the live 3-card offer, buff stacks taken,
-  // blueprints spent, and the two banked consumable effects. Authored tables stay untouched.
-  draft:{queue:0,offer:null,buffs:{},blueprints:new Set(),calmNight:false,dayBonus:0},
+  // The draft's whole run ledger: queued level-ups, queued dawn rewards, the live 3-card offer and
+  // which kind of offer it is, buff stacks taken, blueprints spent, banked free-cost waivers, and
+  // the two banked consumable effects. Authored tables stay untouched.
+  draft:{queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},blueprints:new Set(),waivers:{},calmNight:false,dayBonus:0},
+  // ── the hand ──
+  // Every card the player is HOLDING, oldest first. One entry per id: {id, count, charges} where
+  // count is how many copies are held and charges is the partially-spent kit's remaining placements
+  // (null when the top copy is untouched). Written only by the hand helpers below.
+  hand:[],
+  // The card currently steering state.buildMode, or null: {id, type, cast}. `type` is the authored
+  // BUILDING_TYPES key whose ghost/footprint the placement flow draws; `cast` (fireball) replaces
+  // "leave a building" with an instant effect at the anchor.
+  cardTargeting:null,
   baseHp:100,baseMax:100,gameOver:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed: total simulated seconds this run. It accumulates the same dt the phase countdown
   // spends, so it is game time, not wall time — it does not advance while paused or after a loss,
@@ -300,7 +311,7 @@ function buildShowcaseFixtures(){
 }
 // First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
-function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,offer:null,buffs:{},blueprints:new Set(),calmNight:false,dayBonus:0};state.draftPaused=false;effects.levelChanged();effects.draftChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
+function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},blueprints:new Set(),waivers:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
   if(initializedMode&&initializedMode!==mode)throw new Error("run mode already initialized as "+initializedMode);
@@ -319,7 +330,23 @@ export function validateSimulationInvariants(){
   invariant(Number.isInteger(state.skillPoints)&&state.skillPoints>=0,"illegal skill points");
   const offer=state.draft.offer;
   invariant(offer===null||(Array.isArray(offer)&&offer.length>0&&offer.length<=3&&new Set(offer).size===offer.length&&offer.every(id=>cardById[id]?.inPool)),"illegal draft offer");
+  invariant(offer===null?state.draft.offerKind===null:DRAFT_KINDS.includes(state.draft.offerKind),"draft offer kind disagrees with the pending offer");
+  invariant(state.draft.offerKind!=="dawn"||offer.every(id=>DAWN_CATEGORIES.includes(cardById[id].category)),"a dawn offer may only hold consumables and blueprints");
   invariant(state.draftPaused===!!offer,"draft pause flag disagrees with the pending offer");
+  // The hand: one stack per id, every id authored, every count real, partial kits mid-spend only.
+  invariant(new Set(state.hand.map(entry=>entry.id)).size===state.hand.length,"the hand holds two stacks of one card");
+  for(const entry of state.hand){
+    invariant(cardById[entry.id],"unknown card in hand: "+entry.id);
+    invariant(["consumable","blueprint"].includes(cardById[entry.id].category),"only consumables and blueprints may be held");
+    invariant(Number.isInteger(entry.count)&&entry.count>=1,"illegal hand stack count for "+entry.id);
+    invariant(entry.charges===null||(Number.isInteger(entry.charges)&&entry.charges>0&&entry.charges<=(cardById[entry.id].charges??1)),"illegal remaining charges for "+entry.id);
+  }
+  const targeting=state.cardTargeting;
+  if(targeting){
+    invariant(state.buildMode===targeting.type,"card targeting lost its placement mode");
+    const entry=handEntry(targeting.id);
+    invariant(entry&&entry.charges>0,"card targeting outlived the card it is placing");
+  }
   const collections=[trees,rocks,diamonds,resourceDrops,chests,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers];
   for(const collection of collections)for(const item of collection)invariant(Number.isFinite(item.x)&&Number.isFinite(item.y),"non-finite entity coordinates");
   for(const enemy of state.enemies){
@@ -373,7 +400,7 @@ function stopGameplayInput(cancelPlacement=false){
   // Modal/pause teardown must not strand a chest outside placed ownership; showcase props keep their
   // existing authored-coordinate cancellation contract.
   if(heldChest()||heldProp())cancelHeldObject();
-  if(cancelPlacement){state.buildMode=null;setBuildDockCategory(null);effects.buildHudChanged();}
+  if(cancelPlacement){state.buildMode=null;state.cardTargeting=null;setBuildDockCategory(null);effects.buildHudChanged();}
 }
 function togglePause(){
   if(state.gameOver)return;
@@ -383,7 +410,11 @@ function togglePause(){
 }
 function cancelBuildMode(){
   if(!state.buildMode)return false;
-  state.buildMode=null;effects.buildHudChanged();toast("building placement cancelled");return true;
+  // A cancelled card keeps whatever charges it had not placed: the hand entry was never removed,
+  // so dropping the targeting record alone leaves a partial card the player can play again.
+  const card=state.cardTargeting&&handEntry(state.cardTargeting.id);
+  state.buildMode=null;state.cardTargeting=null;effects.buildHudChanged();
+  toast(card?cardById[card.id].text+" put away — "+card.charges+" charge"+(card.charges===1?"":"s")+" left":"building placement cancelled");return true;
 }
 
 function spawnEnemy(side=null,enemyType=null){
@@ -643,6 +674,11 @@ function updatePrimaryClick(dt){
 function leftClick(){
   if(state.gameOver||state.paused||heldChest())return;
   const m=state.mouse;
+  // A played card owns the click outright, ahead of even the swing: unlike build mode — which the
+  // player may leave armed while fighting — targeting was an explicit commitment made this second,
+  // and a fireball aimed INTO a crowd must not turn into a punch at whoever stands nearest the
+  // cursor. Right click still cancels it.
+  if(state.cardTargeting){placeCardCharge(snapToCellCenter(m.x,m.y));return;}
   // Same resolver the hover ring and the hold timer read, so the press arms
   // exactly what was previewed. Resolved once up front; it is pure, and every
   // branch between here and the harvest fall-through returns before using it.
@@ -661,13 +697,18 @@ function leftClick(){
       // completion is unconditional a free-cost placement can never leave a stuck blueprint.
       const freed=DBG.freeCosts&&!placed.complete;
       if(freed)completeBuilding(placed);
+      // A banked blueprint waiver finishes this one build for nothing, through the same
+      // completeBuilding() a satisfied delivery reaches. The cost snapshot is left as authored and
+      // state.stored is never touched; the waiver is spent only when it actually pays for something.
+      const waived=!placed.complete&&spendWaiver("building:"+type);
+      if(waived){completeBuilding(placed);toast("blueprint spent — "+def.name+" raised free");}
       // unlimited charges (debug): the stack counter is simply never decremented, so the
       // authored starting counts and the "n left" HUD stay honest the moment it is off.
       if(def.stack){if(!DBG.unlimitedCharges)state.buildStacks[type]--;state.buildMode=DBG.unlimitedCharges||state.buildStacks[type]>0?type:null;}else state.buildMode=null;
       setBuildDockCategory(null);effects.buildHudChanged();
       sound(240,.06);
       // completeBuilding() already announced a freed blueprint's own ready message.
-      if(!freed)toast(def.stack?def.name+" placed — "+(DBG.unlimitedCharges?"unlimited":state.buildStacks[type]+" stacks remain"):def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
+      if(!freed&&!waived)toast(def.stack?def.name+" placed — "+(DBG.unlimitedCharges?"unlimited":state.buildStacks[type]+" stacks remain"):def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
     }else toast("needs clear ground away from the base");
     return;
   }
@@ -890,16 +931,22 @@ function gainLevel(){
 }
 
 // ── the draft ───────────────────────────────────────────────────────────────
-// Each level-up queues one offer of three DISTINCT eligible cards, drawn by rarity weight from the
-// authored catalog. Exactly one offer is live at a time and the world is halted while it is — via
-// state.draftPaused, a flag of its own, so a player pause can be on or off underneath it. The
-// choice arrives through chooseDraft(); nothing else may write state.draft.
+// Two things deal offers now, and both use this one machinery: a LEVEL-UP deals three cards from the
+// whole eligible catalog, and DAWN — the moment a night rolls into a day — deals three from the
+// consumable/blueprint half of it. Each offer is three DISTINCT eligible cards drawn by rarity
+// weight. Exactly one offer is live at a time (whichever kind it is), the rest wait in their queues,
+// and the world is halted while one pends — via state.draftPaused, a flag of its own, so a player
+// pause can be on or off underneath it. The choice arrives through chooseDraft(); nothing else may
+// write state.draft. What a taken card DOES is routed by takeCard() below, not by the dealer.
+const DRAFT_KINDS=["level","dawn"];
+const DAWN_CATEGORIES=["consumable","blueprint"];
 function levelCost(level){return LEVEL_CURVE.base*LEVEL_CURVE.growth**level;}
 function buffStacks(id){return state.draft.buffs[id]||0;}
-// Consumables carry no `stacks`, so the same test lets them repeat forever and caps buffs.
-function draftEligible(){return CARDS.filter(card=>card.inPool&&(card.category==="blueprint"?!state.draft.blueprints.has(card.id):buffStacks(card.id)<(card.stacks??Infinity)));}
-function drawDraftOffer(){
-  const pool=draftEligible(),picks=[];
+// Consumables carry no `stacks`, so the same test lets them repeat forever and caps buffs. A
+// blueprint leaves the pool the moment it is taken, held in hand or already played.
+function draftEligible(categories=null){return CARDS.filter(card=>card.inPool&&(!categories||categories.includes(card.category))&&(card.category==="blueprint"?!state.draft.blueprints.has(card.id):buffStacks(card.id)<(card.stacks??Infinity)));}
+function drawDraftOffer(categories=null){
+  const pool=draftEligible(categories),picks=[];
   while(picks.length<3&&pool.length){
     let roll=Math.random()*pool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),index=0;
     while(index<pool.length-1&&(roll-=RARITY_WEIGHTS[pool[index].rarity])>=0)index++;
@@ -907,16 +954,29 @@ function drawDraftOffer(){
   }
   return picks.length?picks:null;
 }
-// An empty pool consumes its queued level silently, so a run with nothing left to offer never stalls.
+// An empty pool consumes its queued reward silently, so a run with nothing left to offer never
+// stalls. Level-ups are served before dawn rewards, so a dawn that lands on a pending level offer
+// queues behind it rather than jumping it.
 function refillDraft(){
   const draft=state.draft;
-  while(!draft.offer&&draft.queue>0){draft.queue--;draft.offer=drawDraftOffer();}
+  while(!draft.offer&&(draft.queue>0||draft.dawnQueue>0)){
+    const kind=draft.queue>0?"level":"dawn";
+    if(kind==="level")draft.queue--;else draft.dawnQueue--;
+    draft.offer=drawDraftOffer(kind==="dawn"?DAWN_CATEGORIES:null);
+    draft.offerKind=draft.offer?kind:null;
+  }
   state.draftPaused=!!draft.offer;
   if(state.draftPaused){stopGameplayInput();closeUpgradeMenu();}
   effects.draftChanged();
 }
-// THE one place a chosen card becomes an effect. Buff entries are deliberately empty: their whole
-// effect is the stack tally, layered over the authored numbers by the accessors below.
+/** Dawn's own reward, queued by transitionPhase() when a night ends. */
+function queueDawnReward(){
+  if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
+  state.draft.dawnQueue++;refillDraft();
+}
+// THE one place a card becomes an effect — a buff the instant it is drafted, a consumable the
+// instant it is PLAYED out of the hand. Buff entries are deliberately empty: their whole effect is
+// the stack tally, layered over the authored numbers by the accessors below.
 const CARD_EFFECTS={
   clickSpeed(){},critClicks(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},towerDamage(){},towerSpeed(){},clickDamage(){},
   handCarry(){state.capacity+=CARD_BUFFS.handCarry;},
@@ -929,13 +989,113 @@ const CARD_EFFECTS={
   longDay(){if(state.clock.phase==="day")state.clock.remaining+=CARD_CONSUMABLES.longDay;else state.draft.dayBonus+=CARD_CONSUMABLES.longDay;},
   calmNight(){state.draft.calmNight=true;}
 };
-function applyCard(id){
+/** A drafted BUFF, applied on the spot: one more stack, and its (usually empty) effect. */
+function applyBuff(id){
   const card=cardById[id],effect=CARD_EFFECTS[id];
   if(!card||!effect)return false;
-  if(card.category==="buff")state.draft.buffs[id]=buffStacks(id)+1;
-  else if(card.category==="blueprint")state.draft.blueprints.add(id);
+  state.draft.buffs[id]=buffStacks(id)+1;
   effect();toast("drafted: "+card.text);sound(700,.16);
   return true;
+}
+/**
+ * THE routing rule for a taken card, shared by level and dawn offers. A buff lands immediately; a
+ * consumable or blueprint lands in the HAND and does nothing at all until it is played. A blueprint
+ * also leaves the pool here — one copy per run, whether it is still held or already spent.
+ */
+function takeCard(id){
+  const card=cardById[id];
+  if(!card)return false;
+  if(card.category==="buff")return applyBuff(id);
+  if(card.category==="blueprint")state.draft.blueprints.add(id);
+  addToHand(id);toast("drawn: "+card.text);sound(700,.16);
+  return true;
+}
+
+// ── the hand ────────────────────────────────────────────────────────────────
+// The held cards, and the ONLY writers of state.hand / state.cardTargeting. Everything here fires
+// handChanged() on its way out, so a UI never has to poll. Draw order is arrival order: a new id is
+// appended, a repeat thickens the stack it already has.
+function handEntry(id){return state.hand.find(entry=>entry.id===id)||null;}
+function addToHand(id){
+  const entry=handEntry(id);
+  if(entry)entry.count++;else state.hand.push({id,count:1,charges:null});
+  effects.handChanged();
+}
+/** Spend one whole copy: the stack thins, an emptied stack leaves, and the next copy starts fresh. */
+function consumeHandCopy(entry){
+  entry.count--;entry.charges=null;
+  if(entry.count<=0)state.hand.splice(state.hand.indexOf(entry),1);
+  effects.handChanged();
+}
+// Consumables that ask WHERE. Each names the authored building type whose ghost, footprint and
+// radius ring the existing placement flow already draws — so targeting needs no render work at all.
+// `cast` is the escape hatch for a spell: fireball borrows the blast charge's ghost (its radius IS
+// FIREBALL.radius) and detonates on placement instead of leaving anything behind.
+const TARGETED_CARDS={
+  blastCharge:{type:"blast"},
+  spikeKit:{type:"spikes"},
+  mineKit:{type:"landmine"},
+  tarKit:{type:"tar"},
+  fireball:{type:"blast",cast:castFireball}
+};
+function cardCharges(id){return cardById[id].charges??1;}
+/** The fireball's whole effect: one area hit at the anchor, no building, blast-style noise and dust. */
+function castFireball(x,y){
+  for(const enemy of [...state.enemies])if(distance(x,y,enemy.x,enemy.y)<=FIREBALL.radius)damageEnemy(enemy,FIREBALL.damage,"#ef7b3f",0);
+  for(let i=0;i<42;i++)particles.push({x,y,vx:rand(-180,180),vy:rand(-190,40),life:rand(.35,.9),col:i%2?"#ef7b3f":"#b84b38"});
+  toast("fireball");sound(70,.3);
+}
+/** Arm the placement flow for one held card. The card STAYS in hand while its charges are spent. */
+function beginCardTargeting(entry){
+  const spec=TARGETED_CARDS[entry.id];
+  entry.charges??=cardCharges(entry.id);
+  state.cardTargeting={id:entry.id,type:spec.type,cast:spec.cast||null};
+  state.buildMode=spec.type;setBuildDockCategory(null);effects.buildHudChanged();effects.handChanged();
+  toast(cardById[entry.id].text+" — click clear ground ("+entry.charges+" charge"+(entry.charges===1?"":"s")+")");sound(660,.08);
+  return "targeting";
+}
+/**
+ * One click of a targeted card. Placement validity is the same canPlace() the ghost colours itself
+ * with, so what the player sees is what lands — for the fireball too, which aims with the blast
+ * charge's footprint. A charge is spent only when something actually happened, and the card leaves
+ * the hand only on the charge that empties it.
+ */
+function placeCardCharge(anchor){
+  const targeting=state.cardTargeting,entry=handEntry(targeting.id);
+  if(!entry||!(entry.charges>0)){endCardTargeting();return false;}
+  if(!canPlace(anchor.x,anchor.y,targeting.type)){toast("needs clear ground away from the base");return false;}
+  if(targeting.cast)targeting.cast(anchor.x,anchor.y);
+  else{
+    // Free charges: these are the authored cost-0 instant buildings, and the card — never
+    // state.buildStacks — is what pays for them.
+    buildings.push(createBuilding(targeting.type,anchor.x,anchor.y));
+    toast(BUILDING_TYPES[targeting.type].name+" placed — "+(entry.charges-1)+" charge"+(entry.charges===1?"":"s")+" left");sound(240,.06);
+  }
+  entry.charges--;
+  if(entry.charges<=0){consumeHandCopy(entry);endCardTargeting();}
+  else effects.handChanged();
+  return true;
+}
+function endCardTargeting(){
+  state.cardTargeting=null;state.buildMode=null;setBuildDockCategory(null);effects.buildHudChanged();
+}
+// ── blueprint waivers ──
+// A played blueprint banks one free-cost token, keyed by the card's own authored ref
+// ("tower:sniper", "building:obelisk"). It is spent by the next purchase of exactly that thing —
+// once. Nothing here reads or writes an authored cost table; the purchase simply skips the delivery.
+function waiverAvailable(ref){return (state.draft.waivers[ref]||0)>0;}
+function spendWaiver(ref){
+  if(!waiverAvailable(ref))return false;
+  state.draft.waivers[ref]--;return true;
+}
+function bankBlueprintWaiver(entry){
+  const card=cardById[entry.id],[kind,id]=card.ref.split(":");
+  const name=kind==="tower"?TOWER_VARIANTS[id]?.name:kind==="building"?BUILDING_TYPES[id]?.name:null;
+  if(!name)return false;                    // a concept blueprint has nothing to waive
+  state.draft.waivers[card.ref]=(state.draft.waivers[card.ref]||0)+1;
+  consumeHandCopy(entry);
+  toast("blueprint drawn up — the next "+name+" costs nothing");sound(700,.16);
+  return "applied";
 }
 
 // ── card buffs, layered at READ time ────────────────────────────────────────
@@ -1473,6 +1633,9 @@ function transitionPhase(){
     state.nightWave.activeSide=null;state.nightWave.secondarySide=null;state.nightWave.activeRecipe=null;state.nightWave.remainingSpawns=0;
     // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
     chooseUpcomingNight();
+    // Surviving the night IS the reward: one pick of three consumables or blueprints, straight into
+    // the hand. It queues behind a level offer that is somehow already live rather than replacing it.
+    queueDawnReward();
   }
 }
 function updateClock(dt){
@@ -1738,6 +1901,15 @@ function debugGrantXp(amount){
   if(!Number.isSafeInteger(amount)||amount<=0||!Number.isSafeInteger(state.xp+amount))return false;
   const counts=resourceCounts();counts.wood=amount/FEED_XP.wood;feedBase(counts,BASE.x,BASE.y);return true;
 }
+/** Deal one card straight into the hand, skipping the offer entirely. Run state only: the catalog,
+ *  its pool flags and every authored table are untouched, and the dealt card behaves exactly like a
+ *  drafted one — a blueprint still leaves the pool, a kit still carries its authored charges. */
+function debugDealCard(id){
+  const card=cardById[id];
+  if(!card||!["consumable","blueprint"].includes(card.category))return false;
+  if(card.category==="blueprint")state.draft.blueprints.add(id);
+  addToHand(id);return true;
+}
 /** Sweep anything already pending when free costs is switched on, so no blueprint or
  *  accepted upgrade can sit half-delivered under a toggle that says costs are free. */
 function debugSweepFreeCosts(){
@@ -1841,6 +2013,8 @@ export function offsetCamera(dx,dy){ state.camera.x+=dx; state.camera.y+=dy; }
 export function toggleBuildMode(kind){
   if(state.gameOver||state.paused||heldChest())return;
   if(BUILDING_TYPES[kind].stack&&!DBG.unlimitedCharges&&state.buildStacks[kind]<=0){toast("no "+BUILDING_TYPES[kind].name+" stacks remaining");return;}
+  // Reaching for the dock puts a targeted card away with its unplaced charges intact.
+  if(state.cardTargeting){state.cardTargeting=null;state.buildMode=null;}
   state.buildMode=state.buildMode===kind?null:kind;
   effects.buildHudChanged();
   toast(state.buildMode?"click explored, clear ground to place the blueprint":"build cancelled");
@@ -1875,14 +2049,19 @@ export function closeUpgradeMenu(){
 }
 export function selectUpgrade(id){ state.upgradeMenu.selected=id; }
 export function acceptUpgrade(){
-  const menu=state.upgradeMenu,building=menu.building,upgrade=upgradeList(menu.kind).find(item=>item.id===menu.selected);
+  const menu=state.upgradeMenu,building=menu.building,kind=menu.kind,upgrade=upgradeList(kind).find(item=>item.id===menu.selected);
   if(!building||!upgrade)return false;
-  building.activeUpgrade={id:upgrade.id,kind:menu.kind,delivered:resourceCounts()};
-  const destination=menu.kind;closeUpgradeMenu();
+  building.activeUpgrade={id:upgrade.id,kind,delivered:resourceCounts()};
+  closeUpgradeMenu();
   // free costs (debug): the job is accepted normally, then satisfied through the same
   // applyFinishedUpgrade() a full delivery reaches. Nothing is deducted or granted.
   if(DBG.freeCosts&&applyFinishedUpgrade(building))return true;
-  toast("accepted "+upgrade.name+" — deposit resources at the "+destination);sound(590,.1);
+  // A played blueprint pays for this one variant, once, down the very same path — and the token is
+  // only spent if the upgrade really finished.
+  if(kind==="tower"&&waiverAvailable("tower:"+upgrade.id)&&applyFinishedUpgrade(building)){
+    spendWaiver("tower:"+upgrade.id);toast("blueprint spent — "+upgrade.name+" built free");return true;
+  }
+  toast("accepted "+upgrade.name+" — deposit resources at the "+kind);sound(590,.1);
   return true;
 }
 
@@ -1952,16 +2131,44 @@ function skillPoints(){return state.skillPoints;}
 export function levelState(){return {level:state.level,xp:state.levelXp,next:levelCost(state.level)};}
 /** The live offer as three card ids, or null when no draft is pending. Never mutate the array. */
 export function draftPending(){return state.draft.offer;}
+/** Why the pending offer exists — "level" or "dawn" — or null when none is. Same offer, same pick. */
+export function draftKind(){return state.draft.offer?state.draft.offerKind:null;}
 /**
- * Take card `index` (0-2) of the pending offer. Applies the effect, consumes the offer and, if more
- * level-ups are queued, deals the next one immediately — so the world stays frozen until the queue
- * drains. Refusals are silent, so a UI may call this on any click without pre-checking.
+ * Take card `index` (0-2) of the pending offer. Routes the card through takeCard() — a buff applies,
+ * a consumable or blueprint goes to the hand — consumes the offer and, if more rewards are queued,
+ * deals the next one immediately, so the world stays frozen until the queue drains. Refusals are
+ * silent, so a UI may call this on any click without pre-checking.
  */
 export function chooseDraft(index){
   const offer=state.draft.offer;
   if(!offer||!Number.isInteger(index)||index<0||index>=offer.length)return false;
-  const id=offer[index];state.draft.offer=null;applyCard(id);refillDraft();
+  const id=offer[index];state.draft.offer=null;state.draft.offerKind=null;takeCard(id);refillDraft();
   return true;
+}
+/**
+ * The held cards, oldest first: {id, count, charges}. `count` is how many COPIES of that card are
+ * held; `charges` is the remaining placements of a part-spent kit (null while the top copy is
+ * whole), so a UI can show "2 of 3 spikes left" without knowing what a spike kit is. Fresh records
+ * every call — read them, never write them; playCard() is the only way in.
+ */
+export function hand(){return state.hand.map(entry=>({id:entry.id,count:entry.count,charges:entry.charges}));}
+/**
+ * Play held card `index`. Returns false when the index names nothing, the world is frozen (a pending
+ * offer, a pause, a lost run) or a placement is already armed; "applied" when the effect fired and
+ * the card left the hand; "targeting" when the placement flow now owns the next click — the card
+ * stays in hand, one charge lighter per placement, until its last charge lands.
+ */
+export function playCard(index){
+  if(!Number.isInteger(index)||index<0||index>=state.hand.length)return false;
+  if(state.gameOver||state.paused||state.draftPaused||state.buildMode||state.cardTargeting)return false;
+  const entry=state.hand[index],card=cardById[entry.id];
+  if(!card)return false;
+  if(card.category==="blueprint")return bankBlueprintWaiver(entry);
+  if(TARGETED_CARDS[entry.id])return beginCardTargeting(entry);
+  const effect=CARD_EFFECTS[entry.id];
+  if(!effect)return false;                  // a held card with no effect is a catalog bug, not a click
+  effect();toast("played: "+card.text);sound(700,.16);consumeHandCopy(entry);
+  return "applied";
 }
 /** What the held-action timer is currently filling, or null. Read-only peek. */
 export function heldChopTarget(){ return chopState.target; }
@@ -2015,5 +2222,7 @@ export {
   spawnEnemy, transitionPhase,
   // debug commands (view panel > gameplay)
   debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
-  debugStartWave, debugClearEnemies, debugHealAll, debugForceNextChestOutcome,
+  debugStartWave, debugClearEnemies, debugHealAll, debugForceNextChestOutcome, debugDealCard,
+  // banked blueprint waivers — read-only peek for tooling; only playing a blueprint banks one
+  waiverAvailable,
 };

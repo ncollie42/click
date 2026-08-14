@@ -4,7 +4,10 @@
 //   implemented — the effect exists in game code (may still be test-only)
 //   inPool      — the draft can actually offer it
 // Workflow: add an entry here (implemented:false), point Claude at it, it gets
-// built, the flag flips. docs/cards.html renders this file as a browsable
+// built, the flag flips.
+// Routing: a drafted BUFF applies the moment it is picked. A drafted CONSUMABLE or
+// BLUEPRINT is not applied at all — it goes into the run's HAND (simulation.js) and
+// only becomes an effect when the player plays it. docs/cards.html renders this file as a browsable
 // catalog; docs/progression-model.js reads `model` to simulate income
 // compounding; scripts/validate.mjs keeps every ref honest.
 //
@@ -101,17 +104,22 @@ export const CARDS=[
 
   // ── B · consumables — already in the game as free instant buildings ───────
   {id:"blastCharge",  category:"consumable", rarity:"common", text:"blast charge: detonate an area now",
-   type:"building", features:["physical space"], charges:1, ref:"building:blast", model:null, implemented:true, inPool:false, notes:"instant building, cost 0"},
+   type:"building", features:["physical space"], charges:1, ref:"building:blast", model:null, implemented:true, inPool:true,
+   notes:"held in hand; playing it targets one free cost-0 blast charge through the build placement flow"},
   {id:"spikeKit",     category:"consumable", rarity:"common", text:"place spike traps",
-   type:"building", features:["physical space"], charges:5, durationSeconds:5, ref:"building:spikes", model:null, implemented:true, inPool:false, notes:""},
+   type:"building", features:["physical space"], charges:3, durationSeconds:5, ref:"building:spikes", model:null, implemented:true, inPool:true,
+   notes:"held in hand; 3 free placements, and cancelling mid-kit keeps the unplaced charges on the card"},
   {id:"mineKit",      category:"consumable", rarity:"rare",   text:"place land mines",
-   type:"building", features:["physical space"], charges:2, durationSeconds:5, ref:"building:landmine", model:null, implemented:true, inPool:false, notes:""},
+   type:"building", features:["physical space"], charges:2, durationSeconds:5, ref:"building:landmine", model:null, implemented:true, inPool:true,
+   notes:"held in hand; 2 free placements, and cancelling mid-kit keeps the unplaced charges on the card"},
   {id:"tarKit",       category:"consumable", rarity:"common", text:"pour 3 tar patches",
-   type:"building", features:["physical space"], charges:3, ref:"building:tar", model:null, implemented:true, inPool:false, notes:""},
+   type:"building", features:["physical space"], charges:3, ref:"building:tar", model:null, implemented:true, inPool:true,
+   notes:"held in hand; 3 free placements, and cancelling mid-kit keeps the unplaced charges on the card"},
 
   // ── B · consumables — new ─────────────────────────────────────────────────
   {id:"fireball",     category:"consumable", rarity:"rare",   text:"cast a fireball at a location",
-   type:"spell", features:["fire"], charges:1, ref:"concept:fireball", model:null, implemented:false, inPool:false, notes:""},
+   type:"spell", features:["fire"], charges:1, ref:"concept:fireball", model:null, implemented:true, inPool:true,
+   notes:"held in hand; aims with the blast charge's placement ghost and detonates FIREBALL (damage/radius in data.js), leaving no building"},
   {id:"raiseTreants", category:"consumable", rarity:"epic",   text:"consume a tree to spawn treants",
    type:"spell", tags:["tree"], features:["resources","workers","physical space"], charges:1, ref:"concept:treants", model:null, implemented:false, inPool:false, notes:""},
   {id:"healBase",     category:"consumable", rarity:"rare",   text:"restore the base to full",
@@ -159,21 +167,24 @@ export const CARDS=[
    notes:"prototype: matching biome costs 25% less; mismatched biome costs 25% more; biome detection does not exist yet"},
 
   // ── D · blueprints — the tower table is the pool ──────────────────────────
-  {id:"bpTurret",   category:"blueprint", rarity:"common", text:"blueprint: turret",        tags:["single target"], features:["physical space"], ref:"tower:turret",   model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpOutpost",  category:"blueprint", rarity:"common", text:"blueprint: outpost",       tags:["single target"], features:["physical space"], ref:"tower:outpost",  model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpWatch",    category:"blueprint", rarity:"common", text:"blueprint: watch tower",   tags:["single target"], features:["physical space"], ref:"tower:watch",    model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpBrick",    category:"blueprint", rarity:"rare",   text:"blueprint: brick tower",   tags:["single target"], features:["physical space"], ref:"tower:brick",    model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpAggro",    category:"blueprint", rarity:"rare",   text:"blueprint: aggro tower",   tags:["single target"], features:["physical space"], ref:"tower:aggro",    model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpFire",     category:"blueprint", rarity:"rare",   text:"blueprint: fire tower",    tags:["single target"], features:["fire","physical space"], ref:"tower:fire",     model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpFreeze",   category:"blueprint", rarity:"rare",   text:"blueprint: freeze tower",  tags:["single target"], features:["physical space"], ref:"tower:freeze",   model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpTar",      category:"blueprint", rarity:"rare",   text:"blueprint: tar tower",     tags:["single target"], features:["physical space"], ref:"tower:tarTower", model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpSniper",   category:"blueprint", rarity:"epic",   text:"blueprint: sniper tower",  tags:["single target"], features:["physical space"], ref:"tower:sniper",   model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpTeleport", category:"blueprint", rarity:"epic",   text:"blueprint: teleport tower",tags:["single target"], features:["physical space"], ref:"tower:teleport", model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpBomb",     category:"blueprint", rarity:"epic",   text:"blueprint: bomb tower",    tags:["aoe"], features:["physical space"], ref:"tower:bomb",     model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpLaser",    category:"blueprint", rarity:"epic",   text:"blueprint: laser tower",   tags:["piercing"], features:["physical space"], ref:"tower:laser",    model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpPulse",    category:"blueprint", rarity:"epic",   text:"blueprint: pulse tower",   tags:["aoe"], features:["physical space"], ref:"tower:pulse",    model:null, implemented:true,  inPool:false, notes:""},
-  {id:"bpShock",    category:"blueprint", rarity:"legendary", text:"blueprint: shock tower",tags:["aoe"], features:["physical space"], ref:"tower:shock",    model:null, implemented:true,  inPool:false, notes:"movable"},
-  {id:"bpObelisk",  category:"blueprint", rarity:"rare",   text:"blueprint: obelisk",       features:["physical space"], ref:"building:obelisk", model:null, implemented:true, inPool:false, notes:"carries the global-upgrade shop today"},
+  // Every card below refs a real authored table row, so all of them are in the pool. Drafting one
+  // puts the card in the HAND and takes it out of the pool for the run; playing it banks a one-time
+  // free-cost waiver, spent by the next purchase of that exact variant (see spendWaiver()).
+  {id:"bpTurret",   category:"blueprint", rarity:"common", text:"blueprint: turret",        tags:["single target"], features:["physical space"], ref:"tower:turret",   model:null, implemented:true,  inPool:true, notes:"play it to waive the next turret upgrade's cost"},
+  {id:"bpOutpost",  category:"blueprint", rarity:"common", text:"blueprint: outpost",       tags:["single target"], features:["physical space"], ref:"tower:outpost",  model:null, implemented:true,  inPool:true, notes:"play it to waive the next outpost upgrade's cost"},
+  {id:"bpWatch",    category:"blueprint", rarity:"common", text:"blueprint: watch tower",   tags:["single target"], features:["physical space"], ref:"tower:watch",    model:null, implemented:true,  inPool:true, notes:"play it to waive the next watch tower upgrade's cost"},
+  {id:"bpBrick",    category:"blueprint", rarity:"rare",   text:"blueprint: brick tower",   tags:["single target"], features:["physical space"], ref:"tower:brick",    model:null, implemented:true,  inPool:true, notes:"play it to waive the next brick tower upgrade's cost"},
+  {id:"bpAggro",    category:"blueprint", rarity:"rare",   text:"blueprint: aggro tower",   tags:["single target"], features:["physical space"], ref:"tower:aggro",    model:null, implemented:true,  inPool:true, notes:"play it to waive the next aggro tower upgrade's cost"},
+  {id:"bpFire",     category:"blueprint", rarity:"rare",   text:"blueprint: fire tower",    tags:["single target"], features:["fire","physical space"], ref:"tower:fire",     model:null, implemented:true,  inPool:true, notes:"play it to waive the next fire tower upgrade's cost"},
+  {id:"bpFreeze",   category:"blueprint", rarity:"rare",   text:"blueprint: freeze tower",  tags:["single target"], features:["physical space"], ref:"tower:freeze",   model:null, implemented:true,  inPool:true, notes:"play it to waive the next freeze tower upgrade's cost"},
+  {id:"bpTar",      category:"blueprint", rarity:"rare",   text:"blueprint: tar tower",     tags:["single target"], features:["physical space"], ref:"tower:tarTower", model:null, implemented:true,  inPool:true, notes:"play it to waive the next tar tower upgrade's cost"},
+  {id:"bpSniper",   category:"blueprint", rarity:"epic",   text:"blueprint: sniper tower",  tags:["single target"], features:["physical space"], ref:"tower:sniper",   model:null, implemented:true,  inPool:true, notes:"play it to waive the next sniper tower upgrade's cost"},
+  {id:"bpTeleport", category:"blueprint", rarity:"epic",   text:"blueprint: teleport tower",tags:["single target"], features:["physical space"], ref:"tower:teleport", model:null, implemented:true,  inPool:true, notes:"play it to waive the next teleport tower upgrade's cost"},
+  {id:"bpBomb",     category:"blueprint", rarity:"epic",   text:"blueprint: bomb tower",    tags:["aoe"], features:["physical space"], ref:"tower:bomb",     model:null, implemented:true,  inPool:true, notes:"play it to waive the next bomb tower upgrade's cost"},
+  {id:"bpLaser",    category:"blueprint", rarity:"epic",   text:"blueprint: laser tower",   tags:["piercing"], features:["physical space"], ref:"tower:laser",    model:null, implemented:true,  inPool:true, notes:"play it to waive the next laser tower upgrade's cost"},
+  {id:"bpPulse",    category:"blueprint", rarity:"epic",   text:"blueprint: pulse tower",   tags:["aoe"], features:["physical space"], ref:"tower:pulse",    model:null, implemented:true,  inPool:true, notes:"play it to waive the next pulse tower upgrade's cost"},
+  {id:"bpShock",    category:"blueprint", rarity:"legendary", text:"blueprint: shock tower",tags:["aoe"], features:["physical space"], ref:"tower:shock",    model:null, implemented:true,  inPool:true, notes:"movable; play it to waive the next shock tower upgrade's cost"},
+  {id:"bpObelisk",  category:"blueprint", rarity:"rare",   text:"blueprint: obelisk",       features:["physical space"], ref:"building:obelisk", model:null, implemented:true, inPool:true, notes:"carries the global-upgrade shop today; play it to waive the next obelisk's build cost"},
 
   // ── C · blueprints — workers (don't exist yet) ────────────────────────────
   {id:"bpBarracks", category:"blueprint", rarity:"rare", text:"makes warriors",

@@ -23,13 +23,14 @@ for(const path of jsFiles)execFileSync(process.execPath,["--check",path],{stdio:
 let randomState=0x5eed1234;
 const originalRandom=Math.random;
 Math.random=()=>((randomState=Math.imul(randomState,1664525)+1013904223>>>0)/0x100000000);
-let sim,data,grid,showcase;
+let sim,data,grid,showcase,cardCatalog;
 try{
-  [sim,data,grid,showcase]=await Promise.all([
+  [sim,data,grid,showcase,cardCatalog]=await Promise.all([
     import(pathToFileURL(join(root,"src/game/simulation.js"))),
     import(pathToFileURL(join(root,"src/game/data.js"))),
     import(pathToFileURL(join(root,"src/game/grid.js"))),
-    import(pathToFileURL(join(root,"src/game/showcase-data.js")))
+    import(pathToFileURL(join(root,"src/game/showcase-data.js"))),
+    import(pathToFileURL(join(root,"src/game/cards.js")))
   ]);
 
   assert.deepEqual(data.FEED_XP,{wood:1,stone:1,dust:5,coin:5,diamond:12});
@@ -184,7 +185,9 @@ try{
       const building=(type,x,y,complete=true,cost={wood:1,stone:0})=>({type,x,y,complete,cost,delivered:{wood:0,stone:0},storage:counts(),upgrades:{},activeUpgrade:null,tower:null,hazard:null,pulse:0,starved:false});
       const worker=(job,target,x,y)=>({x,y,postX:x,postY:y+20,spawnSource:null,job,jobTarget:target,homePost:null,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:counts(),hp:data.WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,reposting:false});
       const drop=(kind,x,y)=>({kind,x,y,groundY:y,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null});
-      const reset=()=>{sim.buildings.length=sim.resourceDrops.length=sim.chests.length=sim.state.workers.length=sim.state.enemies.length=sim.trees.length=sim.rocks.length=sim.diamonds.length=0;for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;sim.state.paused=sim.state.gameOver=false;sim.DBG.groundSourcing=sim.DBG.blueprintRecruiting=sim.DBG.builderSelfSupply=true;sim.DBG.idleSeeksWork=false;sim.DBG.instantWorkers=false;sim.TUNE.builderSourceRadius=300;sim.TUNE.recruitRadius=200;sim.TUNE.fleeHpThreshold=1;};
+      // Every scenario starts on a fresh day: none of them steps far enough to reach dusk, so no
+      // dawn reward can freeze the world in the middle of a worker measurement.
+      const reset=()=>{sim.buildings.length=sim.resourceDrops.length=sim.chests.length=sim.state.workers.length=sim.state.enemies.length=sim.trees.length=sim.rocks.length=sim.diamonds.length=0;for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;sim.state.clock.phase="day";sim.state.clock.remaining=data.DAY_DURATION;sim.state.paused=sim.state.gameOver=false;sim.DBG.groundSourcing=sim.DBG.blueprintRecruiting=sim.DBG.builderSelfSupply=true;sim.DBG.idleSeeksWork=false;sim.DBG.instantWorkers=false;sim.TUNE.builderSourceRadius=300;sim.TUNE.recruitRadius=200;sim.TUNE.fleeHpThreshold=1;};
       const step=(n=1)=>{for(let i=0;i<n;i++)sim.update(1/60);};
       // Recruitment cadence is private; disabling it while time advances makes the next enabled step due.
       const forceRecruitSweep=()=>{sim.DBG.blueprintRecruiting=false;step(31);sim.DBG.blueprintRecruiting=true;step();};
@@ -296,6 +299,9 @@ try{
       let seed=0x0ca1;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       try{
         sim.initializeRunMode("normal");
+        // Drafting a consumable no longer applies it: the card is drawn into the hand, and the
+        // discount exists only once the player PLAYS it.
+        const drainOffers=()=>{while(sim.draftPending())sim.chooseDraft(sim.draftPending().findIndex(id=>!["calmNight","longDay"].includes(id)));};
         let taken=false,guard=0;
         while(!taken&&guard++<600){
           if(!sim.draftPending())sim.debugGrantXp(400);
@@ -303,12 +309,16 @@ try{
           const at=offer.indexOf("calmNight");sim.chooseDraft(at>=0?at:offer.findIndex(id=>id!=="longDay"));taken=at>=0;
         }
         assert.equal(taken,true,"calmNight never appeared in a draft");
-        while(sim.draftPending())sim.chooseDraft(sim.draftPending().findIndex(id=>!["calmNight","longDay"].includes(id)));
+        drainOffers();
+        assert.ok(sim.hand().some(entry=>entry.id==="calmNight"),"a drafted calmNight must land in the hand");
+        assert.equal(sim.state.draft.calmNight,false,"a card in hand must not have applied itself");
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="calmNight")),"applied");
+        assert.equal(sim.state.draft.calmNight,true);
         const plain=NIGHT_WAVE_SPAWNS+sim.waveTier()*NIGHT_TIER_BONUS_SPAWNS;
-        if(sim.state.clock.phase==="night")sim.transitionPhase();
+        if(sim.state.clock.phase==="night"){sim.transitionPhase();drainOffers();}
         sim.transitionPhase();const calm=sim.state.nightWave.totalSpawns;
         assert.equal(calm,Math.max(1,Math.floor(plain*CARD_CONSUMABLES.calmNightFactor)));assert.ok(calm<plain);
-        sim.transitionPhase();sim.transitionPhase();assert.equal(sim.state.nightWave.totalSpawns,plain,"the discount must not carry into a second night");
+        sim.transitionPhase();drainOffers();sim.transitionPhase();assert.equal(sim.state.nightWave.totalSpawns,plain,"the discount must not carry into a second night");
         console.log(JSON.stringify({plain,calm,levels:sim.state.level}));
       }finally{Math.random=old;}
     `
@@ -346,6 +356,152 @@ try{
     `
   }).trim());
   assert.ok(Math.abs(buffResult.ratio-1.2544)<1e-9);
+  // ── the hand ──
+  // Drafting, dawn rewards, playing, targeting, partial kits and blueprint waivers, all measured in
+  // one clean process: a card is only ever an effect once the player plays it.
+  const handResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+    cwd:root,encoding:"utf8",input:`
+      import assert from "node:assert/strict";
+      import * as sim from "./src/game/simulation.js";
+      import * as data from "./src/game/data.js";
+      import {CARDS,cardById} from "./src/game/cards.js";
+      import {snapToCellCenter} from "./src/game/grid.js";
+      let seed=0xcafd;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
+      let handEvents=0;sim.connect({handChanged(){handEvents++;}});
+      const counts=()=>Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0]));
+      const clearGround=()=>{sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=sim.state.enemies.length=sim.resourceDrops.length=0;};
+      const drain=()=>{while(sim.draftPending())sim.chooseDraft(0);};
+      const held=id=>sim.hand().find(entry=>entry.id===id)||null;
+      const place=(x,y)=>{sim.setPointerWorld(x,y);sim.primaryPress();sim.primaryRelease();};
+      try{
+        sim.initializeRunMode("normal");clearGround();
+        assert.deepEqual(sim.hand(),[]);assert.equal(sim.draftKind(),null);
+        assert.equal(sim.playCard(0),false,"an empty hand plays nothing");assert.equal(sim.playCard(-1),false);assert.equal(sim.playCard(.5),false);
+
+        // 1 · a drafted consumable is DRAWN, not fired
+        let guard=0,drafted=null;
+        while(!drafted&&guard++<600){
+          if(!sim.draftPending())sim.debugGrantXp(400);
+          const offer=sim.draftPending();if(!offer)continue;
+          assert.equal(sim.draftKind(),"level","a level-up must deal a level offer");
+          const at=offer.findIndex(id=>cardById[id].category==="consumable"),eventsBefore=handEvents,storedBefore=JSON.stringify(sim.state.stored);
+          assert.equal(sim.chooseDraft(at>=0?at:0),true);
+          if(at<0)continue;
+          drafted=offer[at];
+          assert.ok(handEvents>eventsBefore,"a card entering the hand must raise handChanged()");
+          assert.ok(held(drafted),"the drafted consumable never reached hand()");
+          if(["woodBundle","stoneBundle","dustBundle"].includes(drafted))assert.equal(JSON.stringify(sim.state.stored),storedBefore,"a drafted bundle must not deliver until it is played");
+        }
+        assert.ok(drafted,"no consumable was ever offered");
+        drain();assert.equal(sim.state.draftPaused,false);
+
+        // 2 · dawn pays its own pick-3, consumables and blueprints only
+        if(sim.state.clock.phase!=="night")sim.transitionPhase();
+        assert.equal(sim.state.clock.phase,"night");
+        sim.transitionPhase();
+        const dawnOffer=sim.draftPending();
+        assert.ok(dawnOffer,"the night ended and paid no dawn reward");
+        assert.equal(sim.draftKind(),"dawn");assert.equal(sim.state.draftPaused,true);
+        assert.equal(dawnOffer.length,3);assert.equal(new Set(dawnOffer).size,3,"the dawn offer repeated a card");
+        assert.equal(dawnOffer.every(id=>["consumable","blueprint"].includes(cardById[id].category)&&cardById[id].inPool),true,"a dawn offer may only deal consumables and blueprints");
+        assert.equal(sim.playCard(0),false,"a frozen world must not play cards");
+        assert.equal(sim.chooseDraft(0),true);
+        const dawnCard=dawnOffer[0];assert.ok(held(dawnCard),"the dawn pick never reached hand()");
+        assert.equal(sim.draftKind(),null);assert.equal(sim.state.draftPaused,false);
+
+        // 3 · an untargeted consumable applies on play and leaves the hand
+        assert.equal(sim.debugDealCard("woodBundle"),true);
+        const woodBefore=sim.state.stored.wood,copies=held("woodBundle").count,eventsBeforePlay=handEvents;
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="woodBundle")),"applied");
+        assert.equal(sim.state.stored.wood,woodBefore+data.CARD_CONSUMABLES.woodBundle,"woodBundle did not deliver");
+        assert.equal(held("woodBundle")?.count??0,copies-1,"playing a card must thin its stack");
+        assert.ok(handEvents>eventsBeforePlay,"spending a card must raise handChanged()");
+
+        // 4 · a kit targets, spends one charge per placement, survives a cancel, and leaves on the last
+        clearGround();
+        assert.equal(sim.debugDealCard("spikeKit"),true);
+        const dockStacks=sim.state.buildStacks.spikes;
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="spikeKit")),"targeting");
+        assert.equal(sim.state.buildMode,"spikes");assert.equal(held("spikeKit").charges,cardById.spikeKit.charges);
+        assert.equal(sim.playCard(0),false,"nothing else may play while a card is targeting");
+        place(300,300);
+        assert.equal(held("spikeKit").charges,2);assert.equal(sim.buildings.length,1);
+        sim.secondaryPress();
+        assert.equal(sim.state.buildMode,null);assert.equal(sim.state.cardTargeting,null);
+        assert.equal(held("spikeKit").charges,2,"a cancelled kit must keep its unplaced charges");
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="spikeKit")),"targeting");
+        place(364,300);assert.equal(held("spikeKit").charges,1);
+        place(428,300);
+        assert.equal(held("spikeKit"),null,"the kit must leave the hand as its last charge lands");
+        assert.equal(sim.state.buildMode,null);assert.equal(sim.state.cardTargeting,null);
+        assert.equal(sim.buildings.filter(item=>item.type==="spikes").length,3,"three charges must place three traps");
+        assert.equal(sim.buildings.every(item=>item.complete),true,"card-placed traps must be finished");
+        assert.equal(sim.state.buildStacks.spikes,dockStacks,"a card kit must never spend the dock's own charges");
+
+        // 5 · the fireball burns inside its radius, spares what is outside it, and leaves nothing
+        clearGround();
+        sim.spawnEnemy("north","raider");sim.spawnEnemy("north","raider");
+        const near=sim.state.enemies[0],far=sim.state.enemies[1],anchor=snapToCellCenter(600,300);
+        near.x=anchor.x;near.y=anchor.y+100;far.x=anchor.x;far.y=anchor.y+200;
+        const nearRange=sim.distance(anchor.x,anchor.y,near.x,near.y),farRange=sim.distance(anchor.x,anchor.y,far.x,far.y);
+        assert.ok(nearRange<=data.FIREBALL.radius&&farRange>data.FIREBALL.radius,"the fireball test targets are not on both sides of the radius");
+        assert.ok(data.FIREBALL.damage>=data.ENEMY_TYPES.raider.hp,"the fireball must be lethal to a raider for this measurement");
+        assert.equal(sim.debugDealCard("fireball"),true);
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="fireball")),"targeting");
+        const buildingsBefore=sim.buildings.length,farHp=far.hp;
+        place(600,300);
+        assert.equal(sim.buildings.length,buildingsBefore,"a fireball must leave no building behind");
+        assert.equal(sim.state.enemies.includes(near),false,"the fireball spared a raider inside its radius");
+        assert.equal(far.hp,farHp,"the fireball reached past its radius");
+        assert.equal(held("fireball"),null);assert.equal(sim.state.buildMode,null);
+
+        // 6 · a blueprint banks a free-cost waiver, spent by the next matching purchase exactly once
+        clearGround();for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;
+        assert.equal(sim.waiverAvailable("tower:sniper"),false);
+        assert.equal(sim.debugDealCard("bpSniper"),true);
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpSniper")),"applied");
+        assert.equal(sim.waiverAvailable("tower:sniper"),true);assert.equal(held("bpSniper"),null);
+        const chassis=(x,y)=>{const tower={type:"tower",x,y,complete:true,cost:{},delivered:{wood:0,stone:0},storage:counts(),upgrades:{},activeUpgrade:null,tower:{variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:10,maxHp:10},hazard:null,pulse:0};sim.buildings.push(tower);return tower;};
+        const waived=chassis(300,300),paid=chassis(400,300);
+        assert.equal(sim.openUpgradeMenu(waived,"tower"),true);sim.selectUpgrade("sniper");assert.equal(sim.acceptUpgrade(),true);
+        assert.equal(waived.tower.variant,"sniper","the waiver did not finish the upgrade");assert.equal(waived.activeUpgrade,null);
+        assert.equal(waived.tower.maxHp,data.TOWER_VARIANTS.sniper.maxHp);
+        assert.deepEqual(sim.state.stored,counts(),"a waived upgrade must not touch storage");
+        assert.equal(sim.waiverAvailable("tower:sniper"),false,"the waiver must be spent exactly once");
+        assert.equal(sim.openUpgradeMenu(paid,"tower"),true);sim.selectUpgrade("sniper");assert.equal(sim.acceptUpgrade(),true);
+        assert.equal(paid.tower.variant,"basic","the second sniper must still be paid for");
+        assert.deepEqual(paid.activeUpgrade,{id:"sniper",kind:"tower",delivered:counts()});
+
+        // 7 · the obelisk blueprint waives a BUILD cost the same way
+        assert.equal(sim.debugDealCard("bpObelisk"),true);
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpObelisk")),"applied");
+        clearGround();assert.equal(sim.DBG.freeCosts,false);
+        sim.toggleBuildMode("obelisk");place(500,600);
+        const freeObelisk=sim.buildings.at(-1);
+        assert.equal(freeObelisk.type,"obelisk");assert.equal(freeObelisk.complete,true,"the obelisk waiver did not raise it free");
+        assert.deepEqual(freeObelisk.delivered,{wood:0,stone:0},"a waived build must deliver nothing");
+        assert.deepEqual(freeObelisk.cost,data.BUILDING_TYPES.obelisk.cost,"a waiver must not rewrite an authored cost");
+        sim.toggleBuildMode("obelisk");place(500,700);
+        const paidObelisk=sim.buildings.at(-1);
+        assert.equal(paidObelisk.complete,false,"the obelisk waiver was spent twice");
+
+        // 8 · every consumable the pool can deal is actually playable
+        clearGround();
+        const playable=[];
+        for(const card of CARDS.filter(item=>item.inPool&&item.category==="consumable")){
+          assert.equal(sim.debugDealCard(card.id),true);
+          const result=sim.playCard(sim.hand().findIndex(entry=>entry.id===card.id));
+          assert.ok(result==="applied"||result==="targeting","in-pool consumable "+card.id+" is unplayable");
+          if(result==="targeting"){assert.equal(sim.cancelBuildMode(),true);assert.equal(held(card.id).charges,card.charges??1,"a put-away card lost charges it never spent");}
+          playable.push(card.id);
+        }
+        for(const entry of sim.hand()){assert.ok(cardById[entry.id]);assert.ok(entry.count>=1);assert.ok(entry.charges===null||entry.charges>0);}
+        sim.validateSimulationInvariants();
+        console.log(JSON.stringify({checks:78,drafted,dawnCard,playable:playable.length,nearRange:Math.round(nearRange),farRange:Math.round(farRange),stacks:sim.hand().length}));
+      }finally{Math.random=old;}
+    `
+  }).trim());
+  assert.equal(handResult.playable,cardCatalog.CARDS.filter(card=>card.inPool&&card.category==="consumable").length);
   const html=readFileSync(join(root,"index.html"),"utf8"),overlay=readFileSync(join(root,"src/render/overlay.js"),"utf8"),debuggerSource=readFileSync(join(root,"src/debug/view-debugger.js"),"utf8");
   const viewPanel=html.slice(html.indexOf('<section id="viewPanel"'),html.indexOf('<!-- Empty showcase roots'));
   assert.equal(/<p class="hint">/.test(viewPanel),false);
@@ -366,8 +522,23 @@ try{
   const elapsedBeforeSpeed=sim.state.clock.elapsed;for(let i=0;i<3;i++)sim.update(dt);assert.ok(Math.abs(sim.state.clock.elapsed-elapsedBeforeSpeed-3*dt)<1e-9);
   const elapsedBeforePause=sim.state.clock.elapsed;sim.togglePause();for(let i=0;i<60;i++)sim.update(dt);assert.equal(sim.state.clock.elapsed,elapsedBeforePause);sim.togglePause();
   sim.pressKey("KeyD");
-  for(let i=0;i<normalSteps;i++){if(i===300)sim.releaseKey("KeyD");sim.update(dt);if(i%120===0)sim.validateSimulationInvariants();}
+  // 200 simulated seconds cross two dusks and two dawns, and every dawn deals its own reward — which
+  // freezes the world exactly like a level offer. Taking it immediately is what keeps time moving.
+  let dawnRewards=0;
+  for(let i=0;i<normalSteps;i++){
+    if(i===300)sim.releaseKey("KeyD");
+    sim.update(dt);
+    while(sim.draftPending()){
+      const kind=sim.draftKind();assert.ok(["level","dawn"].includes(kind),"a pending offer must name its kind");
+      if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>["consumable","blueprint"].includes(cardCatalog.cardById[id].category)),true,"a dawn offer dealt something other than a consumable or blueprint");}
+      assert.equal(sim.chooseDraft(0),true);
+    }
+    if(i%120===0)sim.validateSimulationInvariants();
+  }
   assert.equal(sim.state.gameOver,false);assert.ok(sim.state.clock.elapsed>=normalSteps*dt);
+  assert.ok(dawnRewards>=1,"200 simulated seconds must have paid at least one dawn reward");
+  assert.equal(sim.hand().length>0,true,"the dawn rewards must be sitting in the hand");
+  for(const entry of sim.hand()){assert.ok(cardCatalog.cardById[entry.id],"hand holds an unknown card");assert.ok(Number.isInteger(entry.count)&&entry.count>=1,"hand stack count must be a positive integer");}
   sim.validateSimulationInvariants();
   assert.equal(sim.damageDummies.length,0);
   assert.equal(sim.showcaseProps.length,0);
@@ -422,7 +593,7 @@ try{
     `
   }).trim());
 
-  console.log(`validate ok | syntax ${jsFiles.length} | feature ${featureResult.checks+xpResult.checks+chestResult.checks} checks | level waves ${tierOneResult.spawns}/${xpResult.waveSpawns} | calm night ${calmResult.plain}->${calmResult.calm} | clickSpeed x${buffResult.ratio.toFixed(4)} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
+  console.log(`validate ok | syntax ${jsFiles.length} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level waves ${tierOneResult.spawns}/${xpResult.waveSpawns} | calm night ${calmResult.plain}->${calmResult.calm} | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

@@ -76,6 +76,10 @@ export const XP_TIERS=[40,100,200,350];   // dead: superseded by LEVEL_CURVE, st
 // the accessors layer these numbers over the authored values at read time.
 export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,towerDamage:1.1,towerSpeed:1.1,baseHp:5,clickDamage:1};
 export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay:20,calmNightFactor:.75};
+// The fireball card's cast: an instant area hit that leaves nothing behind. The radius matches the
+// blast charge's effectRadius on purpose — the cast borrows the blast placement ghost, so the ring
+// the player aims with IS the area this damages.
+export const FIREBALL={damage:6,radius:135};
 
 // ── houses and workers ──────────────────────────────────────────────────────
 export const HOUSE_SLOTS=2,HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
