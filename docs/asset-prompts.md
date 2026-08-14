@@ -1,8 +1,17 @@
 # Asset prompts — building & tower overhaul
 
+Companion docs: `model-spec.md` (in-engine build bible: group trees, accessories, motion vocabulary),
+`quality-bar.md` (the standing order and verification loop), `reference/` (accepted sheets).
+
 Paste the **style block** first, then one **asset block**. Regenerate any asset by swapping the asset block only — the style block is what keeps the set looking like one game.
 
 Reference key art: the village scene with the contained pit (2026-08-13). Match it.
+
+**Accepted references (generated 2026-08-13, these ARE the art direction now):**
+- `reference/workers.png` — the five peg villagers: gatherer/axe, courier/basket, builder/hammer, guard/spear+shield, carrier/log-stack
+- `reference/enemies.png` — the four shadow shards: raider wedge, archer spire, healer bell (hovering, violet pool), brute boulder
+
+New generations of ANY asset should be checked against these two sheets for scale, facet size, and palette discipline.
 
 ---
 
@@ -41,6 +50,41 @@ Variants worth one generation each: (a) the floating orb sentinel above the pit 
 > Asset: a wooden watchtower — the plain starter chassis that every tower variant is built on top of. Four rough timber legs with cross-bracing, an open platform with a low plank railing, a simple pitched roof on posts, a ladder up one side. A base course of uneven grey stone blocks anchoring the legs.
 >
 > Deliberately generic and unarmed: no weapon visible, no banner, no violet — it must look like something waiting to be specialized. Sturdy but crude, centered on its tile with the legs planted wide.
+
+---
+
+## Workers (peg villagers — no limbs, animation-free by design)
+
+Locomotion is transforms only: bob, lean, hop. No arms/legs means no walk cycle. Carrying = actual resources stacked on the head/back (the physical-resource fantasy, visible). Coat colors mirror `workerCoatColor` in code: haul blue, build ochre, guard brown. NO violet/cyan on workers — a violet worker would read as belonging to the thing (save that for a corrupted-worker enemy).
+
+> Asset: a character sheet of five small worker creatures for a village game — simple peg-shaped villagers with NO arms and NO legs: one chunky rounded body like a wooden pawn, a simple head with two dot eyes, no mouth, a tiny hood or hat. They move by bobbing and leaning, so the silhouette must read without any limbs.
+>
+> Five variants, identical body, told apart by coat color and ONE strapped-on accessory:
+> - gatherer — warm tan coat, small axe strapped across the back
+> - courier — dusty blue coat, wicker basket worn like a backpack
+> - builder — ochre coat, hammer tucked into a belt strap
+> - guard — brown coat, round wooden shield on the back, tiny spear angled behind
+> - one extra gatherer shown CARRYING: three chunky logs stacked and strapped on top of its head
+>
+> Each about the height of two grass tufts — must stay readable when tiny. Cozy, sturdy, slightly comic, like carved wooden toys. Colors: coats in muted tans, blues and ochres; skin a warm plaster tone; NO violet and NO cyan on any worker.
+>
+> Arrange the five in a row on the grass tile, same scale, 3/4 top-down view.
+
+Alt direction (generate once to compare): seed-sprites — acorn bodies, leaf-sprout hats, hop instead of walk. Cuter/more Sokpop, but reads "forest creature" over "villager."
+
+## Enemies (shadow shards — no limbs)
+
+Shape language opposes workers: warm rounded pegs vs cold angular shards. Enemies belong to the thing, so they are the ONE other place violet is legal — thin crack-seams between facets. Silhouettes encode the authored roster (`ENEMY_TYPES`): wedge = melee, spire = ranged, bell = the support you target first, boulder = the tank (brute `size:1.35`). Generate in the same conversation as the worker sheet so scale holds.
+
+> Asset: a character sheet of four night creatures for a village-defense game — angular shadow beings with NO arms and NO legs, each a single faceted body that moves by scuttling, tilting or lumbering. Bodies are matte near-black with pale grey facet edges so they read against darkness; each has two small pale eyes; thin violet #a783df crack-seams glow between some facets, as if something split open and got up. The violet seams are the only color on them.
+>
+> Four variants, silhouette-first:
+> - raider — a low crouched wedge, shard-like, slightly forward-leaning, small horns; reads fast and mean
+> - archer — a tall thin spire, top-heavy, a fan of dark quills along its back that it fires; reads ranged
+> - healer — the odd one out: a rounded drooping bell shape, like a hooded jellyfish, hovering slightly, a few hanging tendrils and a soft pale glow pooled under it; reads support, not fighter
+> - brute — half again taller and much wider than the raider, a hulking cracked boulder of facets with the widest violet seams and heavy forward tilt; reads slow and unstoppable
+>
+> Line them up on the grass tile smallest to largest, same 3/4 top-down view. They must look like they belong to the same species of darkness, clearly NOT built by villagers: no timber, no plaster, no cloth, nothing hand-made.
 
 ---
 

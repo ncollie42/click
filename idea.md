@@ -170,6 +170,25 @@ The structural pieces already exist: `serviceRadius` / `effectRadius` in `BUILDI
 
 **Sequencing note:** do not tune a gathering-speed aura before the chop-vs-build rate ratio is measured. It is a multiplier on a number that is still moving.
 
+## Breakable Chests
+
+**Tags:** `Core Gameplay`, `Game Feel / Juice`
+
+Implemented: each normal run seeds exactly one unknown, unopened 4 HP chest on a nearby free
+1×1 grid cell. It blocks construction and can be right-click lifted and grid-relocated with exact
+origin restoration on invalid/cancelled drops. Hold left to break it with the shared axe action badge.
+The destruction roll is deferred until the fourth hit, then resolves 50/50 into:
+
+- **Cache:** five weighted, non-expiring resources drop nearby on the ground.
+- **Loot piñata:** twelve weighted, non-expiring resources burst widely onto the ground.
+
+Both outcomes always land on the floor; breaking a chest never puts rewards directly in hand.
+
+Wood and stone dominate the shared distribution, dust and coin remain possible, and diamond is rare.
+The chest never respawns, stores no pre-rolled contents, accepts no worker assignment, and is ignored
+by enemies. Only unopened chests are movable. Chest rarity and rarity telegraphing are explicitly
+deferred; there is no rarity system yet.
+
 ## Ground Clutter
 
 **Question:** If the ground is the only place loose resources live, how do we keep it readable?
@@ -268,6 +287,20 @@ Related open question: once camps auto-refill and blueprints recruit, does dropp
 - Represent limited-charge items or buildings as cards.
 - A card's stack count shows how many placements or uses remain.
 - Examples: spike traps, walls, blast charges, and other consumable structures.
+
+## Deferred: Run Upgrade Ledger and Live Counters
+
+**Tags:** `Core Gameplay`, `Retention`
+
+Implement later:
+
+- Keep a compact bottom-of-screen ledger showing every upgrade/card received this run, including stacks or remaining charges where relevant.
+- Keep a persistent counter window for live DPS and resource production/collection.
+- Derive the ledger from run-owned card/upgrade state; do not maintain duplicate UI state.
+- Derive DPS from actual damage events over a rolling window, not theoretical tower stats.
+- Derive resource rates from actual resource events. Decide whether the window shows gathered, delivered, or both before implementation.
+
+The display should remain readable when many upgrades accumulate; likely collapse repeated upgrades into one entry with a count.
 
 ## Resource-Thief Enemy
 

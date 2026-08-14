@@ -1,0 +1,207 @@
+<!doctype html>
+<!-- Standalone model viewer for the quality-bar work (docs/quality-bar.md).
+     Serve from REPO ROOT (e.g. `python3 -m http.server`), open /tools/model-viewer.html.
+
+     Model modules register into this viewer by exporting:
+       export const MODELS = {
+         "model-name": {
+           build: () => THREE.Group,          // fresh group, origin at ground center, sim-px scale
+           anims: { idle(g, phase, t){}, ... }, // mutate the group; phase in [0,1], t = seconds
+           cam:   { dist: 140, height: 30, target: 16 }   // optional camera hints
+         }
+       }
+     Manifest below imports known module paths with graceful skip, so missing files never break
+     the page and parallel work never edits this file.
+
+     Query params (all optional):
+       ?model=worker-gatherer&anim=chop&phase=0.5&yaw=35&pitch=32&zoom=1
+       ?row=worker-gatherer,worker-courier,worker-builder     side-by-side lineup, ref-sheet style
+     window.__ready === true after the frame for the requested state has rendered. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>model viewer</title>
+<style>
+  body{margin:0;background:#8fa87a;font:13px system-ui;color:#20241c}
+  #c{display:block}
+  #ui{position:fixed;top:8px;left:8px;background:#f3efe2cc;border:1px solid #b8b09a;border-radius:6px;
+      padding:8px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;max-width:620px}
+  #ui label{display:flex;gap:5px;align-items:center}
+  #ui.hidden{display:none}
+</style>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+</head>
+<body>
+<canvas id="c" width="900" height="620"></canvas>
+<div id="ui">
+  <label>model <select id="uModel"></select></label>
+  <label>anim <select id="uAnim"></select></label>
+  <label>phase <input id="uPhase" type="range" min="0" max="1" step="0.01" value="0"></label>
+  <label>yaw <input id="uYaw" type="range" min="-180" max="180" step="1" value="35"></label>
+  <label><input id="uSpin" type="checkbox">spin</label>
+</div>
+<script type="module">
+import * as THREE from "three";
+
+const SOURCES = [
+  "../src/render/models/worker-peg.js",
+  "../src/render/models/the-hole.js",
+  "../src/render/models/enemy-shard.js",
+];
+const MODELS = {};
+
+// Built-in calibration peg: proves the pipeline before any real model exists.
+MODELS["calibration-peg"] = {
+  build(){
+    const g = new THREE.Group();
+    const mat = new THREE.MeshLambertMaterial({color:0xd4b079, flatShading:true});
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(9, 12, 24, 8), mat);
+    body.position.y = 12; body.castShadow = true; body.name = "body";
+    const head = new THREE.Mesh(new THREE.SphereGeometry(8, 8, 6), mat);
+    head.position.y = 28; head.castShadow = true; head.name = "head";
+    g.add(body, head);
+    return g;
+  },
+  anims: { idle(g, p, t){ g.rotation.z = Math.sin(t*2)*0.04; } },
+  cam: { dist: 130, height: 26, target: 16 }
+};
+
+for(const src of SOURCES){
+  try{
+    const mod = await import(src);
+    Object.assign(MODELS, mod.MODELS || {});
+  }catch(e){ console.warn("viewer: skipped", src, e.message); }
+}
+
+const q = new URLSearchParams(location.search);
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:true});
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// Filmic curve + gentle exposure: closes most of the "soft baked look" gap vs the reference
+// sheets that every build round flagged as renderer-level. Applies to all models equally.
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.18;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9db97f);
+
+// ground: sage with faint mowed stripes, like the reference sheets
+{
+  const cvs = document.createElement("canvas"); cvs.width = cvs.height = 256;
+  const ctx = cvs.getContext("2d");
+  ctx.fillStyle = "#9db97f"; ctx.fillRect(0,0,256,256);
+  ctx.fillStyle = "#96b177";
+  for(let i=0;i<8;i++) if(i%2) ctx.fillRect(i*32,0,32,256);
+  ctx.fillStyle = "#8dab70";
+  for(let i=0;i<160;i++){ ctx.fillRect(Math.random()*256|0, Math.random()*256|0, 2, 5); }
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(6,6);
+  tex.magFilter = THREE.NearestFilter; tex.colorSpace = THREE.SRGBColorSpace;
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1600,1600),
+    new THREE.MeshLambertMaterial({map:tex}));
+  ground.rotation.x = -Math.PI/2; ground.receiveShadow = true;
+  scene.add(ground);
+}
+// grass tufts, sparse, matching the sheets
+{
+  const mat = new THREE.MeshLambertMaterial({color:0xa8c489, flatShading:true});
+  let seed = 7;
+  const rand = () => (seed = (seed*16807)%2147483647) / 2147483647;
+  for(let i=0;i<26;i++){
+    const tuft = new THREE.Group();
+    for(let b=0;b<3;b++){
+      const blade = new THREE.Mesh(new THREE.ConeGeometry(1.6, 7+rand()*4, 4), mat);
+      blade.position.set((b-1)*2.4, 4, (rand()-0.5)*2);
+      blade.rotation.z = (b-1)*0.25; blade.castShadow = true;
+      tuft.add(blade);
+    }
+    const a = rand()*Math.PI*2, r = 90+rand()*260;
+    tuft.position.set(Math.cos(a)*r, 0, Math.sin(a)*r);
+    scene.add(tuft);
+  }
+}
+const hemi = new THREE.HemisphereLight(0xfff6e0, 0x6a7a55, 1.15); scene.add(hemi);
+// Cool low fill from the shadow side — fakes the reference's soft bounced occlusion.
+const fill = new THREE.DirectionalLight(0xcfd8ee, 0.4);
+fill.position.set(-140, 60, -100); scene.add(fill);
+const sun = new THREE.DirectionalLight(0xfff2d8, 1.6);
+sun.position.set(120, 220, 80); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = sun.shadow.camera.bottom = -260;
+sun.shadow.camera.right = sun.shadow.camera.top = 260;
+scene.add(sun);
+
+const camera = new THREE.PerspectiveCamera(33, canvas.width/canvas.height, 1, 4000);
+
+// ── mount requested model(s) ─────────────────────────────────────────────
+const names = Object.keys(MODELS);
+const rowParam = q.get("row");
+const mounted = [];   // {group, def, name}
+let camHint = {dist:140, height:30, target:16};
+
+function mount(name, x){
+  const def = MODELS[name];
+  if(!def){ console.warn("no model:", name); return; }
+  const g = def.build();
+  g.position.x = x;
+  g.traverse(o=>{ if(o.isMesh){ o.castShadow = true; } });
+  scene.add(g);
+  mounted.push({group:g, def, name});
+  if(def.cam) camHint = def.cam;
+}
+if(rowParam){
+  const list = rowParam.split(",").map(s=>s.trim()).filter(Boolean);
+  const gap = +(q.get("gap") || 46);
+  list.forEach((n,i)=> mount(n, (i-(list.length-1)/2)*gap));
+  camHint = {dist: 90+list.length*42, height: 34, target: 18, ...(q.get("dist")?{dist:+q.get("dist")}:{})};
+}else{
+  mount(q.get("model") || names[0], 0);
+}
+
+// ── UI (hidden when query params drive the shot) ─────────────────────────
+const ui = document.getElementById("ui");
+const uModel = document.getElementById("uModel"), uAnim = document.getElementById("uAnim");
+const uPhase = document.getElementById("uPhase"), uYaw = document.getElementById("uYaw"), uSpin = document.getElementById("uSpin");
+if(q.get("model") || rowParam) ui.classList.add("hidden");
+for(const n of names) uModel.add(new Option(n, n));
+if(mounted[0]) uModel.value = mounted[0].name;
+function fillAnims(){
+  uAnim.innerHTML = "";
+  const def = MODELS[uModel.value];
+  for(const a of Object.keys(def?.anims || {})) uAnim.add(new Option(a, a));
+}
+fillAnims();
+uModel.onchange = ()=>{ location.search = "?model="+encodeURIComponent(uModel.value); };
+
+// ── render loop ──────────────────────────────────────────────────────────
+const animName = q.get("anim");
+const phaseQ = q.get("phase");
+let yaw = +(q.get("yaw") ?? 35), pitch = +(q.get("pitch") ?? 32);
+const zoom = +(q.get("zoom") ?? 1);
+uYaw.value = yaw;
+const still = !!(q.get("model") || rowParam);   // query-driven: render deterministic frames
+let t0 = performance.now();
+
+function pose(t){
+  for(const m of mounted){
+    const anims = m.def.anims || {};
+    const a = animName && anims[animName] ? animName : (still && animName ? null : uAnim.value);
+    const fn = a && anims[a];
+    if(fn) fn(m.group, phaseQ != null ? +phaseQ : +uPhase.value, t);
+  }
+}
+function frame(){
+  const t = (performance.now()-t0)/1000;
+  if(!still){ yaw = uSpin.checked ? yaw + 0.4 : +uYaw.value; }
+  const d = camHint.dist*zoom, ph = (pitch*Math.PI)/180, ya = (yaw*Math.PI)/180;
+  camera.position.set(Math.sin(ya)*Math.cos(ph)*d, Math.sin(ph)*d + camHint.height, Math.cos(ya)*Math.cos(ph)*d);
+  camera.lookAt(0, camHint.target, 0);
+  pose(still && phaseQ != null ? 0 : t);
+  renderer.render(scene, camera);
+  window.__ready = true;
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

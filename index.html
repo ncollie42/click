@@ -48,16 +48,20 @@
              camera     — where the eye sits: pose, projection, orbit.
              visibility — can you see/click it: scan, mitigations, outlines.
              input      — what a click does: hand, harvest, shots.
-             overlays   — screen-space marks: health bars, text, action badge.
+             overlays   — screen-space marks: health bars, combat text, action badge.
              selectors  — ground marks under the hovered/selected thing, plus
                           the render-only sample preview for tuning them.
              gameplay   — the one pane that drives the SIM rather than the view:
                           economy shortcuts, phase/clock, spawns, population.
                           Its flags live in DBG and its buttons call the same
                           entry points play does; it authors nothing itself.
+             Contextual subgroup order: visibility scan/readability; input
+             hand/click/projectiles; overlays damage/bars/badge; gameplay
+             economy/builders/time/combat/population. Camera and selectors
+             intentionally have no subgroups.
              Ownership is one-way and exclusive: the five view panes write only
              their own presentation bag (selectors -> IND / SEL_PREVIEW,
-             overlays -> BARS / BADGE, and so on) and never a simulation value;
+             overlays -> BARS / DAMAGE_TEXT / BADGE, and so on) and never a simulation value;
              gameplay is the deliberate exception and is confined to DBG plus
              the documented entry-point calls. The bindV()/bindBtn() calls are
              grouped in the same order and carry the matching comments; see
@@ -70,7 +74,7 @@
           <label><span class="row"><span>yaw</span><span id="o_vYaw"></span></span>
             <input autocomplete="off" type="range" id="vYaw" min="-180" max="180" step="1" value="0"></label>
           <label><span class="row"><span>zoom</span><span id="o_vZoom"></span></span>
-            <input autocomplete="off" type="range" id="vZoom" min="0.2" max="5" step="0.05" value="1"></label>
+            <input autocomplete="off" type="range" id="vZoom" min="0.2" max="5" step="0.05" value="0.9"></label>
           <label><span class="row"><span>fov</span><span id="o_vFov"></span></span>
             <input autocomplete="off" type="range" id="vFov" min="12" max="70" step="1" value="38"></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vOrtho"><span>orthographic</span></label>
@@ -79,12 +83,12 @@
         </section>
 
         <section class="pane" data-tab="visibility">
-          <h4>sightline scan</h4>
+          <div class="vSubpane" data-subtab="scan">
           <div id="vStatline"><span>clickable <b id="vStat">&mdash;</b></span><span id="vWarn"></span></div>
           <canvas id="vScan" width="452" height="140"></canvas>
           <button id="vRescan" type="button">re-scan</button>
-          <p class="hint">% of clickable things in the open, across every pitch.
-          taller bars = less hidden. the pale line is where you are.</p>
+          </div>
+          <div class="vSubpane" data-subtab="readability">
           <h4>mitigations</h4>
           <label><span class="row"><span>object height</span><span id="o_vHeight"></span></span>
             <input autocomplete="off" type="range" id="vHeight" min="30" max="130" step="5" value="100"></label>
@@ -94,12 +98,11 @@
           <label class="chk"><input autocomplete="off" type="checkbox" id="vOutline" checked><span>mesh outlines</span></label>
           <label><span class="row"><span>outline weight</span><span id="o_vOutlineW"></span></span>
             <input autocomplete="off" type="range" id="vOutlineW" min="0.01" max="0.2" step="0.005" value="0.05"></label>
-          <p class="hint">inverted-hull ink. thickness is in world units, so it
-          thins out as you zoom away — and box corners can show a seam.</p>
+          </div>
         </section>
 
         <section class="pane" data-tab="input">
-          <h4>hand</h4>
+          <div class="vSubpane" data-subtab="hand">
           <label><span class="row"><span>hand capacity</span><span id="o_vCap"></span></span>
             <input autocomplete="off" type="range" id="vCap" min="1" max="14" step="1" value="5"></label>
           <label><span class="row"><span>vacuum radius</span><span id="o_vRadius"></span></span>
@@ -109,37 +112,57 @@
           <label><span class="row"><span>arc height</span><span id="o_vArc"></span></span>
             <input autocomplete="off" type="range" id="vArc" min="0" max="6" step="0.25" value="2"></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vRing" checked><span>show vacuum ring</span></label>
-          <h4>click</h4>
+          </div>
+          <div class="vSubpane" data-subtab="click">
           <label><span class="row"><span>chop time</span><span id="o_vChopT"></span></span>
             <input autocomplete="off" type="range" id="vChopT" min="100" max="3000" step="50" value="700"></label>
           <label><span class="row"><span>yield per chop</span><span id="o_vYield"></span></span>
             <input autocomplete="off" type="range" id="vYield" min="1" max="10" step="1" value="1"></label>
           <label><span class="row"><span>damage per swing</span><span id="o_vDamage"></span></span>
             <input autocomplete="off" type="range" id="vDamage" min="1" max="20" step="1" value="1"></label>
-          <h4>projectiles</h4>
+          </div>
+          <div class="vSubpane" data-subtab="projectiles">
           <label><span class="row"><span>shot speed</span><span id="o_vShotSpeed"></span></span>
             <input autocomplete="off" type="range" id="vShotSpeed" min="8" max="90" step="2" value="26"></label>
           <label><span class="row"><span>shot arc</span><span id="o_vShotArc"></span></span>
             <input autocomplete="off" type="range" id="vShotArc" min="0" max="3" step="0.1" value="1"></label>
           <label><span class="row"><span>shot size</span><span id="o_vShotSize"></span></span>
             <input autocomplete="off" type="range" id="vShotSize" min="0.4" max="3" step="0.1" value="1"></label>
-          <p class="hint">hold-to-fill: the bar must complete before anything lands,
-          and releasing early banks nothing. yield and damage apply to your own
-          swings only — worker gathering still drops one per hit.</p>
+          </div>
         </section>
 
         <section class="pane" data-tab="overlays">
+          <div class="vSubpane" data-subtab="damage">
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vDamageText" checked><span>show damage numbers</span></label>
+          <label><span class="row"><span>fade in</span><span id="o_vDamageFadeIn"></span></span>
+            <input autocomplete="off" type="range" id="vDamageFadeIn" min="0" max="0.5" step="0.01" value="0.08"></label>
+          <label><span class="row"><span>hold</span><span id="o_vDamageHold"></span></span>
+            <input autocomplete="off" type="range" id="vDamageHold" min="0" max="2" step="0.05" value="0.3"></label>
+          <label><span class="row"><span>fade out</span><span id="o_vDamageFadeOut"></span></span>
+            <input autocomplete="off" type="range" id="vDamageFadeOut" min="0.05" max="2.5" step="0.05" value="0.65"></label>
+          <label><span class="row"><span>rise</span><span id="o_vDamageRise"></span></span>
+            <input autocomplete="off" type="range" id="vDamageRise" min="0" max="140" step="2" value="48"></label>
+          <label><span class="row"><span>side spread</span><span id="o_vDamageSpread"></span></span>
+            <input autocomplete="off" type="range" id="vDamageSpread" min="0" max="30" step="1" value="8"></label>
+          <label><span class="row"><span>growth</span><span id="o_vDamageGrow"></span></span>
+            <input autocomplete="off" type="range" id="vDamageGrow" min="-0.5" max="1.5" step="0.05" value="0.35"></label>
+          <label><span class="row"><span>text size</span><span id="o_vDamageSize"></span></span>
+            <input autocomplete="off" type="range" id="vDamageSize" min="8" max="36" step="1" value="18"></label>
+          <label><span class="row"><span>crit scale</span><span id="o_vDamageCrit"></span></span>
+            <input autocomplete="off" type="range" id="vDamageCrit" min="1" max="3" step="0.05" value="1.55"></label>
+          </div>
+          <div class="vSubpane" data-subtab="bars">
           <h4>scaling</h4>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vBarScale" checked><span>scale with zoom</span></label>
           <label><span class="row"><span>min scale</span><span id="o_vBarMin"></span></span>
-            <input autocomplete="off" type="range" id="vBarMin" min="0.2" max="1.5" step="0.05" value="0.6"></label>
+            <input autocomplete="off" type="range" id="vBarMin" min="0.2" max="1.5" step="0.05" value="0.2"></label>
           <label><span class="row"><span>max scale</span><span id="o_vBarMax"></span></span>
             <input autocomplete="off" type="range" id="vBarMax" min="0.5" max="4" step="0.1" value="1.8"></label>
           <h4>health bars</h4>
           <label><span class="row"><span>width</span><span id="o_vBarW"></span></span>
             <input autocomplete="off" type="range" id="vBarW" min="0.4" max="2.5" step="0.05" value="1"></label>
           <label><span class="row"><span>thickness</span><span id="o_vBarH"></span></span>
-            <input autocomplete="off" type="range" id="vBarH" min="3" max="16" step="0.5" value="6"></label>
+            <input autocomplete="off" type="range" id="vBarH" min="3" max="16" step="0.5" value="3"></label>
           <h4>frame</h4>
           <label><span class="row"><span>row gap</span><span id="o_vBarGap"></span></span>
             <input autocomplete="off" type="range" id="vBarGap" min="0" max="8" step="0.5" value="2.5"></label>
@@ -156,21 +179,15 @@
             <input autocomplete="off" type="range" id="vTextMin" min="4" max="14" step="0.5" value="7"></label>
           <label><span class="row"><span>text max</span><span id="o_vTextMax"></span></span>
             <input autocomplete="off" type="range" id="vTextMax" min="8" max="30" step="0.5" value="15"></label>
-          <p class="hint">overlay marks are screen-space, so without scaling they
-          swamp the world zoomed out and disappear zoomed in. min/max clamp how
-          far they track the camera.</p>
-          <h4>action badge</h4>
+          </div>
+          <div class="vSubpane" data-subtab="badge">
           <label><span class="row"><span>badge size</span><span id="o_vBadgeBox"></span></span>
             <input autocomplete="off" type="range" id="vBadgeBox" min="12" max="34" step="1" value="19"></label>
           <label><span class="row"><span>drop below target</span><span id="o_vBadgeDrop"></span></span>
             <input autocomplete="off" type="range" id="vBadgeDrop" min="0" max="36" step="1" value="15"></label>
           <label><span class="row"><span>fill opacity</span><span id="o_vBadgeFill"></span></span>
             <input autocomplete="off" type="range" id="vBadgeFill" min="0.15" max="0.9" step="0.01" value="0.3"></label>
-          <p class="hint">presentation only — the badge previews what a held left
-          click would hit and doubles as its fill bar, but these never touch
-          targeting or swing timing. size carries the silhouette with it, drop
-          slides the badge down from the target's ground point, and it rides the
-          same zoom scaling as the bars above.</p>
+          </div>
         </section>
 
         <section class="pane" data-tab="selectors">
@@ -187,15 +204,6 @@
             <input autocomplete="off" type="range" id="vRingOpacity" min="0.15" max="0.9" step="0.01" value="0.42"></label>
           <label><span class="row"><span>cursor follow</span><span id="o_vSelFollow"></span></span>
             <input autocomplete="off" type="range" id="vSelFollow" min="0.05" max="1" step="0.01" value="0.28"></label>
-          <p class="hint">presentation only — corners mark the target or footprint,
-          arcs mark the real gameplay radius, and nothing here moves either.
-          pulse breathes the corners' offsets and the rings' opacity (never a
-          ring's radius) off one clock, so every live mark stays in phase.
-          thickness is world units like the mesh outlines under visibility, so a
-          bracket keeps the same weight as the footprint it frames at any zoom.
-          buildings with no gameplay radius draw no ring at all. follow is how
-          much of the gap the cursor bracket closes each frame as it glides to
-          whatever it is framing next — 1 is an instant snap, low values trail.</p>
           <h4>preview</h4>
           <label><span class="row"><span>sample mark</span></span>
             <select autocomplete="off" id="vSelPreview">
@@ -206,16 +214,10 @@
               <option value="4">invalid 3x3</option>
               <option value="5">building + radius</option>
             </select></label>
-          <p class="hint">debug aid, not a game feature — draws a sample mark on
-          the camera's centre cell so states play never shows together (valid vs
-          invalid, ring vs no ring) can be compared while tuning. it places
-          nothing and changes no game value; sizes are the real footprints and
-          the ring is the basic tower's real range. live marks keep drawing
-          alongside it, so the sample is a fixed reference next to them.</p>
         </section>
 
         <section class="pane" data-tab="gameplay">
-          <h4>economy</h4>
+          <div class="vSubpane" data-subtab="economy">
           <label class="chk"><input autocomplete="off" type="checkbox" id="vFreeCosts"><span>free costs</span></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vUnlimitedCharges"><span>unlimited charges</span></label>
           <div class="row"><span>feeding</span><span id="vXpReadout">xp 0 · tier 0 · 0 points</span></div>
@@ -223,20 +225,14 @@
             <button id="vGrantXp" type="button">+25 xp</button>
             <button id="vGrantXpBig" type="button">+100 xp</button>
           </div>
-          <p class="hint">debug xp passes through the real grant path — thresholds,
-          points and next-night scaling all react as if fed.</p>
           <div class="btnrow">
             <button id="vGrantAll" type="button">+25 all</button>
             <button id="vGrantDust" type="button">+25 dust</button>
             <button id="vGrantCoin" type="button">+25 coin</button>
             <button id="vGrantDiamond" type="button">+25 diamond</button>
           </div>
-          <p class="hint">free costs bypasses the delivery pipeline: a placed
-          blueprint and an accepted upgrade finish through the same completion
-          calls a full delivery makes. It never edits an authored cost and never
-          writes to the base store — the grant buttons are the only thing here
-          that adds resources, and they add nothing else.</p>
-          <h4>builder sourcing</h4>
+          </div>
+          <div class="vSubpane" data-subtab="builders">
           <label class="chk"><input autocomplete="off" type="checkbox" id="vGroundSourcing" checked><span>ground sourcing</span></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vBuilderSelfSupply" checked><span>starved builders self-supply</span></label>
           <label><span class="row"><span>builder source radius</span><span id="o_vBuilderRadius"></span></span>
@@ -245,10 +241,8 @@
           <label class="chk"><input autocomplete="off" type="checkbox" id="vIdleSeeksWork" checked><span>idle guards seek work + tidy drops</span></label>
           <label><span class="row"><span>recruit radius</span><span id="o_vRecruitRadius"></span></span>
             <input autocomplete="off" type="range" id="vRecruitRadius" min="100" max="500" step="20" value="200"></label>
-          <p class="hint">ground sourcing changes only which source a builder
-          prefers; recruiting borrows idle guards and returns them. Neither ever
-          edits a cost or grants resources.</p>
-          <h4>time</h4>
+          </div>
+          <div class="vSubpane" data-subtab="time">
           <label id="vSpeedRow"><span class="row"><span>game speed</span><span id="o_vSpeed"></span></span>
             <input autocomplete="off" type="range" id="vSpeed" min="1" max="6" step="1" value="1"></label>
           <div class="btnrow">
@@ -256,10 +250,8 @@
             <button id="vStartNight" type="button">start night</button>
             <button id="vAdvancePhase" type="button">advance phase</button>
           </div>
-          <p class="hint">every phase button runs transitionPhase(), so wave
-          setup, the next-night roll and the forecast reset happen exactly as
-          they do when the clock runs out on its own.</p>
-          <h4>combat</h4>
+          </div>
+          <div class="vSubpane" data-subtab="combat">
           <label><span class="row"><span>enemy type</span></span>
             <select autocomplete="off" id="vEnemyType"></select></label>
           <label><span class="row"><span>night wave</span></span>
@@ -270,36 +262,34 @@
             <button id="vClearEnemies" type="button">clear enemies</button>
           </div>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vInvulnBase"><span>invulnerable base</span></label>
-          <p class="hint">spawn picks a random edge. start wave forces night if
-          it is day, then hands the chosen recipe to the live wave schedule with
-          its first spawn due immediately. invulnerability is checked where the
-          hit lands, so base hp never gets inflated.</p>
-          <h4>population</h4>
+          </div>
+          <div class="vSubpane" data-subtab="population">
           <label class="chk"><input autocomplete="off" type="checkbox" id="vInstantWorkers"><span>instant workers</span></label>
           <div class="btnrow">
             <button id="vHealAll" type="button">heal all</button>
           </div>
-          <p class="hint">instant workers skips the house spawn timer only; the
-          two-per-house slot limit still applies. heal restores the base, every
-          tower to its own variant's max, and every worker to full.</p>
           <h4>skills</h4>
           <div class="btnrow">
             <button id="vOpenSkillTree" type="button">open skill tree</button>
           </div>
-          <p class="hint">the hud point badge or k opens this same screen. it
-          suppresses world input without pausing, cancels placement and
-          closes the upgrade panel on the way in, and takes nothing away on the
-          way out — esc or continue closes it.</p>
+          </div>
         </section>
 
       </div>
+      <div id="vFooterActions">
+        <button id="vShowcase" type="button">open showcase</button>
+        <button id="vChanged" type="button">changed values</button>
+      </div>
+      <textarea id="vChangedOutput" aria-label="changed view debugger values" readonly hidden></textarea>
       <button id="vRestart" type="button">restart run</button>
     </section>
     <!-- Empty showcase roots: src/ui/showcase.js exclusively owns their children and listeners. -->
     <section id="showcasePanel" hidden aria-label="showcase controls"></section>
     <div id="showcaseLabels" hidden aria-hidden="true"></div>
-    <section id="xpHud" aria-label="experience progress">
-      <div id="xpBar"><i id="xpBarFill"></i><span id="xpBarLabel">0 / 40 xp · 40 needed</span></div>
+    <!-- The run's one progress bar: level, and how far into it. src/ui/draft.js owns every value in
+         it, because the level it counts is the thing that deals the draft. -->
+    <section id="xpHud" aria-label="level progress">
+      <div id="levelBar"><i id="levelBarFill"></i><b id="levelBarLabel">lv 0</b><span id="levelBarXp">0 / 6</span></div>
     </section>
     <section id="phaseHud">
       <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
@@ -336,6 +326,16 @@
         </div>
       </div>
       <footer id="skillTreeBar"><button id="skillTreeContinue" type="button">continue</button></footer>
+    </section>
+    <!-- Draft screen (level-up, pick one of three). Markup is the shell only: src/ui/draft.js builds
+         and owns every card under #draftCards, so nothing here names a card. `hidden` is the closed
+         state and is display:none, which keeps the screen out of layout, out of the focus order and
+         out of the accessibility tree — so the dialog role only ever describes an open screen.
+         tabindex=-1 is not a tab stop: it is where focus lands on the deal and where a press on the
+         backdrop puts it, instead of dropping to <body>. -->
+    <section id="draftPanel" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="draftTitle">
+      <header id="draftHeader"><h2 id="draftTitle">level up</h2><p id="draftHint">the thing offers three · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></p></header>
+      <div id="draftCards"></div>
     </section>
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
   </main>

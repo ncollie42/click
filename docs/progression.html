@@ -1,0 +1,556 @@
+<meta charset="utf-8">
+<title>Progression Timeline</title>
+<style>
+  /* ── tokens · dark-first (matches greed-dial.html) ─────────────────── */
+  :root{
+    color-scheme: dark;
+    --bg:#1d1c29; --surface:#252336; --surface-2:#2c2a40; --line:#3a3752;
+    --ink:#eae6dc; --muted:#a29caf; --faint:#6f6a80;
+    --accent:#9085e9;
+    --s-blue:#3987e5; --s-orange:#d95926; --s-aqua:#199e70; --s-yellow:#c98500;
+    --s-violet:#9085e9; --s-red:#e66767;
+    --good:#199e70; --bad:#e66767; --warn:#c98500;
+    --night:#161426;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      color-scheme: light;
+      --bg:#f1eee4; --surface:#faf8f0; --surface-2:#f3f0e4; --line:#d9d4c4;
+      --ink:#262233; --muted:#6b667a; --faint:#9a94a8;
+      --accent:#4a3aa7;
+      --s-blue:#2a78d6; --s-orange:#eb6834; --s-aqua:#1baf7a; --s-yellow:#eda100;
+      --s-violet:#4a3aa7; --s-red:#e34948;
+      --good:#1baf7a; --bad:#e34948; --warn:#b07800;
+      --night:#ddd8ea;
+    }
+  }
+  :root[data-theme="light"]{
+    color-scheme: light;
+    --bg:#f1eee4; --surface:#faf8f0; --surface-2:#f3f0e4; --line:#d9d4c4;
+    --ink:#262233; --muted:#6b667a; --faint:#9a94a8;
+    --accent:#4a3aa7;
+    --s-blue:#2a78d6; --s-orange:#eb6834; --s-aqua:#1baf7a; --s-yellow:#eda100;
+    --s-violet:#4a3aa7; --s-red:#e34948;
+    --good:#1baf7a; --bad:#e34948; --warn:#b07800;
+    --night:#ddd8ea;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.55 "Avenir Next","Segoe UI",system-ui,sans-serif;
+    margin:0; padding:0 20px 80px;
+  }
+  main{max-width:1060px; margin:0 auto}
+  h1,h2,h3{font-family:"Trebuchet MS","Avenir Next",system-ui,sans-serif; text-wrap:balance; margin:0}
+  .mono{font-family:ui-monospace,"Cascadia Code",Consolas,monospace}
+
+  header{padding:56px 0 8px; max-width:64ch}
+  .eyebrow{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 10px}
+  h1{font-size:clamp(30px,5vw,42px); line-height:1.08; letter-spacing:-.01em}
+  header p{color:var(--muted); margin:14px 0 0; max-width:58ch}
+  header p strong{color:var(--ink); font-weight:600}
+  header a{color:var(--accent)}
+
+  section{margin-top:52px}
+  .sec-head{display:flex; align-items:baseline; gap:14px; border-bottom:1px solid var(--line); padding-bottom:10px; margin-bottom:18px}
+  .sec-head .tag{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.12em;
+    color:var(--faint); text-transform:uppercase; flex:none}
+  h2{font-size:21px}
+  .sec-note{color:var(--muted); max-width:66ch; margin:0 0 18px}
+
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:18px}
+  .scroll-x{overflow-x:auto}
+  .scroll-x svg{display:block; min-width:900px; width:100%; height:auto}
+  #timeline{min-width:1280px}
+
+  .verdict{display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px}
+  .tile{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px 18px; min-width:150px; flex:1 1 150px}
+  .tile .k{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint);
+    font-family:ui-monospace,Consolas,monospace}
+  .tile .v{font-size:24px; font-weight:600; margin-top:3px;
+    font-family:"Trebuchet MS",system-ui,sans-serif}
+  .tile .s{font-size:12px; color:var(--muted); margin-top:2px}
+  .tile.bad .v{color:var(--bad)} .tile.warn .v{color:var(--warn)} .tile.good .v{color:var(--good)}
+
+  .charts{display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px}
+  .chart{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:14px 14px 10px; position:relative}
+  .chart h3{font-size:13.5px; font-weight:600; margin:0 0 2px}
+  .chart .sub{font-size:12px; color:var(--muted); margin:0 0 6px}
+  .chart svg{display:block; width:100%; height:auto}
+  .chart .legend{display:flex; gap:14px; font-size:12px; color:var(--muted); margin-top:4px; flex-wrap:wrap}
+  .chart .legend i{display:inline-block; width:14px; height:3px; border-radius:2px; margin-right:5px; vertical-align:middle}
+  .tip{position:absolute; pointer-events:none; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:6px; padding:6px 9px; font-size:12px; display:none; z-index:3; white-space:nowrap;
+    box-shadow:0 4px 14px rgba(0,0,0,.25)}
+  .tip .t{color:var(--faint); font-family:ui-monospace,Consolas,monospace; font-size:11px}
+  .tip .row{display:flex; align-items:center; gap:6px; margin-top:2px}
+  .tip .row i{width:10px; height:3px; border-radius:2px; flex:none}
+  .tip .row b{font-variant-numeric:tabular-nums; margin-left:auto; padding-left:12px}
+
+  .assump{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px}
+  .assump .card{padding:12px 14px; font-size:13px; color:var(--muted)}
+  .assump .card b{color:var(--ink)}
+  .assump .lbl{font-family:ui-monospace,Consolas,monospace; font-size:10.5px; letter-spacing:.12em;
+    text-transform:uppercase; display:block; margin-bottom:6px}
+  .assump .live .lbl{color:var(--s-aqua)} .assump .authored .lbl{color:var(--s-yellow)}
+
+  table{border-collapse:collapse; width:100%; font-size:13px}
+  th{font-family:ui-monospace,Consolas,monospace; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--faint); text-align:left; padding:6px 12px 6px 0; border-bottom:1px solid var(--line)}
+  td{padding:5px 12px 5px 0; border-bottom:1px solid color-mix(in srgb, var(--line) 45%, transparent);
+    color:var(--muted); font-variant-numeric:tabular-nums}
+  td:first-child{color:var(--ink); font-variant-numeric:tabular-nums}
+  td .beat-kind{font-family:ui-monospace,Consolas,monospace; font-size:11px}
+  tr.shift td{color:var(--ink); font-weight:600}
+
+  .footnote{font-size:12.5px; color:var(--faint); max-width:70ch; margin-top:14px}
+  .footnote code{font-family:ui-monospace,Consolas,monospace; font-size:11.5px; color:var(--muted)}
+
+  .svg-label{font:10.5px "Avenir Next","Segoe UI",system-ui,sans-serif; fill:var(--muted)}
+  .svg-label-strong{font:600 10.5px "Avenir Next","Segoe UI",system-ui,sans-serif; fill:var(--ink)}
+  .svg-tick{font:10px ui-monospace,Consolas,monospace; fill:var(--faint)}
+  .svg-flag{font:600 10px ui-monospace,Consolas,monospace; fill:var(--bad)}
+</style>
+
+<main>
+<header>
+  <p class="eyebrow">pacing bench · the thing in the ground</p>
+  <h1>Progression Timeline</h1>
+  <p>The whole run on one time axis, built around the <strong>pick-3 draft loop</strong>:
+  feeding the thing earns XP, XP fills an exponential level curve, every level deals a draft,
+  drafted buffs compound income, faster income feeds more. Game constants are imported
+  <strong>live</strong> from <span class="mono">src/game/data.js</span>; card effects from
+  <span class="mono">src/game/cards.js</span> (<a href="cards.html">browse the catalog</a>);
+  intent from <span class="mono">docs/progression-spec.js</span>. Edit any of them, refresh, the charts move.</p>
+</header>
+
+<!-- ══════════════ 0 · VERDICT ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">verdict</span><h2>What the numbers say today</h2></div>
+  <div class="verdict" id="verdict"></div>
+</section>
+
+<!-- ══════════════ 1 · TIMELINE ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">timeline</span><h2>One run, top to bottom</h2></div>
+  <p class="sec-note">Top strip: day/night cycles at the current <span class="mono" id="cycle-len"></span>
+  cycle. Below it: every <em>modeled draft moment</em> — the dopamine drip is emergent from the level
+  curve, not authored. Middle: phases — each changes what the player's <em>clicks are for</em>.
+  Bottom: structural beats only (the moments a draft can't provide); quiet gaps over the rule are flagged red.</p>
+  <div class="card scroll-x"><svg id="timeline" role="img" aria-label="Run timeline: day/night stripes, modeled draft moments, phase bands, and structural beats with rule-violation flags"></svg></div>
+  <div class="legend-row legend" style="display:flex;gap:18px;margin-top:10px;font-size:12.5px;color:var(--muted)">
+    <span><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--s-violet);margin-right:6px;vertical-align:middle"></i>draft moment (modeled)</span>
+    <span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--s-blue);margin-right:6px;vertical-align:middle"></i>unlock</span>
+    <span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--s-orange);margin-right:6px;vertical-align:middle"></i>set piece</span>
+    <span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--s-violet);margin-right:6px;vertical-align:middle"></i>paradigm shift</span>
+    <span><i style="display:inline-block;width:10px;height:3px;background:var(--bad);margin-right:6px;vertical-align:middle"></i>gap &gt; rule</span>
+  </div>
+</section>
+
+<!-- ══════════════ 2 · MODEL ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">model</span><h2>The player model</h2></div>
+  <p class="sec-note"><span style="color:var(--s-aqua)">LIVE</span> values come from game code and
+  cannot drift. <span style="color:var(--s-yellow)">AUTHORED</span> values are guesses in the spec —
+  the headless bot sim (phase 2) replaces them with measured numbers.</p>
+  <div class="assump" id="assumptions"></div>
+</section>
+
+<!-- ══════════════ 3 · CURVES ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">curves</span><h2>Income compounding vs draft cadence</h2></div>
+  <p class="sec-note">Left: where resources come from as drafted buffs compound — the gray line is
+  the same player with <em>no drafts</em>, so the space between gray and orange is what the card
+  pool is worth. Right: minutes between drafts across the run; the shaded band is the target
+  feel (fast early, breathing room late).</p>
+  <div class="charts">
+    <div class="chart" id="chart-income">
+      <h3>Resource income, units / min</h3>
+      <p class="sub">stacked: hand + workers, with drafted buffs · day/night-averaged</p>
+    </div>
+    <div class="chart" id="chart-cadence">
+      <h3>Minutes between drafts</h3>
+      <p class="sub">one dot per level-up · curve <span class="mono" id="curve-formula"></span></p>
+    </div>
+  </div>
+  <p class="footnote" id="cadence-note"></p>
+</section>
+
+<!-- ══════════════ 4 · WALLS ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">walls</span><h2>Price walls</h2></div>
+  <p class="sec-note">For every structural beat with a real cost table: how many minutes of
+  <em>unfed</em> income it costs at the moment it appears. Blueprint towers aren't listed —
+  drafting one is free; its build cost lands whenever the player places it.</p>
+  <div class="chart" id="chart-walls" style="max-width:none">
+    <h3>Minutes of saving to afford each unlock</h3>
+    <p class="sub">cost ÷ (income × (1 − feed fraction)) at its scheduled minute · resources weighted equally</p>
+  </div>
+  <p class="footnote" id="walls-note"></p>
+</section>
+
+<!-- ══════════════ 5 · TABLE ══════════════ -->
+<section>
+  <div class="sec-head"><span class="tag">table</span><h2>The schedule, as numbers</h2></div>
+  <div class="card scroll-x"><table id="beat-table"></table></div>
+  <p class="footnote">Phase 2 of this bench: a headless bot in <code>tools/</code> plays a scripted
+  strategy against the real simulation and overlays <em>measured</em> curves on these analytical
+  ones. Until then, treat slopes as shapes, not truths. Run <code>node docs/progression-model.js</code>
+  for a terminal summary while tuning.</p>
+</section>
+</main>
+
+<script type="module">
+import {FEED_XP,XP_TIERS,HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION,NIGHT_DURATION,
+        BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,RESOURCE_KINDS} from "../src/game/data.js";
+import {TUNE} from "../src/game/simulation.js";
+import {ARC,PHASES,BEATS,PLAYER_MODEL,LEVEL_CURVE,DRAFT_POLICY,phaseIndexAt} from "./progression-spec.js";
+import {cardById} from "../src/game/cards.js";
+import {runModel,DT} from "./progression-model.js";
+
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const SVGNS="http://www.w3.org/2000/svg";
+function el(name,attrs={},parent=null,text=null){
+  const node=document.createElementNS(SVGNS,name);
+  for(const [k,v] of Object.entries(attrs)) node.setAttribute(k,v);
+  if(text!==null) node.textContent=text;
+  if(parent) parent.appendChild(node);
+  return node;
+}
+const fmt=x=>x>=1000?(x/1000).toFixed(x>=10000?0:1)+"k":(Math.round(x*10)/10).toString();
+
+const model=runModel();
+const {series,levelUps,gaps}=model;
+const T=ARC.targetMinutes,N=series.mins.length;
+const atMin=(arr,m)=>arr[Math.min(N-1,Math.round(m/DT))];
+
+// structural-beat gaps vs the rule (run start and end count as endpoints)
+const beatTimes=[0,...BEATS.map(b=>b.min),T];
+const beatGaps=[];
+for(let i=1;i<beatTimes.length;i++){const g=beatTimes[i]-beatTimes[i-1];
+  if(g>ARC.beatRuleMinutes) beatGaps.push({from:beatTimes[i-1],to:beatTimes[i],gap:g});}
+
+// price walls from structural beats with real cost tables
+function resolveCost(ref){
+  const [kind,id]=ref.split(":");
+  if(kind==="building") return BUILDING_TYPES[id]?.cost;
+  if(kind==="upgrade")  return UPGRADES.find(u=>u.id===id)?.cost;
+  if(kind==="tower")    return TOWER_VARIANTS[id]?.cost;
+  return null;
+}
+const walls=BEATS.map(b=>{
+  const cost=resolveCost(b.ref); if(!cost) return null;
+  const units=RESOURCE_KINDS.reduce((s,k)=>s+(cost[k]||0),0); if(units===0) return null;
+  const pi=phaseIndexAt(b.min);
+  const avail=atMin(series.total,b.min)*(1-PLAYER_MODEL.feedFraction[pi]);
+  return {...b,units,minutes:units/avail};
+}).filter(Boolean);
+const WALL_LINE=2;
+const tallWalls=walls.filter(w=>w.minutes>WALL_LINE);
+
+// cadence target band (feel, not physics)
+const BAND_LO=0.5,BAND_HI=3;
+const worstGap=gaps.reduce((a,b)=>b.gap>a.gap?b:a,{gap:0});
+const offBand=gaps.filter(g=>g.gap<BAND_LO||g.gap>BAND_HI).length;
+
+// ── verdict tiles ───────────────────────────────────────────────────────────
+const verdict=document.getElementById("verdict");
+function tile(k,v,s,cls=""){
+  const d=document.createElement("div");d.className="tile "+cls;
+  d.innerHTML=`<div class="k"></div><div class="v"></div><div class="s"></div>`;
+  d.children[0].textContent=k;d.children[1].textContent=v;d.children[2].textContent=s;
+  verdict.appendChild(d);
+}
+const cycleMin=(DAY_DURATION+NIGHT_DURATION)/60;
+tile("run length",T+" min","authored target · one arc");
+tile("drafts dealt",levelUps.length,`first at ${levelUps[0]?levelUps[0].min.toFixed(1):"—"} min`,
+     levelUps.length>=25&&levelUps.length<=45?"good":"warn");
+tile("worst draft gap",worstGap.gap.toFixed(1)+" min",`at min ${worstGap.min?.toFixed(0)} · target ${BAND_LO}–${BAND_HI}`,
+     worstGap.gap<=BAND_HI?"good":"warn");
+tile("drafts off-band",offBand,offBand?`outside ${BAND_LO}–${BAND_HI} min`:"every gap in the target band",
+     offBand?"warn":"good");
+tile("beat-rule breaks",beatGaps.length,beatGaps.length?`worst gap ${Math.max(...beatGaps.map(g=>g.gap))} min`:`no structural gap over ${ARC.beatRuleMinutes} min`,
+     beatGaps.length?"warn":"good");
+tile("price walls",tallWalls.length,tallWalls.length?"unlocks that make you save":"nothing costs real saving yet",
+     tallWalls.length?"":"bad");
+
+// ── timeline svg ────────────────────────────────────────────────────────────
+{
+  const W=1300,H=238,L=34,R=12,plotW=W-L-R;
+  const x=m=>L+m/T*plotW;
+  const svg=document.getElementById("timeline");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  document.getElementById("cycle-len").textContent=`${DAY_DURATION}s day + ${NIGHT_DURATION}s night`;
+
+  // row A — day/night stripes
+  const yA=8,hA=10;
+  el("rect",{x:L,y:yA,width:plotW,height:hA,rx:2,fill:"var(--surface-2)"},svg);
+  for(let s=0;s<T*60;s+=DAY_DURATION+NIGHT_DURATION){
+    const nightStart=(s+DAY_DURATION)/60,nightEnd=Math.min((s+DAY_DURATION+NIGHT_DURATION)/60,T);
+    if(nightStart>=T) break;
+    el("rect",{x:x(nightStart),y:yA,width:x(nightEnd)-x(nightStart),height:hA,fill:"var(--night)"},svg);
+  }
+  el("text",{x:L-6,y:yA+hA-1,"text-anchor":"end",class:"svg-tick"},svg,"cycles");
+
+  // row A2 — modeled draft moments: the emergent dopamine drip
+  const yD=30;
+  el("line",{x1:L,y1:yD,x2:W-R,y2:yD,stroke:"var(--line)","stroke-width":1,opacity:.6},svg);
+  levelUps.forEach(u=>el("circle",{cx:x(u.min),cy:yD,r:3,fill:css("--s-violet"),
+    stroke:"var(--surface)","stroke-width":1.5},svg));
+  el("text",{x:L-6,y:yD+3,"text-anchor":"end",class:"svg-tick"},svg,"drafts");
+
+  // row B — phase bands, labels in an alternating lane above
+  const yB=72,hB=22;
+  PHASES.forEach((p,i)=>{
+    const x0=x(p.start),x1=x(p.end);
+    el("rect",{x:x0+1,y:yB,width:x1-x0-2,height:hB,rx:3,
+      fill:`color-mix(in srgb, var(--accent) ${8+i*5}%, var(--surface-2))`},svg);
+    const cx=(x0+x1)/2, lane=i%2, ly=yB-8-lane*13;
+    el("line",{x1:cx,y1:ly+3,x2:cx,y2:yB,stroke:"var(--line)","stroke-width":1},svg);
+    el("text",{x:cx,y:ly,"text-anchor":"middle",class:"svg-label-strong"},svg,p.name);
+  });
+  el("text",{x:L-6,y:yB+hB/2+3,"text-anchor":"end",class:"svg-tick"},svg,"phase");
+
+  // row C — structural beats: colored marker + staggered labels
+  const yC=118,kindColor={unlock:"var(--s-blue)",spike:"var(--s-orange)",shift:"var(--s-violet)"};
+  el("line",{x1:L,y1:yC,x2:W-R,y2:yC,stroke:"var(--line)","stroke-width":1},svg);
+  BEATS.forEach((b,i)=>{
+    const bx=x(b.min),lane=i%4,ty=yC+22+lane*14;
+    el("line",{x1:bx,y1:yC-4,x2:bx,y2:ty-9,stroke:"var(--line)","stroke-width":1},svg);
+    el("rect",{x:bx-3.5,y:yC-3.5,width:7,height:7,rx:1.5,fill:kindColor[b.kind],
+      transform:`rotate(45 ${bx} ${yC})`},svg);
+    el("text",{x:bx,y:ty,"text-anchor":"middle",class:b.kind==="shift"?"svg-label-strong":"svg-label"},svg,b.label);
+  });
+  beatGaps.forEach(g=>{
+    const x0=x(g.from)+6,x1=x(g.to)-6,y=yC-14;
+    el("line",{x1:x0,y1:y,x2:x1,y2:y,stroke:"var(--bad)","stroke-width":2,"stroke-linecap":"round"},svg);
+    el("text",{x:(x0+x1)/2,y:y-5,"text-anchor":"middle",class:"svg-flag"},svg,`${g.gap}m quiet`);
+  });
+
+  // shared x axis
+  const yAx=H-18;
+  el("line",{x1:L,y1:yAx,x2:W-R,y2:yAx,stroke:"var(--line)","stroke-width":1},svg);
+  for(let m=0;m<=T;m+=5){
+    el("line",{x1:x(m),y1:yAx,x2:x(m),y2:yAx+4,stroke:"var(--line)","stroke-width":1},svg);
+    el("text",{x:x(m),y:yAx+15,"text-anchor":"middle",class:"svg-tick"},svg,m+(m===0?" min":""));
+  }
+}
+
+// ── assumptions cards ───────────────────────────────────────────────────────
+{
+  const wrap=document.getElementById("assumptions");
+  const card=(cls,lbl,html)=>{const d=document.createElement("div");
+    d.className="card "+cls;d.innerHTML=`<span class="lbl">${lbl}</span>`+html;wrap.appendChild(d);};
+  card("live","live · data.js + tune + cards.js",
+    `<b>${TUNE.chopYield}</b> drop per chop · worker carry <b>${WORKER_CARRY}</b> ·
+     house = <b>${HOUSE_SLOTS}</b> workers · cycle <b>${DAY_DURATION}s + ${NIGHT_DURATION}s</b> ·
+     feed XP <b>${RESOURCE_KINDS.map(k=>FEED_XP[k]).join("/")}</b> (${RESOURCE_KINDS.join("/")}) ·
+     buff effects from the <a href="cards.html" style="color:var(--accent)">card catalog</a>`);
+  card("authored","authored · level curve + drafts",
+    `next level costs <b>${LEVEL_CURVE.base} × ${LEVEL_CURVE.growth}^level</b> XP ·
+     modeled player takes an income buff every <b>${DRAFT_POLICY.incomeBuffEveryNLevels}</b> levels,
+     cycling <b>${DRAFT_POLICY.cycle.length}</b> cards: ${DRAFT_POLICY.cycle.map(id=>cardById[id].id).join(", ")}`);
+  card("authored","authored · hand play",
+    `harvest hits/min by phase <b>${PLAYER_MODEL.handHitsPerMin.join(" → ")}</b> —
+     active clicking fades as drafts absorb the chores; it never hits zero because clicking always pays.`);
+  card("authored","authored · workers + feeding",
+    `round trip <b>${PLAYER_MODEL.workerTripSeconds}s</b> · houses at minutes
+     <b>${PLAYER_MODEL.houseAtMinutes.join(", ")}</b> ·
+     night keeps <b>${Math.round(ARC.nightIncomeFactor*100)}%</b> ·
+     fed share by phase <b>${PLAYER_MODEL.feedFraction.map(f=>Math.round(f*100)+"%").join(" → ")}</b> ·
+     avg XP per fed unit <b>${PLAYER_MODEL.avgXpPerFedUnit.join(" → ")}</b>`);
+}
+
+// ── chart helpers ───────────────────────────────────────────────────────────
+function niceMax(v){const p=Math.pow(10,Math.floor(Math.log10(v)));const s=v/p;
+  return (s<=1?1:s<=2?2:s<=5?5:10)*p;}
+function makeTip(host){
+  const tip=document.createElement("div");tip.className="tip";host.appendChild(tip);return tip;
+}
+function lineChart(hostId,{yMax,yTicks,yFmt,series:defs,extras}){
+  const host=document.getElementById(hostId);
+  const W=480,H=250,L=44,R=14,Tm=10,B=26,pw=W-L-R,ph=H-Tm-B;
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`});host.appendChild(svg);
+  const x=m=>L+m/T*pw, yv=v=>Tm+ph-v/yMax*ph;
+  yTicks.forEach(tv=>{
+    el("line",{x1:L,y1:yv(tv),x2:W-R,y2:yv(tv),stroke:"var(--line)","stroke-width":1,opacity:.55},svg);
+    el("text",{x:L-6,y:yv(tv)+3,"text-anchor":"end",class:"svg-tick"},svg,yFmt(tv));
+  });
+  for(let m=0;m<=T;m+=10)
+    el("text",{x:x(m),y:H-8,"text-anchor":"middle",class:"svg-tick"},svg,m);
+  el("line",{x1:L,y1:Tm+ph,x2:W-R,y2:Tm+ph,stroke:"var(--line)","stroke-width":1},svg);
+  const path=(vals,base)=>{
+    let d=vals.map((v,i)=>`${i?"L":"M"}${x(series.mins[i]).toFixed(1)},${yv(v).toFixed(1)}`).join("");
+    if(base){for(let i=vals.length-1;i>=0;i--)d+=`L${x(series.mins[i]).toFixed(1)},${yv(base[i]).toFixed(1)}`;d+="Z";}
+    return d;
+  };
+  defs.forEach(s=>{
+    if(s.area) el("path",{d:path(s.values,s.base),fill:s.color,opacity:.14,stroke:"none"},svg);
+    el("path",{d:path(s.values),fill:"none",stroke:s.color,"stroke-width":2,
+      "stroke-linejoin":"round","stroke-linecap":"round","stroke-dasharray":s.dash||"none"},svg);
+  });
+  extras?.(svg,x,yv);
+  const lg=document.createElement("div");lg.className="legend";
+  defs.forEach(s=>{const sp=document.createElement("span");
+    const i=document.createElement("i");i.style.background=s.color;
+    sp.appendChild(i);sp.appendChild(document.createTextNode(s.name));lg.appendChild(sp);});
+  host.appendChild(lg);
+  const tip=makeTip(host);
+  const cross=el("line",{y1:Tm,y2:Tm+ph,stroke:"var(--faint)","stroke-width":1,opacity:0},svg);
+  const dots=defs.map(s=>el("circle",{r:4.5,fill:s.color,stroke:"var(--surface)","stroke-width":2,opacity:0},svg));
+  svg.style.touchAction="none";
+  svg.addEventListener("pointermove",ev=>{
+    const r=svg.getBoundingClientRect(),sx=W/r.width;
+    const m=Math.max(0,Math.min(T,((ev.clientX-r.left)*sx-L)/pw*T));
+    const i=Math.round(m/DT),px=x(series.mins[i]);
+    cross.setAttribute("x1",px);cross.setAttribute("x2",px);cross.setAttribute("opacity",.6);
+    tip.style.display="block";tip.replaceChildren();
+    const tl=document.createElement("div");tl.className="t";tl.textContent=`min ${series.mins[i].toFixed(1)}`;tip.appendChild(tl);
+    defs.forEach((s,si)=>{
+      dots[si].setAttribute("cx",px);dots[si].setAttribute("cy",yv(s.values[i]));dots[si].setAttribute("opacity",1);
+      const row=document.createElement("div");row.className="row";
+      const key=document.createElement("i");key.style.background=s.color;
+      const nm=document.createElement("span");nm.textContent=s.name;
+      const val=document.createElement("b");val.textContent=yFmt(s.values[i]);
+      row.append(key,nm,val);tip.appendChild(row);
+    });
+    const hx=(ev.clientX-r.left),flip=hx>r.width*.6;
+    tip.style.left=flip?"":hx+14+"px";tip.style.right=flip?(r.width-hx)+14+"px":"";
+    tip.style.top=(ev.clientY-r.top-10)+"px";
+  });
+  svg.addEventListener("pointerleave",()=>{tip.style.display="none";
+    cross.setAttribute("opacity",0);dots.forEach(d=>d.setAttribute("opacity",0));});
+}
+
+// ── income chart: stacked hand + workers, gray no-draft baseline ────────────
+{
+  const stackTop=series.hand.map((h,i)=>h+series.work[i]);
+  const yMax=niceMax(Math.max(...stackTop)*1.1);
+  const step=yMax/5,ticks=Array.from({length:6},(_,i)=>i*step);
+  lineChart("chart-income",{
+    yMax,yTicks:ticks,yFmt:fmt,
+    series:[
+      {name:"hand",values:series.hand,color:css("--s-blue"),area:true,base:series.mins.map(()=>0)},
+      {name:"hand + workers",values:stackTop,color:css("--s-orange"),area:true,base:series.hand},
+      {name:"no drafts (baseline)",values:series.baseline,color:css("--faint"),dash:"5 4"},
+    ],
+    extras:(svg,x,yv)=>{
+      PHASES.slice(1).forEach(p=>el("line",{x1:x(p.start),y1:yv(yMax),x2:x(p.start),y2:yv(0),
+        stroke:"var(--line)","stroke-width":1,"opacity":.7},svg));
+    }
+  });
+}
+
+// ── cadence chart: minutes between drafts, one dot per level ────────────────
+{
+  const host=document.getElementById("chart-cadence");
+  document.getElementById("curve-formula").textContent=`${LEVEL_CURVE.base} × ${LEVEL_CURVE.growth}^level`;
+  const W=480,H=250,L=40,R=14,Tm=10,B=26,pw=W-L-R,ph=H-Tm-B;
+  const yMax=niceMax(Math.max(worstGap.gap,BAND_HI)*1.25);
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`});host.appendChild(svg);
+  const x=m=>L+m/T*pw, y=v=>Tm+ph-v/yMax*ph;
+  // target band first, so everything draws on top of it
+  el("rect",{x:L,y:y(BAND_HI),width:pw,height:y(BAND_LO)-y(BAND_HI),
+    fill:css("--good"),opacity:.08},svg);
+  const step=yMax/4;
+  for(let i=0;i<=4;i++){const tv=i*step;
+    el("line",{x1:L,y1:y(tv),x2:W-R,y2:y(tv),stroke:"var(--line)","stroke-width":1,opacity:.55},svg);
+    el("text",{x:L-6,y:y(tv)+3,"text-anchor":"end",class:"svg-tick"},svg,(Math.round(tv*10)/10)+"m");}
+  for(let m=0;m<=T;m+=10)
+    el("text",{x:x(m),y:H-8,"text-anchor":"middle",class:"svg-tick"},svg,m);
+  el("line",{x1:L,y1:Tm+ph,x2:W-R,y2:Tm+ph,stroke:"var(--line)","stroke-width":1},svg);
+  el("text",{x:W-R-4,y:y(BAND_HI)-4,"text-anchor":"end",class:"svg-tick"},svg,`target ${BAND_LO}–${BAND_HI} min`);
+  const d=gaps.map((g,i)=>`${i?"L":"M"}${x(g.min).toFixed(1)},${y(g.gap).toFixed(1)}`).join("");
+  el("path",{d,fill:"none",stroke:css("--s-violet"),"stroke-width":2,
+    "stroke-linejoin":"round","stroke-linecap":"round"},svg);
+  const tip=makeTip(host);
+  gaps.forEach((g,i)=>{
+    const dot=el("circle",{cx:x(g.min),cy:y(g.gap),r:4,fill:css("--s-violet"),
+      stroke:"var(--surface)","stroke-width":2},svg);
+    const hit=el("rect",{x:x(g.min)-12,y:Tm,width:24,height:ph,fill:"transparent"},svg);
+    hit.addEventListener("pointermove",ev=>{
+      dot.setAttribute("r",5.5);tip.style.display="block";tip.replaceChildren();
+      const tl=document.createElement("div");tl.className="t";
+      tl.textContent=`level ${levelUps[i].level} · min ${g.min.toFixed(1)}`;
+      const row=document.createElement("div");row.className="row";
+      const nm=document.createElement("span");nm.textContent=levelUps[i].card?cardById[levelUps[i].card].text:"(non-income pick)";
+      const val=document.createElement("b");val.textContent=g.gap.toFixed(2)+" min";
+      row.append(nm,val);tip.append(tl,row);
+      const r=host.getBoundingClientRect();
+      const flip=(ev.clientX-r.left)>r.width*.6;
+      tip.style.left=flip?"":(ev.clientX-r.left+14)+"px";tip.style.right=flip?(r.width-(ev.clientX-r.left))+14+"px":"";
+      tip.style.top=(ev.clientY-r.top-10)+"px";});
+    hit.addEventListener("pointerleave",()=>{dot.setAttribute("r",4);tip.style.display="none";});
+  });
+  const note=document.getElementById("cadence-note");
+  note.textContent=`${levelUps.length} drafts across the run — first at `+
+    `${levelUps[0]?.min.toFixed(1)} min, slowest gap ${worstGap.gap.toFixed(1)} min around minute ${worstGap.min?.toFixed(0)}. `+
+    `The dips are where a phase's feed share or XP-per-unit jumps (fog nodes speed drafts back up); `+
+    `the two knobs are LEVEL_CURVE {base, growth} in the spec and the card multipliers in cards.js.`;
+}
+
+// ── walls chart ─────────────────────────────────────────────────────────────
+{
+  const host=document.getElementById("chart-walls");
+  const W=1000,H=210,L=44,R=14,Tm=12,B=44,pw=W-L-R,ph=H-Tm-B;
+  const yMax=Math.max(niceMax(Math.max(...walls.map(w=>w.minutes),WALL_LINE)*1.25),WALL_LINE*1.5);
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`});host.appendChild(svg);
+  const x=m=>L+m/T*pw, y=v=>Tm+ph-v/yMax*ph;
+  const step=yMax/4;
+  for(let i=0;i<=4;i++){const tv=i*step;
+    el("line",{x1:L,y1:y(tv),x2:W-R,y2:y(tv),stroke:"var(--line)","stroke-width":1,opacity:.55},svg);
+    el("text",{x:L-6,y:y(tv)+3,"text-anchor":"end",class:"svg-tick"},svg,(Math.round(tv*10)/10)+"m");}
+  el("line",{x1:L,y1:y(WALL_LINE),x2:W-R,y2:y(WALL_LINE),stroke:css("--warn"),"stroke-width":1,opacity:.8},svg);
+  el("text",{x:W-R,y:y(WALL_LINE)-5,"text-anchor":"end",class:"svg-tick"},svg,`feels like a wall (${WALL_LINE} min)`);
+  const tip=makeTip(host);
+  walls.forEach((w,i)=>{
+    const bx=x(w.min),bw=14,by=y(w.minutes);
+    const bar=el("rect",{x:bx-bw/2,y:by,width:bw,height:Tm+ph-by,fill:css("--s-blue")},svg);
+    el("rect",{x:bx-bw/2,y:by,width:bw,height:Math.min(4,Tm+ph-by),rx:2,fill:css("--s-blue")},svg);
+    const lane=i%2,ty=Tm+ph+16+lane*13;
+    el("line",{x1:bx,y1:Tm+ph+2,x2:bx,y2:ty-8,stroke:"var(--line)","stroke-width":1},svg);
+    el("text",{x:bx,y:ty,"text-anchor":"middle",class:"svg-label"},svg,w.label.split(" ").slice(0,2).join(" "));
+    const hit=el("rect",{x:bx-14,y:Tm,width:28,height:ph+B,fill:"transparent"},svg);
+    hit.addEventListener("pointermove",ev=>{
+      bar.setAttribute("opacity",.8);tip.style.display="block";tip.replaceChildren();
+      const tl=document.createElement("div");tl.className="t";tl.textContent=`min ${w.min} · ${w.ref}`;
+      const row=document.createElement("div");row.className="row";
+      const nm=document.createElement("span");nm.textContent=`${w.units} units`;
+      const val=document.createElement("b");val.textContent=(Math.round(w.minutes*100)/100)+" min to afford";
+      row.append(nm,val);tip.append(tl,row);
+      const r=host.getBoundingClientRect();
+      tip.style.left=(ev.clientX-r.left+14)+"px";tip.style.top=(ev.clientY-r.top-10)+"px";});
+    hit.addEventListener("pointerleave",()=>{bar.setAttribute("opacity",1);tip.style.display="none";});
+  });
+  for(let m=0;m<=T;m+=5)
+    el("text",{x:x(m),y:H-4,"text-anchor":"middle",class:"svg-tick"},svg,m);
+  const note=document.getElementById("walls-note");
+  note.textContent=tallWalls.length===0
+    ? `No unlock crosses the ${WALL_LINE}-minute line: under this model every current price is pocket change. `+
+      `With towers moved into the draft, the wall lever shifts to blueprint BUILD costs and per-purchase `+
+      `escalation (only houses escalate today) — worth deciding before the draft UI lands.`
+    : `${tallWalls.length} unlock(s) cross the ${WALL_LINE}-minute line: `+tallWalls.map(w=>w.label).join(", ")+".";
+}
+
+// ── table view ──────────────────────────────────────────────────────────────
+{
+  const table=document.getElementById("beat-table");
+  const head=document.createElement("tr");
+  ["min","beat","kind","ref","cost (units)","income/min","level","cum XP"].forEach(h=>{
+    const th=document.createElement("th");th.textContent=h;head.appendChild(th);});
+  table.appendChild(head);
+  BEATS.forEach(b=>{
+    const cost=resolveCost(b.ref);
+    const units=cost?RESOURCE_KINDS.reduce((s,k)=>s+(cost[k]||0),0):null;
+    const tr=document.createElement("tr");if(b.kind==="shift")tr.className="shift";
+    [b.min,b.label,b.kind,b.ref,units??"—",fmt(atMin(series.total,b.min)),
+     atMin(series.level,b.min),fmt(atMin(series.cumXp,b.min))].forEach((v,i)=>{
+      const td=document.createElement("td");td.textContent=v;
+      if(i===2){td.className="beat-kind";}
+      tr.appendChild(td);});
+    table.appendChild(tr);
+  });
+}
+</script>

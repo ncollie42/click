@@ -3,10 +3,14 @@
 // Three.js render → 2D overlay → showcase UI projection → deferred debugger scans.
 // simulation.js owns mutable gameplay; render and UI adapters consume queries and injected effects.
 import {connect as connectSimulation, initializeRunMode, TUNE, update, toast, setBuildDockCategory} from "./game/simulation.js";
+// Namespace, not named bindings: the level/draft trio below is read at CALL time, so this module
+// still links while the simulation half of that contract is landing.
+import * as SIMULATION from "./game/simulation.js";
 import {connect as connectScene, resizeRenderer, drawScene, renderScene} from "./render/scene.js";
 import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
 import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
+import {DRAFT_EFFECTS, initDraft, syncLevelHud} from "./ui/draft.js";
 import {initInput} from "./input.js";
 import {initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, drainScans} from "./debug/view-debugger.js";
 import {initShowcaseUi, updateShowcaseUi} from "./ui/showcase.js";
@@ -30,16 +34,25 @@ function resizeView(){
 // surface the HUD was handed), and input before the debugger (its window keydown must stay ahead of
 // the shift+digit handler). initSkillTree() only binds listeners to markup that is always there,
 // so its position is free; it sits with the other adapters.
-connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS,
+connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...DRAFT_EFFECTS,
   phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();}
 });
 // ── Mode-selection data flow ──
 // Browser URL is read only here. The simulation receives one initialization command and remains
 // independent of window/location; absent or unknown values preserve the normal default lifecycle.
-const requestedMode=new URLSearchParams(window.location.search).get("mode")==="showcase"?"showcase":"normal";
+const search=new URLSearchParams(window.location.search);
+const requestedMode=search.get("mode")==="showcase"?"showcase":"normal";
+// ── level/draft source ──
+// THE indirection: src/ui/draft.js never names the simulation, it asks this record for
+// levelState / draftPending / chooseDraft. The simulation namespace IS that record — always,
+// because a swapped-in stand-in would leave the real sim frozen on its own unanswered offer
+// the moment feeding levels it. ?draftDemo=1 only adds console triggers over the real thing.
+const levelSource=SIMULATION;
+if(search.get("draftDemo")==="1")draftDemo();
 connectScene({isModalOpen(){return modalOpen();}});
 initHud(surface);
 initSkillTree(surface);
+initDraft(surface, levelSource);
 initInput(surface, {cameraChanged(){ syncViewInputs(); }});
 initViewDebugger({resizeView});
 // Initialize after adapters bind their authored defaults, so showcase camera/fixtures are the final
@@ -60,7 +73,7 @@ function draw(){
 
 // ── boot ──────────────────────────────────────────────────────────────
 resizeView();
-syncBuildHud();syncPhaseHud();setBuildDockCategory(null);
+syncBuildHud();syncPhaseHud();syncLevelHud();setBuildDockCategory(null);
 let previous=performance.now();
 function frame(now){
   const dt=Math.min(.033,(now-previous)/1000);previous=now;
@@ -72,3 +85,12 @@ function frame(now){
 }
 requestAnimationFrame(frame);
 toast(requestedMode==="showcase"?"showcase ready — towers use production combat stats":"left-hold a tree or rock to gather");
+
+// ── dev-only: ?draftDemo=1 ────────────────────────────────────────────
+// Console triggers over the REAL simulation (a fake source would desync from the sim's own
+// level-ups). __draftDemo.deal(n) grants exactly enough XP to level n times, so real offers appear.
+function draftDemo(){
+  window.__draftDemo={
+    deal(count=1){for(let i=0;i<count;i++){const s=SIMULATION.levelState();SIMULATION.debugGrantXp(Math.max(1,Math.ceil(SIMULATION.levelCost(s.level)-s.xp)));}},
+  };
+}

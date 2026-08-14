@@ -1,5 +1,5 @@
-// Owns: the 2D overlay canvas — health/progress bars, delivery readouts, the action badge and its
-// tool icons, the carry count, the night tint and the wave-edge telegraphs.
+// Owns: the 2D overlay canvas — health/progress bars, floating combat text, delivery readouts,
+// the action badge/tool icons, carry count, night tint and wave-edge telegraphs.
 // ═══════════════════════════════════════════════════════════════════════════
 // 2D OVERLAY
 // Everything that must stay unskewed by camera pitch and yaw is drawn here, in a fixed 960x540
@@ -11,8 +11,8 @@
 //             where a world point landed and paints there. The dependency runs overlay -> scene and
 //             never back, so nothing drawn here can move the camera it was projected with.
 //   Reads:    simulation queries and live collections, read-only, exactly like scene.js.
-//   Writes:   the 2D context, this canvas's backing store, and the two presentation holders below
-//             (BARS, BADGE) which the view debugger's `overlays` pane fills in.
+//   Writes:   the 2D context, this canvas's backing store, and the presentation holders below
+//             (BARS, DAMAGE_TEXT, BADGE) which the view debugger's `overlays` pane fills in.
 //
 // The canvas element itself is shared: scene.js reads its client rect for raycasting and the host
 // owns its event listeners and classes (src/input.js, src/ui/hud.js). This module is the only writer of its width/height.
@@ -28,9 +28,9 @@ import {
   NIGHT_TELEGRAPH_TIME
 } from "../game/data.js";
 import {
-  state, trees, rocks, diamonds, buildings, damageDummies,
+  state, trees, rocks, diamonds, chests, buildings, damageDummies, damageNumbers,
   badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget,
-  buildingCost, towerUpgradeList, carriedTotal, heldWorker, workerIsLoaned, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, oppositeMapSide, clamp
+  buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldChest, workerIsLoaned, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, oppositeMapSide, clamp
 } from "../game/simulation.js";
 
 const canvas = document.getElementById("overlay");   // 2D overlay sits above the WebGL scene
@@ -64,6 +64,14 @@ export const BARS = {
   scale:true,             // track camera zoom
   minScale:.6, maxScale:1.8,
   text:9, textMin:7, textMax:15,
+};
+// Floating combat text presentation. Simulation owns impact snapshots and their game-time age;
+// the overlays pane owns these knobs. Set rise/grow to zero for stationary, fixed-size numbers.
+export const DAMAGE_TEXT = {
+  enabled:true,
+  fadeIn:.08,hold:.3,fadeOut:.65,
+  rise:48,spread:8,grow:.35,
+  size:18,criticalScale:1.55,
 };
 const barScale = () =>
   BARS.scale ? clamp(state.camera.zoom, BARS.minScale, BARS.maxScale) : 1;
@@ -183,6 +191,8 @@ export function drawOverlay(){
     marks(n.x,n.y,38,46, rowsFor(n.hp/n.max, css(PAL.diamond)));
     if(occupancyVisible(n))drawOccupancy(n,53);
   }
+  for(const chest of heldChest()?[...chests,heldChest()]:chests)
+    marks(chest===heldChest()&&state.mouse.inside?state.mouse.x:chest.x,chest===heldChest()&&state.mouse.inside?state.mouse.y:chest.y,46,43,rowsFor(chest.hp/chest.max,css(PAL.chestLatch)));
   for(const e of state.enemies){
     const s = ENEMY_TYPES[e.type].size;
     marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e.hp/e.max, "#c65343"));
@@ -215,10 +225,38 @@ export function drawOverlay(){
     }
   }
 
-  // Last world-anchored mark, so the badge sits over the bars it shares a target
-  // with; the cursor's carry count still draws on top of everything.
+  // Transient combat feedback sits over persistent bars/badges; cursor carry remains topmost.
   drawActionBadge();
+  drawDamageNumbers();
   drawCarryCount();
+}
+
+function damageTextOpacity(age){
+  const fadeIn=DAMAGE_TEXT.fadeIn,holdEnd=fadeIn+DAMAGE_TEXT.hold,total=holdEnd+DAMAGE_TEXT.fadeOut;
+  if(age<0||age>=total)return 0;
+  if(fadeIn>0&&age<fadeIn)return age/fadeIn;
+  if(DAMAGE_TEXT.fadeOut>0&&age>holdEnd)return 1-(age-holdEnd)/DAMAGE_TEXT.fadeOut;
+  return 1;
+}
+function damageTextValue(amount){return Number.isInteger(amount)?String(amount):amount.toFixed(1).replace(/\.0$/,"");}
+function drawDamageNumbers(){
+  if(!DAMAGE_TEXT.enabled)return;
+  const total=DAMAGE_TEXT.fadeIn+DAMAGE_TEXT.hold+DAMAGE_TEXT.fadeOut;
+  if(total<=0)return;
+  for(const hit of damageNumbers){
+    const alpha=damageTextOpacity(hit.age);if(alpha<=0)continue;
+    const p=project(hit.x,hit.y,30);if(p.depth>1)continue;
+    const progress=clamp(hit.age/total,0,1),ease=1-Math.pow(1-progress,3);
+    const x=p.x+hit.lane*DAMAGE_TEXT.spread+Math.sin((hit.seed+progress)*Math.PI*2)*DAMAGE_TEXT.spread*.25;
+    const y=p.y-DAMAGE_TEXT.rise*ease;
+    const scale=(1+DAMAGE_TEXT.grow*ease)*(hit.critical?DAMAGE_TEXT.criticalScale:1);
+    const size=DAMAGE_TEXT.size*scale,text=damageTextValue(hit.amount);
+    ctx.save();ctx.globalAlpha=alpha;ctx.textAlign="center";ctx.textBaseline="middle";
+    ctx.font="900 "+size.toFixed(1)+"px Georgia, serif";
+    ctx.lineJoin="round";ctx.lineWidth=Math.max(2,size*.18);ctx.strokeStyle="#211208";ctx.strokeText(text,x,y);
+    ctx.fillStyle=hit.critical?"#fff1a6":hit.tone==="received"?"#ef765f":"#f2c84b";ctx.fillText(text,x,y);
+    ctx.restore();
+  }
 }
 
 /**

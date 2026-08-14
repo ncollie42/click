@@ -10,12 +10,20 @@
   #game{position:relative;width:min(100vw,calc(100vh * 16 / 9));aspect-ratio:16 / 9;container:game-frame / inline-size}
   #stage{position:absolute;inset:0}
   /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, toast 8, viewPanel 9,
-     skill tree 10, game-over 11. The skill tree is a full-stage overlay, so it covers every panel
-     above; only the end card, which ends the run outright, may cover it. */
+     skill tree 10, draft 10, game-over 11. Both full-stage overlays cover every panel above; only
+     the end card, which ends the run outright, may cover them. The two are mutually exclusive, so
+     they share a layer and the draft's later position in this file settles the tie. */
   #xpHud{position:absolute;z-index:3;left:50%;top:10px;transform:translateX(-50%);width:min(520px,calc(100% - 540px));min-width:260px;padding:4px;background:#292119ed;border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
-  #xpBar{position:relative;height:16px;overflow:hidden;background:#17120d;border:1px solid #0008}
-  #xpBarFill{display:block;width:0;height:100%;background:linear-gradient(90deg,#8e3f35,var(--gold));transition:width .18s ease-out}
-  #xpBarLabel{position:absolute;inset:0;display:grid;place-items:center;color:#fff1d3;font-size:9px;font-weight:bold;text-shadow:1px 1px #17120d}
+  /* The level bar. Violet rather than the plate's gold, because this is the bar the draft screen
+     comes out of — the same violet the vignette down there uses. */
+  #levelBar{position:relative;display:flex;align-items:center;justify-content:space-between;
+    height:16px;padding:0 5px;overflow:hidden;background:#17120d;border:1px solid #0008}
+  #levelBarFill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,#5b3b86,#b18be5);transition:width .18s ease-out}
+  #levelBar b,#levelBar span{position:relative;font-size:10px;font-weight:bold;text-shadow:1px 1px #17120d}
+  #levelBar b{color:#fff1d3}
+  #levelBar span{color:#e2d3f2;opacity:.82;font-variant-numeric:tabular-nums}
+  @keyframes levelUpPulse{40%{filter:brightness(1.75);transform:scale(1.04)}}
+  #levelBar.up{animation:levelUpPulse .5s ease-out}
   #phaseHud{position:absolute;z-index:3;right:10px;top:10px;width:245px;padding:8px 9px;background:#292119ed;color:var(--paper);border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
   #phaseHud.night{background:#17213aed;border-color:#c65b4d;color:#dce9ff}
   #phaseHeader{display:flex;justify-content:space-between;font-size:13px}
@@ -117,7 +125,8 @@
     display:flex;flex-direction:column;padding:6px 8px 8px;background:#242919f2;color:#f1dfb7;
     border:2px solid #d8c58f;box-shadow:var(--shadow);font-size:11px}
   #viewPanel.collapsed{width:96px}
-  #viewPanel.collapsed #vTabs,#viewPanel.collapsed #vPanes{display:none}
+  #viewPanel.collapsed #vTabs,#viewPanel.collapsed #vPanes,#viewPanel.collapsed #vFooterActions,
+  #viewPanel.collapsed #vChangedOutput{display:none}
   #vToggle{margin:0;padding:4px;text-align:center;background:#4a5533;color:#f1dfb7;border-color:#8f9760}
   /* six labels never fit one 252px row at 10px, so the row wraps. A third-width
      basis lays them out 3+3 at both widths; the flex-grow still lets a long
@@ -129,6 +138,15 @@
   #vPanes{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
   #vPanes .pane{display:none}
   #vPanes .pane.on{display:block}
+  .vSubTabs{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;gap:2px;margin:0 0 7px;
+    padding:0 0 5px;background:#242919;color:#d8c58f}
+  .vSubTabs button{flex:1 1 calc(33.333% - 2px);min-width:0;width:auto;margin:0;padding:3px 2px;
+    white-space:nowrap;text-align:center;text-transform:capitalize;font-size:9px;background:#303923;
+    color:#d8c58f;border:1px solid #5d6843}
+  .vSubTabs button:hover{background:#465331;border-color:#8f9760;color:#f1dfb7}
+  .vSubTabs button.on{background:#756735;color:#fff1c7;border-color:#c5a95e}
+  .vSubTabs button:focus-visible{outline:2px solid #f4ce70;outline-offset:-2px}
+  .vSubpane[hidden]{display:none}
   #viewPanel h4{font-size:10px;letter-spacing:.06em;opacity:.85;border-bottom:1px solid #8f9760;
     padding-bottom:3px;margin:9px 0 5px}
   #viewPanel h4:first-child{margin-top:0}
@@ -153,11 +171,18 @@
   #vStatline{display:flex;gap:7px;font-size:10px;margin-bottom:5px}
   #vStatline .ok{color:#8fd07a}
   #vStatline .warn{color:#e8926f}
-  #viewPanel .hint{font-size:9px;opacity:.6;line-height:1.45;margin-top:5px}
-  /* #vSpeedRow now lives inside the gameplay pane, so it needs no footer rules —
-     the generic #viewPanel label styling covers it and #vPanes hides it when
-     the panel collapses. restart stays in the footer, away from the controls. */
-  #vRestart{flex:0 0 auto;margin:7px 0 0;padding:5px;text-align:center;
+  /* Footer utilities do not belong to a pane: changed output appears only on request, and all
+     footer pieces collapse with the panel. Restart remains visually separate and destructive. */
+  #vFooterActions{flex:0 0 auto;display:flex;gap:3px;margin:7px 0 0}
+  #vFooterActions button{flex:1 1 50%;min-width:0;width:auto;margin:0;padding:4px 2px;font-size:9px;
+    white-space:nowrap;text-align:center;background:#4a5533;color:#f1dfb7;border:1px solid #8f9760}
+  #vFooterActions button:hover:not(:disabled){background:#5a6740}
+  #vFooterActions button:disabled{opacity:.58;cursor:default}
+  #vChangedOutput{box-sizing:border-box;width:100%;min-height:48px;max-height:110px;margin:4px 0 0;
+    padding:4px;resize:vertical;overflow:auto;background:#1b2013;color:#f1dfb7;border:1px solid #69754b;
+    font:9px/1.4 monospace;white-space:pre}
+  #vChangedOutput[hidden]{display:none}
+  #vRestart{flex:0 0 auto;margin:4px 0 0;padding:5px;text-align:center;
     background:#8e2924;color:#fff;border-color:#d8c58f}
   #viewPanel.collapsed #vRestart{display:none}
 
@@ -249,16 +274,117 @@
   #skillTreeContinue:hover{background:#2a1a0d;border-color:#f3c56a}
   /* Scoped focus ring: the generic red one all but vanishes on a dark sepia tile. */
   #skillTreePanel button:focus-visible{outline:2px solid #ffd27a;outline-offset:3px}
+  /* ── draft screen ────────────────────────────────────────────────────
+     Three physical cards dealt over the world, not a panel drawn on top of it: the backdrop is a
+     violet vignette thin enough to keep the ground readable through it, because the offer comes
+     from the thing IN that ground and violet is its colour here (it is the pulse tower's accent,
+     the one violet the authored tables already use). Every selector below names an element inside
+     #draftPanel, so none of it reaches a generic button, the build dock or the view debugger.
+     `hidden` is the closed state: display:none, no layout, no tab stop, no a11y node. */
+  #draftPanel{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:34px;color:#f0ddb8;
+    background:radial-gradient(112% 82% at 50% 50%,#5a2f8f4d,#1c0f2fd1 44%,#080512f2 100%)}
+  #draftPanel[hidden]{display:none}
+  #draftPanel:focus-visible{outline:none}
+  #draftHeader{text-align:center}
+  #draftTitle{width:fit-content;margin:0 auto;padding:0 26px 6px;font-size:23px;letter-spacing:.05em;
+    color:#f6ecff;border-bottom:3px solid #b18be5;filter:drop-shadow(0 1px 9px #b18be5b3)}
+  #draftHint{margin-top:6px;color:#c9aee6;font-size:11px}
+  #draftHint kbd{margin-left:3px;background:#1b1226;color:#f0e2ff;border:1px solid #7b5aa8}
+
+  /* --step is the throw distance one card sits from the middle: card width less the overlap the
+     negative margin creates. src/ui/draft.js multiplies it by the card's index to author --dx. */
+  #draftCards{--card-w:min(214px,22cqw);--step:calc(var(--card-w) - 12px);
+    display:flex;justify-content:center;align-items:flex-start}
+  /* Rarity is the frame and the banner, never body text. Each swatch is one the authored tables
+     already use: outpost stone, teleport blue, pulse violet, the HUD gold. */
+  #draftPanel .draft-card{--rim:#b9a67e;position:relative;flex:0 0 auto;width:var(--card-w);min-height:246px;
+    margin:0 -6px;padding:0;display:flex;flex-direction:column;text-align:left;overflow:hidden;
+    color:#efdcb6;background:linear-gradient(#2c2119,#170f09);border:2px solid var(--rim);
+    box-shadow:0 10px 18px -8px #000c,0 0 0 1px #0009 inset;
+    transform:translateY(var(--lift)) rotate(var(--rot));
+    transition:transform .13s ease-out,box-shadow .13s ease-out,opacity .13s ease-out,filter .13s ease-out}
+  #draftPanel .draft-card[data-rarity=rare]{--rim:#7396e8}
+  #draftPanel .draft-card[data-rarity=epic]{--rim:#b18be5}
+  #draftPanel .draft-card[data-rarity=legendary]{--rim:#e3c260}
+  /* The banner is the rarity swatch at full strength and the ink is the game's own dark: the rarity
+     colour is a FRAME here, never body text, so it has to carry the name from behind it. */
+  #draftPanel .draft-banner{padding:5px 8px;background:var(--rim);
+    background-image:linear-gradient(#ffffff2e,#00000024);
+    color:#170f09;font-size:14px;font-weight:bold;line-height:1.15;letter-spacing:.01em;
+    border-bottom:1px solid #0007;text-shadow:0 1px 0 #ffffff59}
+  #draftPanel .draft-eyebrow{padding:4px 8px 0;font-size:8px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--rim);opacity:.85}
+  /* The art window is the card's picture: an inset frame with the authored icon the card's ref
+     names, large enough to be the thing the eye lands on first. */
+  #draftPanel .draft-art{display:grid;place-items:center;height:96px;margin:6px 8px 0;
+    background:radial-gradient(72% 72% at 50% 40%,#3d3122,#100a06);border:1px solid #ffffff17;
+    box-shadow:inset 0 0 14px #000a,inset 0 0 26px -6px var(--rim)}
+  /* The authored icons are geometric glyphs with small ink for their em, so the size is set well
+     past the box they have to fill. Some of them (⛏ ♨ ☀ ♥) exist in no monospace font on the box
+     and arrive from a COLOUR emoji font, which would put one glossy sticker in a fan of flat line
+     art: grayscale flattens whatever the fallback produced and the sepia puts it back in the game's
+     one warm ink, so all three cards read as the same kind of drawing. The rarity glow is on the
+     window rather than the glyph, because a filter would flatten that too. */
+  #draftPanel .draft-glyph{font-size:62px;line-height:1;color:#f7e6bd;
+    filter:grayscale(1) sepia(.62) saturate(1.5) brightness(1.06)}
+  #draftPanel .draft-text{flex:1;margin:7px 0 0;padding:7px 8px;background:#00000047;
+    border-top:1px solid #ffffff14;font-size:10px;line-height:1.5;color:#e8d6ae}
+  #draftPanel .draft-pips{display:flex;gap:3px;min-height:11px;padding:0 8px 6px;background:#00000047}
+  #draftPanel .draft-pips i{width:4px;height:4px;background:var(--rim);opacity:.7}
+  #draftPanel .draft-key{position:absolute;right:0;top:0;z-index:1;width:17px;height:17px;
+    display:grid;place-items:center;background:var(--rim);color:#170f09;font-size:10px;font-weight:bold}
+
+  /* Pop-out: the hovered or keyboard-focused card straightens, lifts and lights its own rarity;
+     the other two step back. Focus-within covers the keyboard, so both routes land on one pose. */
+  #draftCards:hover .draft-card,#draftCards:focus-within .draft-card{opacity:.7;filter:saturate(.6)}
+  #draftPanel .draft-card:hover,#draftPanel .draft-card:focus-visible{opacity:1;filter:none;z-index:2;
+    transform:translateY(-14px) rotate(0deg) scale(1.06);
+    box-shadow:0 18px 26px -10px #000d,0 0 22px -2px var(--rim),0 0 0 1px #0009 inset}
+  #draftPanel .draft-card:focus-visible{outline:2px solid #ffd27a;outline-offset:3px}
+
+  /* ── the deal, and the pick ──
+     Dealt from the middle of the stage: --dx is how far this card has to travel out to its place in
+     the fan, so all three come off one point. backwards fill covers the stagger, and every animation
+     below ends at the card's own settled style, so a finished deal computes identically to a card
+     that never animated. The pick is the same idea run outward: the taken card grows into the room
+     the other two make as they drop. */
+  @keyframes draftDeal{from{opacity:0;transform:translate(var(--dx),18px) scale(.16) rotate(0deg)}}
+  @keyframes draftChosen{
+    40%{transform:translateY(-22px) rotate(0deg) scale(1.16);box-shadow:0 0 40px 2px var(--rim)}
+    to{opacity:0;transform:translateY(-30px) rotate(0deg) scale(1.3)}}
+  @keyframes draftDiscarded{to{opacity:0;transform:translateY(38px) rotate(var(--rot)) scale(.9)}}
+  #draftPanel .draft-card{animation:draftDeal .3s cubic-bezier(.2,1.2,.4,1) backwards}
+  #draftPanel .draft-card.chosen{z-index:3;animation:draftChosen .38s ease-out forwards}
+  #draftPanel .draft-card.discarded{animation:draftDiscarded .3s ease-in forwards}
+  @media (prefers-reduced-motion:reduce){
+    /* No motion, same destination — the fan and the frames stay, only the approach is dropped. */
+    @keyframes draftDeal{from{opacity:0}}
+    #draftPanel .draft-card{animation-duration:.14s;animation-timing-function:linear;transition:none}
+    #draftPanel .draft-card.chosen,#draftPanel .draft-card.discarded{animation:none;opacity:0}
+  }
+
   /* Must come after the rules above: a container query adds no specificity, so
      the earlier @container block up top cannot override them. */
   @container game-frame (max-width:799px){
     #viewPanel{width:230px;padding:5px 6px 6px}
     #vTabs{gap:2px}
     #vTabs button{flex:1 1 calc(33.333% - 2px);padding:3px 2px;font-size:9px}
+    .vSubTabs button{padding:3px 1px;font-size:8px}
     /* Chrome, plus the one screen-space number the tree has: the non-scaling stroke. Tile size and
        box geometry are written in the graph box's own units, so those ride it at every width. */
     #skillTreeTitle{margin-top:9px;padding-bottom:4px;font-size:16px;border-bottom-width:2px}
     #skillTreeLinks{stroke-width:2.5}
     #skillTreeBar{padding:6px 10px}
     #skillTreeContinue{padding:5px 14px;font-size:11px}
+    /* Only the card's fixed numbers shrink; the fan geometry is written in --card-w, so it rides. */
+    #draftPanel{gap:20px}
+    #draftTitle{padding-bottom:4px;font-size:16px;border-bottom-width:2px}
+    #draftHint{font-size:9px}
+    #draftPanel .draft-card{min-height:196px}
+    #draftPanel .draft-banner{padding:4px 6px;font-size:11px}
+    #draftPanel .draft-art{height:70px;margin:5px 6px 0}
+    #draftPanel .draft-glyph{font-size:46px}
+    #draftPanel .draft-text{padding:5px 6px;font-size:9px}
+    #draftPanel .draft-pips{padding:0 6px 5px}
   }

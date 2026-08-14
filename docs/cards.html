@@ -1,0 +1,265 @@
+<meta charset="utf-8">
+<title>Card Catalog</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#1d1c29; --surface:#252336; --surface-2:#2c2a40; --line:#3a3752;
+    --ink:#eae6dc; --muted:#a29caf; --faint:#6f6a80;
+    --accent:#9085e9;
+    --s-blue:#3987e5; --s-orange:#d95926; --s-aqua:#199e70; --s-yellow:#c98500;
+    --s-violet:#9085e9; --s-red:#e66767;
+    --good:#199e70; --bad:#e66767; --warn:#c98500;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      color-scheme: light;
+      --bg:#f1eee4; --surface:#faf8f0; --surface-2:#f3f0e4; --line:#d9d4c4;
+      --ink:#262233; --muted:#6b667a; --faint:#9a94a8;
+      --accent:#4a3aa7;
+      --s-blue:#2a78d6; --s-orange:#eb6834; --s-aqua:#1baf7a; --s-yellow:#eda100;
+      --s-violet:#4a3aa7; --s-red:#e34948;
+      --good:#1baf7a; --bad:#e34948; --warn:#b07800;
+    }
+  }
+  :root[data-theme="light"]{
+    color-scheme: light;
+    --bg:#f1eee4; --surface:#faf8f0; --surface-2:#f3f0e4; --line:#d9d4c4;
+    --ink:#262233; --muted:#6b667a; --faint:#9a94a8;
+    --accent:#4a3aa7;
+    --s-blue:#2a78d6; --s-orange:#eb6834; --s-aqua:#1baf7a; --s-yellow:#eda100;
+    --s-violet:#4a3aa7; --s-red:#e34948;
+    --good:#1baf7a; --bad:#e34948; --warn:#b07800;
+  }
+
+  *{box-sizing:border-box}
+  body{background:var(--bg); color:var(--ink);
+    font:15px/1.55 "Avenir Next","Segoe UI",system-ui,sans-serif; margin:0; padding:0 20px 80px}
+  main{max-width:1060px; margin:0 auto}
+  h1,h2,h3{font-family:"Trebuchet MS","Avenir Next",system-ui,sans-serif; margin:0}
+  .mono{font-family:ui-monospace,"Cascadia Code",Consolas,monospace}
+
+  header{padding:56px 0 8px; max-width:64ch}
+  .eyebrow{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 10px}
+  h1{font-size:clamp(30px,5vw,42px); line-height:1.08}
+  header p{color:var(--muted); margin:14px 0 0; max-width:58ch}
+  header p strong{color:var(--ink)}
+  header a{color:var(--accent)}
+
+  .verdict{display:flex; flex-wrap:wrap; gap:12px; margin:26px 0 0}
+  .tile{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px 18px; min-width:130px; flex:1 1 130px}
+  .tile .k{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint);
+    font-family:ui-monospace,Consolas,monospace}
+  .tile .v{font-size:24px; font-weight:600; margin-top:3px; font-family:"Trebuchet MS",system-ui,sans-serif}
+  .tile .s{font-size:12px; color:var(--muted); margin-top:2px}
+
+  .filters{display:flex; flex-wrap:wrap; gap:8px; margin:26px 0 0}
+  .filters button{font:600 13px "Avenir Next","Segoe UI",system-ui,sans-serif; color:var(--muted);
+    background:var(--surface); border:1px solid var(--line); border-radius:99px; padding:5px 14px; cursor:pointer}
+  .filters button[aria-pressed="true"]{color:var(--ink); border-color:var(--accent);
+    background:color-mix(in srgb, var(--accent) 14%, var(--surface))}
+  .filters button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+  section{margin-top:44px}
+  .sec-head{display:flex; align-items:baseline; gap:14px; border-bottom:1px solid var(--line);
+    padding-bottom:10px; margin-bottom:16px}
+  .sec-head .tag{font-family:ui-monospace,Consolas,monospace; font-size:11px; letter-spacing:.12em;
+    color:var(--faint); text-transform:uppercase; flex:none}
+  h2{font-size:21px}
+  .sec-head .count{color:var(--faint); font-size:13px; margin-left:auto}
+
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:10px}
+  .cardc{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px 14px;
+    display:flex; flex-direction:column; gap:6px}
+  .cardc.hidden{display:none}
+  .cardc .top{display:flex; align-items:baseline; gap:8px}
+  .cardc .name{font-weight:600; font-size:14px}
+  .cardc .rarity{font-family:ui-monospace,Consolas,monospace; font-size:10px; letter-spacing:.08em;
+    text-transform:uppercase; margin-left:auto; flex:none}
+  .rarity.common{color:var(--faint)} .rarity.rare{color:var(--s-blue)}
+  .rarity.epic{color:var(--s-violet)} .rarity.legendary{color:var(--s-yellow)}
+  .cardc .text{font-size:13px; color:var(--muted)}
+  .cardc .meta{font-size:11.5px; color:var(--faint); font-family:ui-monospace,Consolas,monospace}
+  .cardc .traits{display:flex; gap:5px; flex-wrap:wrap}
+  .cardc .stats{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin-top:2px}
+  .stat{background:var(--surface-2); border-radius:5px; padding:5px 7px; min-width:0}
+  .stat.cost{grid-column:1/-1}
+  .stat .k{font:9px ui-monospace,"Cascadia Code",Consolas,monospace; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--faint)}
+  .stat .v{font-size:12px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .trait{font:600 10.5px ui-monospace,"Cascadia Code",Consolas,monospace; color:var(--accent);
+    border:1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius:4px;
+    background:color-mix(in srgb, var(--accent) 9%, transparent); padding:1px 6px}
+  .trait.timer{color:var(--s-yellow); border-color:color-mix(in srgb, var(--s-yellow) 45%, var(--line));
+    background:color-mix(in srgb, var(--s-yellow) 9%, transparent)}
+  .trait.charges{color:var(--s-aqua); border-color:color-mix(in srgb, var(--s-aqua) 45%, var(--line));
+    background:color-mix(in srgb, var(--s-aqua) 9%, transparent)}
+  .trait.feature{color:var(--s-blue); border-color:color-mix(in srgb, var(--s-blue) 45%, var(--line));
+    background:color-mix(in srgb, var(--s-blue) 9%, transparent)}
+  .cardc .chips{display:flex; gap:6px; margin-top:auto; padding-top:4px; flex-wrap:wrap}
+  .chip{display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600;
+    border-radius:99px; padding:1px 9px}
+  .chip::before{content:""; width:6px; height:6px; border-radius:50%; background:currentColor}
+  .chip.on{color:var(--good); background:color-mix(in srgb, var(--good) 14%, transparent)}
+  .chip.off{color:var(--faint); background:color-mix(in srgb, var(--faint) 12%, transparent)}
+  .cardc .notes{font-size:12px; color:var(--faint); font-style:italic}
+
+  .footnote{font-size:12.5px; color:var(--faint); max-width:70ch; margin-top:40px}
+  .footnote code{font-family:ui-monospace,Consolas,monospace; font-size:11.5px; color:var(--muted)}
+</style>
+
+<main>
+<header>
+  <p class="eyebrow">card catalog · the thing in the ground</p>
+  <h1>Card Catalog</h1>
+  <p>Every card in the pick-3 pool, rendered live from <span class="mono">src/game/cards.js</span> —
+  this page is the <strong>design catalog and the feature tracker</strong> in one. Add an entry to the
+  file (implemented off), and it shows up here as a request; when the effect lands in game code the
+  flag flips. The pacing model in <a href="progression.html">the progression bench</a> reads the same
+  file's <span class="mono">model</span> fields.</p>
+  <div class="verdict" id="tiles"></div>
+  <div class="filters" id="filters" role="group" aria-label="filter cards"></div>
+</header>
+<div id="sections"></div>
+<p class="footnote"><b>Combat score</b> = <code>round(10 × damage × fire rate + 0.5 × HP + future terms)</code>,
+where fire rate is <code>1 / cooldown</code>. Building kits multiply unit score by charges; one-shot buildings
+use one activation as their rate unit. Range, targeting, status effects, and enemies hit deliberately remain
+explicit future terms rather than hidden guesses.</p>
+<p class="footnote">Statuses: <b>implemented</b> = the effect exists in code (maybe test-only) ·
+<b>in pool</b> = the draft can deal it. Refs are validated by <code>scripts/validate.mjs</code> —
+a card can never point at a building, tower, or upgrade that doesn't exist.</p>
+</main>
+
+<script type="module">
+import {CARDS,CARD_CATEGORIES,CARD_FEATURES,RARITIES} from "../src/game/cards.js";
+import {BUILDING_TYPES,RESOURCE_KINDS,TOWER_VARIANTS} from "../src/game/data.js";
+import {scoreBuilding,scoreTower} from "./tower-score.js";
+
+const RANK=Object.fromEntries(RARITIES.map((r,i)=>[r,i]));
+const CAT_LABEL={buff:"A · Buffs — permanent, stackable",
+                 consumable:"B · Consumables — free, expendable",
+                 aura:"C · Buff Towers — free, temporary auras",
+                 blueprint:"D · Blueprints — unlock a buildable"};
+
+// tiles
+const tiles=document.getElementById("tiles");
+function tile(k,v,s){const d=document.createElement("div");d.className="tile";
+  d.innerHTML=`<div class="k"></div><div class="v"></div><div class="s"></div>`;
+  d.children[0].textContent=k;d.children[1].textContent=v;d.children[2].textContent=s;
+  tiles.appendChild(d);}
+const done=CARDS.filter(c=>c.implemented).length,pool=CARDS.filter(c=>c.inPool).length;
+tile("cards",CARDS.length,CARD_CATEGORIES.map(c=>`${CARDS.filter(x=>x.category===c).length} ${c}`).join(" · "));
+tile("implemented",`${done} / ${CARDS.length}`,"effect exists in game code");
+tile("in the pool",pool,pool?"draftable today":"draft UI not built yet");
+
+// Independent category, status, and feature facets combine as AND filters.
+const state={cat:"all",status:"all",feature:"all"};
+const filters=document.getElementById("filters");
+function button(label,group,value){
+  const b=document.createElement("button");b.textContent=label;
+  b.setAttribute("aria-pressed",state[group]===value);
+  b.addEventListener("click",()=>{state[group]=value;
+    [...filters.children].forEach(x=>x.setAttribute("aria-pressed",x.dataset.value===state[x.dataset.group]));
+    apply();});
+  b.dataset.group=group;b.dataset.value=value;filters.appendChild(b);return b;
+}
+button("all","cat","all");
+CARD_CATEGORIES.forEach(c=>button(c+"s","cat",c));
+button("everything","status","all");
+button("implemented","status","implemented");
+button("wishlist","status","wishlist");
+button("all features","feature","all");
+CARD_FEATURES.forEach(feature=>button(feature,"feature",feature));
+
+// sections
+const sections=document.getElementById("sections");
+const nodes=[];
+function cardStats(card){
+  const [kind,id]=card.ref.split(":"),definition=kind==="tower"?TOWER_VARIANTS[id]
+    :kind==="building"?BUILDING_TYPES[id]:null;
+  if(card.type==="building"){
+    const scored=definition&&scoreBuilding(definition,{quantity:card.charges||1});
+    return [["score",scored?.score??"TBD"]];
+  }
+  if(card.category!=="blueprint")return [];
+  const stats=[];
+  if(card.produces)stats.push(["produces",card.produces,"cost"]);
+  if(!definition)return stats;
+  const cost=RESOURCE_KINDS.filter(resource=>(definition.cost?.[resource]||0)>0)
+    .map(resource=>`${definition.cost[resource]} ${resource}`).join(" · ");
+  if(cost)stats.unshift(["cost",cost,"cost"]);
+  if(kind==="tower")stats.push(["score",scoreTower(definition).score]);
+  if(kind==="building")stats.push(["score",scoreBuilding(definition)?.score??"TBD"]);
+  if(definition.damage!==undefined)stats.push(["damage",definition.damage]);
+  if(definition.maxHp!==undefined)stats.push(["hp",definition.maxHp]);
+  if(definition.cooldown!==undefined){
+    const periodic=definition.manual||definition.attackMode==="periodic area";
+    stats.push([periodic?"timer":"fire rate",periodic?`${definition.cooldown}s`:`${(1/definition.cooldown).toFixed(2).replace(/0+$/,"").replace(/\.$/,"")}/s`]);
+  }
+  return stats;
+}
+for(const cat of CARD_CATEGORIES){
+  const cards=CARDS.filter(c=>c.category===cat)
+    .slice().sort((a,b)=>RANK[a.rarity]-RANK[b.rarity]||a.id.localeCompare(b.id));
+  const sec=document.createElement("section");
+  const head=document.createElement("div");head.className="sec-head";
+  head.innerHTML=`<span class="tag">${cat}</span><h2></h2><span class="count"></span>`;
+  head.querySelector("h2").textContent=CAT_LABEL[cat];
+  sec.appendChild(head);
+  const grid=document.createElement("div");grid.className="grid";sec.appendChild(grid);
+  for(const c of cards){
+    const d=document.createElement("div");d.className="cardc";d.dataset.cat=cat;
+    d.dataset.impl=c.implemented;d.dataset.features=(c.features||[]).join("|");
+    const top=document.createElement("div");top.className="top";
+    const nm=document.createElement("span");nm.className="name";nm.textContent=c.id;
+    const ra=document.createElement("span");ra.className="rarity "+c.rarity;ra.textContent=c.rarity;
+    top.append(nm,ra);
+    const tx=document.createElement("div");tx.className="text";tx.textContent=c.text;
+    const traits=document.createElement("div");traits.className="traits";
+    const traitValues=[[c.category==="blueprint"?"blueprint":c.type,c.category==="blueprint"?"blueprint":c.type],
+      ...(c.tags||[]).map(tag=>[tag,tag]),
+      ...(c.features||[]).map(feature=>[feature,"feature"]),
+      [c.durationSeconds?`timer · ${c.durationSeconds} second${c.durationSeconds===1?"":"s"}`:null,"timer"],
+      [c.charges?`${c.charges} charge${c.charges===1?"":"s"}`:null,"charges"]];
+    for(const [label,kind] of traitValues){if(!label)continue;
+      const trait=document.createElement("span");trait.className="trait "+kind;trait.textContent=label;traits.appendChild(trait);}
+    const stats=document.createElement("div");stats.className="stats";
+    for(const [label,value,kind] of cardStats(c)){
+      const stat=document.createElement("div");stat.className="stat "+(kind||"");
+      const key=document.createElement("div");key.className="k";key.textContent=label;
+      const val=document.createElement("div");val.className="v";val.textContent=value;
+      stat.append(key,val);stats.appendChild(stat);
+    }
+    const meta=document.createElement("div");meta.className="meta";
+    meta.textContent=[c.ref,(c.stacks??1)>1?`stacks ×${c.stacks}`:null,
+      c.model?`model ${c.model.target} ×${c.model.mult}`:null].filter(Boolean).join(" · ");
+    const chips=document.createElement("div");chips.className="chips";
+    for(const [label,on] of [["implemented",c.implemented],["in pool",c.inPool]]){
+      const ch=document.createElement("span");ch.className="chip "+(on?"on":"off");
+      ch.textContent=label;chips.appendChild(ch);}
+    d.appendChild(top);
+    if(c.category!=="blueprint")d.appendChild(tx);
+    if(traits.children.length)d.appendChild(traits);
+    if(stats.children.length)d.appendChild(stats);
+    d.append(meta,chips);
+    if(c.notes){const n=document.createElement("div");n.className="notes";n.textContent=c.notes;d.appendChild(n);}
+    grid.appendChild(d);nodes.push(d);
+  }
+  sec.dataset.cat=cat;
+  sections.appendChild(sec);
+}
+function apply(){
+  for(const d of nodes){
+    const catOk=state.cat==="all"||d.dataset.cat===state.cat;
+    const stOk=state.status==="all"||(state.status==="implemented")===(d.dataset.impl==="true");
+    const featureOk=state.feature==="all"||d.dataset.features.split("|").includes(state.feature);
+    d.classList.toggle("hidden",!(catOk&&stOk&&featureOk));
+  }
+  for(const sec of sections.children){
+    const visible=[...sec.querySelectorAll(".cardc:not(.hidden)")].length;
+    sec.style.display=visible?"":"none";
+    sec.querySelector(".count").textContent=visible+" shown";
+  }
+}
+apply();
+</script>

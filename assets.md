@@ -13,6 +13,8 @@ Living checklist for production assets. Current canvas art is placeholder art un
 - [ ] Dust essence enemy drop, pickup, carried, and stored variants
 - [ ] Temporary gold coin: idle, warning flash, pickup, carried, and stored variants
 - [ ] Diamond deposit: full, damaged, exhausted, loose, carried, and stored variants
+- [x] Unopened chest: closed, held placement, hit shake, damaged health, break burst,
+      cache payout, and wide loot-piñata payout (low-poly production model)
 
 ## Buildings
 
@@ -89,6 +91,7 @@ Living checklist for production assets. Current canvas art is placeholder art un
 - [ ] Axe action icon
 - [ ] Pickaxe action icon
 - [ ] Sword action icon
+- [x] Chest break action reuses the axe badge icon
 
 ## Ground Selectors
 
