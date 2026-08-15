@@ -303,6 +303,25 @@
     </section>
     <div id="prompt"><kbd>release right</kbd><span></span></div>
     <div id="toast"></div>
+    <!-- The fanned hand. Empty root: src/ui/hand.js exclusively owns #handCards' children and
+         every listener on them; the cards are placed by four CSS variables it writes per card,
+         so the arc, the hover lift and the neighbours parting are all one repaint.
+         #handDock is pointer-transparent and only its cards take the pointer, so the strip
+         never eats a click meant for the ground behind the gaps in the fan. -->
+    <section id="handDock" aria-label="card hand"><div id="handCards"></div></section>
+    <p id="handHint"><kbd>1</kbd>–<kbd>9</kbd> play a card<br><kbd>q</kbd> <kbd>e</kbd> browse · <kbd>enter</kbd> plays<br>right-click stows an open kit</p>
+    <!-- Pick-3 overlay, shared by the level draft and the dawn payout; src/ui/draft.js builds
+         #draftPicks from the simulation's draftPending(). `hidden` is the closed state
+         (display:none), which keeps the screen out of layout, out of the focus order and out of
+         the accessibility tree — so the dialog role only ever describes an open screen — and is
+         also the flag src/ui/hud.js reads to answer modalOpen() for it.
+         tabindex=-1 is not a tab stop: it is where focus lands on the deal and where a press on
+         the backdrop puts it, instead of dropping to <body>. -->
+    <section id="draftOverlay" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="draftTitle">
+      <header id="draftHeader"><h2 id="draftTitle">level up</h2><p id="draftSub"></p></header>
+      <div id="draftPicks"></div>
+      <footer id="draftBar"><p><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> or click · <kbd>←</kbd><kbd>→</kbd> then <kbd>enter</kbd></p></footer>
+    </section>
     <div id="pauseBadge" class="off">paused · esc to resume</div>
     <section id="upgradePanel" class="off">
       <h3 id="upgradeTitle">upgrades</h3>
@@ -327,19 +346,14 @@
       </div>
       <footer id="skillTreeBar"><button id="skillTreeContinue" type="button">continue</button></footer>
     </section>
-    <!-- Draft screen (level-up, pick one of three). Markup is the shell only: src/ui/draft.js builds
-         and owns every card under #draftCards, so nothing here names a card. `hidden` is the closed
-         state and is display:none, which keeps the screen out of layout, out of the focus order and
-         out of the accessibility tree — so the dialog role only ever describes an open screen.
-         tabindex=-1 is not a tab stop: it is where focus lands on the deal and where a press on the
-         backdrop puts it, instead of dropping to <body>. -->
-    <section id="draftPanel" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="draftTitle">
-      <header id="draftHeader"><h2 id="draftTitle">level up</h2><p id="draftHint">the thing offers three · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></p></header>
-      <div id="draftCards"></div>
-    </section>
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
   </main>
 </div>
+<!-- Card flights (a spent consumable leaving for the base, a drafted card arriving in the
+     hand) are position:fixed and live OUTSIDE #game on purpose: a flight is measured in
+     viewport rectangles and must be free to cross the letterbox, and nothing inside the frame
+     can clip it. src/ui/hand.js owns every child; it is empty whenever nothing is in the air. -->
+<div id="cardFlights" aria-hidden="true"></div>
 <script type="importmap">
 {"imports":{"three":"./vendor/three.module.js"}}
 </script>

@@ -60,7 +60,11 @@ function upgradePanelOpen(){return !document.getElementById("upgradePanel").clas
 // predicate is the guard input.js's pointer-down asks. Keys are a separate question each modal
 // answers for itself: the skill tree suppresses the camera keys in input.js, the upgrade panel
 // never did.
-export function modalOpen(){return upgradePanelOpen()||state.skillTree.open;}
+// The draft overlay (src/ui/draft.js) is the third one. It is read off the DOM rather than
+// imported, exactly as the upgrade panel above is, so this file keeps its place as the lowest
+// browser adapter and draft.js can go on importing syncModalUi() from here without a cycle.
+function draftOverlayOpen(){return !document.getElementById("draftOverlay").hidden;}
+export function modalOpen(){return upgradePanelOpen()||state.skillTree.open||draftOverlayOpen();}
 /** The `.modal-open` class on #game, which this file owns. Called by whichever modal just moved. */
 export function syncModalUi(){document.getElementById("game").classList.toggle("modal-open",modalOpen());}
 

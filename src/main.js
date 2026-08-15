@@ -3,13 +3,14 @@
 // Three.js render → 2D overlay → showcase UI projection → deferred debugger scans.
 // simulation.js owns mutable gameplay; render and UI adapters consume queries and injected effects.
 import {connect as connectSimulation, initializeRunMode, TUNE, update, toast, setBuildDockCategory} from "./game/simulation.js";
-// Namespace, not named bindings: the level/draft trio below is read at CALL time, so this module
-// still links while the simulation half of that contract is landing.
+// Namespace as well as named bindings: the ?draftDemo console helpers below reach for a handful of
+// debug commands that nothing else in the composition names.
 import * as SIMULATION from "./game/simulation.js";
 import {connect as connectScene, resizeRenderer, drawScene, renderScene} from "./render/scene.js";
 import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
 import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
+import {initHand, renderHand, syncHandTargeting, debugHoldFlights} from "./ui/hand.js";
 import {DRAFT_EFFECTS, initDraft, syncLevelHud} from "./ui/draft.js";
 import {initInput} from "./input.js";
 import {initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, drainScans} from "./debug/view-debugger.js";
@@ -34,25 +35,31 @@ function resizeView(){
 // surface the HUD was handed), and input before the debugger (its window keydown must stay ahead of
 // the shift+digit handler). initSkillTree() only binds listeners to markup that is always there,
 // so its position is free; it sits with the other adapters.
+// handChanged / draftChanged / levelChanged ride in the same record as every other effect, so the
+// card UI is driven entirely by the simulation raising them — nothing polls.
 connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...DRAFT_EFFECTS,
-  phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();}
+  handChanged(){renderHand();},
+  phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();},
+  // Arming and cancelling a card's placement is a BUILD-hud move in the simulation's eyes: only
+  // which card owns the cursor changed, not the hand itself. The fan listens too, so the lifted,
+  // violet-lit card settles back the instant a right-click stows a part-spent kit.
+  buildHudChanged(){SIM_EFFECTS.buildHudChanged();syncHandTargeting();}
 });
 // ── Mode-selection data flow ──
 // Browser URL is read only here. The simulation receives one initialization command and remains
 // independent of window/location; absent or unknown values preserve the normal default lifecycle.
 const search=new URLSearchParams(window.location.search);
 const requestedMode=search.get("mode")==="showcase"?"showcase":"normal";
-// ── level/draft source ──
-// THE indirection: src/ui/draft.js never names the simulation, it asks this record for
-// levelState / draftPending / chooseDraft. The simulation namespace IS that record — always,
-// because a swapped-in stand-in would leave the real sim frozen on its own unanswered offer
-// the moment feeding levels it. ?draftDemo=1 only adds console triggers over the real thing.
-const levelSource=SIMULATION;
 if(search.get("draftDemo")==="1")draftDemo();
 connectScene({isModalOpen(){return modalOpen();}});
 initHud(surface);
 initSkillTree(surface);
-initDraft(surface, levelSource);
+// Both card adapters bind their window keydown BEFORE src/input.js binds its own, which is the
+// whole reason they sit here: the draft overlay has to swallow a press aimed at a stage it
+// completely covers, and the hand has to clear its browse cursor on escape before the pause
+// chain sees that press. Neither consumes anything while a modal is open or a digit is shifted.
+initHand();
+initDraft(surface);
 initInput(surface, {cameraChanged(){ syncViewInputs(); }});
 initViewDebugger({resizeView});
 // Initialize after adapters bind their authored defaults, so showcase camera/fixtures are the final
@@ -87,10 +94,29 @@ requestAnimationFrame(frame);
 toast(requestedMode==="showcase"?"showcase ready — towers use production combat stats":"left-hold a tree or rock to gather");
 
 // ── dev-only: ?draftDemo=1 ────────────────────────────────────────────
-// Console triggers over the REAL simulation (a fake source would desync from the sim's own
-// level-ups). __draftDemo.deal(n) grants exactly enough XP to level n times, so real offers appear.
+// Console and screenshot staging over the REAL simulation — every helper below is a debug COMMAND
+// the simulation already exports, so a staged hand is dealt, played and spent through exactly the
+// paths a run uses. Nothing here fabricates a card, an offer or a level.
+//   window.__draftDemo.deal(n)       level n times over, so real level offers appear
+//   window.__draftDemo.dawn()        run a night to its end, so the real dawn reward is queued
+//   window.__draftDemo.hand([...])   deal a list of card ids into the hand ("id" or [id, copies])
+//   window.__draftDemo.add(id,n)     deal one card in, the way a draft does
+//   window.__draftDemo.freeze(on)    pause/resume card flights mid-air for a photograph
+const DEMO_HAND=[["woodBundle",2],"spikeKit","fireball","bpSniper","calmNight","healBase"];
 function draftDemo(){
   window.__draftDemo={
     deal(count=1){for(let i=0;i<count;i++){const s=SIMULATION.levelState();SIMULATION.debugGrantXp(Math.max(1,Math.ceil(SIMULATION.levelCost(s.level)-s.xp)));}},
+    dawn(){SIMULATION.debugGoToPhase("night");SIMULATION.debugGoToPhase("day");},
+    hand(entries=DEMO_HAND){
+      const dealt=[];
+      for(const entry of entries){
+        const [id,copies]=Array.isArray(entry)?entry:[entry,1];
+        for(let i=0;i<copies;i++)if(SIMULATION.debugDealCard(id))dealt.push(id);
+      }
+      return dealt;
+    },
+    add(id,copies=1){let dealt=0;for(let i=0;i<copies;i++)if(SIMULATION.debugDealCard(id))dealt++;return dealt;},
+    freeze(on=true){debugHoldFlights(on);},
+    kind(){return SIMULATION.draftKind();},
   };
 }

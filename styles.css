@@ -3,12 +3,25 @@
     --ink:#292119; --paper:#f1dfb7; --red:#a94634; --gold:#d29a39;
     --shadow:3px 3px 0 #17120d99;
     --mono:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+    /* Cards. Violet is the card system's own colour — it marks the epic rarity, the lift of
+       a card that is mid-placement and the draft overlay's furniture, and it appears nowhere
+       else in the game, so anything violet on screen is a card doing something.
+       The four swatches are src/game/cards.js's four RARITIES and nothing else; a rarity the
+       registry does not author has no rule here and falls through to the common tan. */
+    --violet:#8a5cc8; --violet-lit:#b48ae8;
+    --r-common:#9c8a63; --r-rare:#4a72a8; --r-epic:var(--violet); --r-legendary:#bf8a2e;
+    --card-w:104px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
   body{display:grid;place-items:center;background:#0b0d13;color:var(--ink);font:12px/1.35 var(--mono);text-transform:lowercase}
   #game{position:relative;width:min(100vw,calc(100vh * 16 / 9));aspect-ratio:16 / 9;container:game-frame / inline-size}
-  #stage{position:absolute;inset:0}
+  /* --toast-lane is where the notification line sits above the fanned hand. It is declared on
+     #stage rather than on #game because #game is the query container itself, and a @container
+     block can only restyle the container's DESCENDANTS — the small-frame override at the foot
+     of this file would silently do nothing from up here. The raised variant lives with the
+     card rules, also on #stage, so the two overrides stay comparable. */
+  #stage{position:absolute;inset:0;--toast-lane:240px}
   /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, toast 8, viewPanel 9,
      skill tree 10, draft 10, game-over 11. Both full-stage overlays cover every panel above; only
      the end card, which ends the run outright, may cover them. The two are mutually exclusive, so
@@ -40,27 +53,43 @@
   #forecastSides{font-weight:bold;margin-bottom:4px}
   #forecastRemaining{font-size:9px;color:#d98b75;margin-bottom:3px}
   #recipeSummary{display:flex;flex-wrap:wrap;gap:2px 9px;list-style:none;font-size:10px}
-  #buildDock{position:absolute;z-index:4;left:50%;bottom:10px;transform:translateX(-50%);width:min(900px,calc(100% - 20px));pointer-events:none}
+  /* ── build dock ──
+     Moved out of the centre. The fanned hand (see the cards section at the foot of this file)
+     is the widest object on the stage and its cards rise on hover, so bottom-centre is now the
+     hand's column and the dock takes the bottom-LEFT corner as a fixed 244px rail whose
+     category panel opens UPWARD off the tab row. Everything below this comment is the same
+     dock with a column count instead of a scrolling row; no button lost a behaviour.
+     The two widths are set against each other: the dock's right edge lands 386px left of
+     centre, and src/ui/hand.js caps the fan at 470px of centred span, so the furthest a
+     hovered card can reach is 318px from centre — a clear lane between them at every hand
+     size the strip supports. The keyboard hint takes the matching corner on the right and
+     is width-capped for the same reason. */
+  #buildDock{position:absolute;z-index:4;left:10px;bottom:10px;width:244px;pointer-events:none}
   #buildCards{display:none;margin-bottom:5px;padding:5px;background:#f1dfb7f2;border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
   #buildCards.open{display:block}
-  .build-category{display:none;gap:5px;overflow-x:auto;padding-bottom:2px}
-  .build-category.open{display:flex}
+  /* Two equal columns rather than a horizontal scroller: at 244px a scrolling row would show
+     one and a half buttons and hide the rest behind a drag. Five economy buttons fall 2+2+1. */
+  .build-category{display:none;grid-template-columns:1fr 1fr;gap:4px}
+  .build-category.open{display:grid}
   /* One equal column per tab, counted from the markup rather than hardcoded — a fixed count left a
      dead slot behind when the debug button moved into the view debugger. */
-  #buildTabs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:min(520px,100%);margin:auto;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
+  #buildTabs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:100%;margin:0;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
   button{width:100%;font:inherit;text-transform:lowercase;text-align:left;color:var(--ink);cursor:pointer;background:#e6d09f;border:2px solid #b99f6c;padding:7px;margin:2px 0}
   button:hover{border-color:var(--ink);background:#f7e8c5}
   button.on,.dock-tab.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
   button:disabled{cursor:not-allowed;opacity:.42;filter:saturate(.4)}
   button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
   .dock-tab{text-align:center;margin:0;padding:6px}
-  .build-category .build{position:relative;flex:0 0 150px;min-height:68px;margin:0;padding:6px}
+  .build-category .build{position:relative;min-height:58px;margin:0;padding:5px;font-size:10px}
   .build-category .build:hover{transform:translateY(-1px)}
   .build-category .build.on{box-shadow:inset 0 0 0 1px var(--gold)}
   .cost,.purpose{display:block;font-size:9px;margin-top:2px}
   .cost{color:#765f42}.purpose{opacity:.72}
   kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
-  #toast{position:absolute;z-index:8;left:50%;bottom:calc(var(--build-dock-clearance,42px) + 16px);transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s,bottom .15s;pointer-events:none;white-space:nowrap}
+  /* The notification lane used to sit just above the build dock. The dock is in the corner now
+     and the centre column belongs to the hand, so the lane rides above the FAN instead — high
+     enough to clear a card at full hover lift and scale. */
+  #toast{position:absolute;z-index:8;left:50%;bottom:var(--toast-lane,240px);transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s,bottom .15s;pointer-events:none;white-space:nowrap}
   #toast.on{opacity:1}#game.modal-open #toast{opacity:0}
   #prompt{position:absolute;z-index:5;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
   #prompt.on{opacity:1}
@@ -94,9 +123,9 @@
     #phaseHud{right:6px;top:6px;width:50%;padding:5px 6px;font-size:10px}
     #phaseHeader{font-size:11px}#phaseProgress{margin:4px 0}
     #runTimeRow,#forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
-    #buildDock{bottom:6px;width:calc(100% - 12px)}#buildCards{padding:3px;margin-bottom:3px}
-    .build-category{gap:3px}.build-category .build{flex-basis:126px;min-height:58px;padding:5px;font-size:10px}
-    .cost,.purpose{font-size:9px}#buildTabs{width:min(440px,100%);padding:2px}.dock-tab{padding:4px;font-size:10px}
+    #buildDock{left:6px;bottom:6px;width:236px}#buildCards{padding:3px;margin-bottom:3px}
+    .build-category{gap:3px}.build-category .build{min-height:52px;padding:4px;font-size:9px}
+    .cost,.purpose{font-size:8px}#buildTabs{padding:2px}.dock-tab{padding:4px;font-size:9px}
     #upgradePanel{max-height:calc(100% - 12px)}
   }
 
@@ -274,95 +303,6 @@
   #skillTreeContinue:hover{background:#2a1a0d;border-color:#f3c56a}
   /* Scoped focus ring: the generic red one all but vanishes on a dark sepia tile. */
   #skillTreePanel button:focus-visible{outline:2px solid #ffd27a;outline-offset:3px}
-  /* ── draft screen ────────────────────────────────────────────────────
-     Three physical cards dealt over the world, not a panel drawn on top of it: the backdrop is a
-     violet vignette thin enough to keep the ground readable through it, because the offer comes
-     from the thing IN that ground and violet is its colour here (it is the pulse tower's accent,
-     the one violet the authored tables already use). Every selector below names an element inside
-     #draftPanel, so none of it reaches a generic button, the build dock or the view debugger.
-     `hidden` is the closed state: display:none, no layout, no tab stop, no a11y node. */
-  #draftPanel{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;gap:34px;color:#f0ddb8;
-    background:radial-gradient(112% 82% at 50% 50%,#5a2f8f4d,#1c0f2fd1 44%,#080512f2 100%)}
-  #draftPanel[hidden]{display:none}
-  #draftPanel:focus-visible{outline:none}
-  #draftHeader{text-align:center}
-  #draftTitle{width:fit-content;margin:0 auto;padding:0 26px 6px;font-size:23px;letter-spacing:.05em;
-    color:#f6ecff;border-bottom:3px solid #b18be5;filter:drop-shadow(0 1px 9px #b18be5b3)}
-  #draftHint{margin-top:6px;color:#c9aee6;font-size:11px}
-  #draftHint kbd{margin-left:3px;background:#1b1226;color:#f0e2ff;border:1px solid #7b5aa8}
-
-  /* --step is the throw distance one card sits from the middle: card width less the overlap the
-     negative margin creates. src/ui/draft.js multiplies it by the card's index to author --dx. */
-  #draftCards{--card-w:min(214px,22cqw);--step:calc(var(--card-w) - 12px);
-    display:flex;justify-content:center;align-items:flex-start}
-  /* Rarity is the frame and the banner, never body text. Each swatch is one the authored tables
-     already use: outpost stone, teleport blue, pulse violet, the HUD gold. */
-  #draftPanel .draft-card{--rim:#b9a67e;position:relative;flex:0 0 auto;width:var(--card-w);min-height:246px;
-    margin:0 -6px;padding:0;display:flex;flex-direction:column;text-align:left;overflow:hidden;
-    color:#efdcb6;background:linear-gradient(#2c2119,#170f09);border:2px solid var(--rim);
-    box-shadow:0 10px 18px -8px #000c,0 0 0 1px #0009 inset;
-    transform:translateY(var(--lift)) rotate(var(--rot));
-    transition:transform .13s ease-out,box-shadow .13s ease-out,opacity .13s ease-out,filter .13s ease-out}
-  #draftPanel .draft-card[data-rarity=rare]{--rim:#7396e8}
-  #draftPanel .draft-card[data-rarity=epic]{--rim:#b18be5}
-  #draftPanel .draft-card[data-rarity=legendary]{--rim:#e3c260}
-  /* The banner is the rarity swatch at full strength and the ink is the game's own dark: the rarity
-     colour is a FRAME here, never body text, so it has to carry the name from behind it. */
-  #draftPanel .draft-banner{padding:5px 8px;background:var(--rim);
-    background-image:linear-gradient(#ffffff2e,#00000024);
-    color:#170f09;font-size:14px;font-weight:bold;line-height:1.15;letter-spacing:.01em;
-    border-bottom:1px solid #0007;text-shadow:0 1px 0 #ffffff59}
-  #draftPanel .draft-eyebrow{padding:4px 8px 0;font-size:8px;letter-spacing:.18em;
-    text-transform:uppercase;color:var(--rim);opacity:.85}
-  /* The art window is the card's picture: an inset frame with the authored icon the card's ref
-     names, large enough to be the thing the eye lands on first. */
-  #draftPanel .draft-art{display:grid;place-items:center;height:96px;margin:6px 8px 0;
-    background:radial-gradient(72% 72% at 50% 40%,#3d3122,#100a06);border:1px solid #ffffff17;
-    box-shadow:inset 0 0 14px #000a,inset 0 0 26px -6px var(--rim)}
-  /* The authored icons are geometric glyphs with small ink for their em, so the size is set well
-     past the box they have to fill. Some of them (⛏ ♨ ☀ ♥) exist in no monospace font on the box
-     and arrive from a COLOUR emoji font, which would put one glossy sticker in a fan of flat line
-     art: grayscale flattens whatever the fallback produced and the sepia puts it back in the game's
-     one warm ink, so all three cards read as the same kind of drawing. The rarity glow is on the
-     window rather than the glyph, because a filter would flatten that too. */
-  #draftPanel .draft-glyph{font-size:62px;line-height:1;color:#f7e6bd;
-    filter:grayscale(1) sepia(.62) saturate(1.5) brightness(1.06)}
-  #draftPanel .draft-text{flex:1;margin:7px 0 0;padding:7px 8px;background:#00000047;
-    border-top:1px solid #ffffff14;font-size:10px;line-height:1.5;color:#e8d6ae}
-  #draftPanel .draft-pips{display:flex;gap:3px;min-height:11px;padding:0 8px 6px;background:#00000047}
-  #draftPanel .draft-pips i{width:4px;height:4px;background:var(--rim);opacity:.7}
-  #draftPanel .draft-key{position:absolute;right:0;top:0;z-index:1;width:17px;height:17px;
-    display:grid;place-items:center;background:var(--rim);color:#170f09;font-size:10px;font-weight:bold}
-
-  /* Pop-out: the hovered or keyboard-focused card straightens, lifts and lights its own rarity;
-     the other two step back. Focus-within covers the keyboard, so both routes land on one pose. */
-  #draftCards:hover .draft-card,#draftCards:focus-within .draft-card{opacity:.7;filter:saturate(.6)}
-  #draftPanel .draft-card:hover,#draftPanel .draft-card:focus-visible{opacity:1;filter:none;z-index:2;
-    transform:translateY(-14px) rotate(0deg) scale(1.06);
-    box-shadow:0 18px 26px -10px #000d,0 0 22px -2px var(--rim),0 0 0 1px #0009 inset}
-  #draftPanel .draft-card:focus-visible{outline:2px solid #ffd27a;outline-offset:3px}
-
-  /* ── the deal, and the pick ──
-     Dealt from the middle of the stage: --dx is how far this card has to travel out to its place in
-     the fan, so all three come off one point. backwards fill covers the stagger, and every animation
-     below ends at the card's own settled style, so a finished deal computes identically to a card
-     that never animated. The pick is the same idea run outward: the taken card grows into the room
-     the other two make as they drop. */
-  @keyframes draftDeal{from{opacity:0;transform:translate(var(--dx),18px) scale(.16) rotate(0deg)}}
-  @keyframes draftChosen{
-    40%{transform:translateY(-22px) rotate(0deg) scale(1.16);box-shadow:0 0 40px 2px var(--rim)}
-    to{opacity:0;transform:translateY(-30px) rotate(0deg) scale(1.3)}}
-  @keyframes draftDiscarded{to{opacity:0;transform:translateY(38px) rotate(var(--rot)) scale(.9)}}
-  #draftPanel .draft-card{animation:draftDeal .3s cubic-bezier(.2,1.2,.4,1) backwards}
-  #draftPanel .draft-card.chosen{z-index:3;animation:draftChosen .38s ease-out forwards}
-  #draftPanel .draft-card.discarded{animation:draftDiscarded .3s ease-in forwards}
-  @media (prefers-reduced-motion:reduce){
-    /* No motion, same destination — the fan and the frames stay, only the approach is dropped. */
-    @keyframes draftDeal{from{opacity:0}}
-    #draftPanel .draft-card{animation-duration:.14s;animation-timing-function:linear;transition:none}
-    #draftPanel .draft-card.chosen,#draftPanel .draft-card.discarded{animation:none;opacity:0}
-  }
 
   /* Must come after the rules above: a container query adds no specificity, so
      the earlier @container block up top cannot override them. */
@@ -377,14 +317,192 @@
     #skillTreeLinks{stroke-width:2.5}
     #skillTreeBar{padding:6px 10px}
     #skillTreeContinue{padding:5px 14px;font-size:11px}
-    /* Only the card's fixed numbers shrink; the fan geometry is written in --card-w, so it rides. */
-    #draftPanel{gap:20px}
-    #draftTitle{padding-bottom:4px;font-size:16px;border-bottom-width:2px}
-    #draftHint{font-size:9px}
-    #draftPanel .draft-card{min-height:196px}
-    #draftPanel .draft-banner{padding:4px 6px;font-size:11px}
-    #draftPanel .draft-art{height:70px;margin:5px 6px 0}
-    #draftPanel .draft-glyph{font-size:46px}
-    #draftPanel .draft-text{padding:5px 6px;font-size:9px}
-    #draftPanel .draft-pips{padding:0 6px 5px}
+  }
+
+  /* ── cards ────────────────────────────────────────────────────────────
+     One card anatomy at two sizes. Everything inside .card is written in em off the
+     card's OWN font-size, and that font-size is a twelfth of --cw, so a 104px card in
+     the fan and a 196px card in the draft are the same drawing scaled — never two
+     drawings that have to be kept in step. --cw is the only number a caller sets.
+     Rarity enters through one variable, --rarity, and comes out in three places: the
+     eyebrow band, the inner ring and the lit charge pips. Violet (--violet) belongs to
+     the card system itself: the epic rarity, the glow on a card that is mid-placement
+     and the draft overlay's furniture, and nothing else in the game uses it.
+     The four classes below are src/game/cards.js's four RARITIES. The default sits on
+     .card itself, so a card whose rarity has no rule still draws a frame rather than a
+     hole where one should be. */
+  .card{--rarity:var(--r-common)}
+  .card.r-rare{--rarity:var(--r-rare)}
+  .card.r-epic{--rarity:var(--r-epic)}
+  .card.r-legendary{--rarity:var(--r-legendary)}
+  /* --cw is set by whoever HOSTS the card (#handCards, .pick, or inline on a flight clone),
+     never by the card itself — a declaration here would shadow the inherited one and pin every
+     card to one size. */
+  .card{
+    position:relative;box-sizing:border-box;
+    width:var(--cw);height:calc(var(--cw) * 1.54);
+    font:calc(var(--cw) / 12)/1.3 var(--mono);
+    display:flex;flex-direction:column;align-items:center;
+    padding:.5em .6em .45em;text-transform:lowercase;color:#31261a;
+    background:radial-gradient(115% 82% at 50% -6%,#fdf4da,#f0e0b8 52%,#e2cea2);
+    border:.22em solid #2b2118;border-radius:.45em;
+    box-shadow:inset 0 0 0 .17em var(--rarity),inset 0 .05em .9em #fffbe8b0,
+      inset 0 -1.1em 1.5em #97724026,.2em .28em 0 #17120d80;
+  }
+  .card-eyebrow{width:100%;padding:.18em 0;text-align:center;font-size:.66em;letter-spacing:.16em;
+    color:#fdf3dc;background:var(--rarity);border-radius:.2em;text-shadow:0 1px 0 #0007}
+  /* The glyphs come from the authored icon tables, and a handful of them (⛏ ♨ ☀ ♥ ❄ ⚔ ☝ ✊) exist
+     in no monospace font on the box, so the browser reaches for a COLOUR emoji font and puts one
+     glossy sticker in a hand of flat line art. font-variant-emoji asks for the text presentation
+     where it is supported; the filter is the backstop everywhere else — grayscale flattens whatever
+     the fallback produced and the sepia/brightness put it back in the card's own warm ink. */
+  .card-glyph{font-size:2.7em;line-height:1.06;margin:.1em 0 .02em;color:#2f2418;
+    font-variant-emoji:text;
+    filter:grayscale(1) sepia(.55) saturate(1.4) brightness(.62) drop-shadow(0 .03em .04em #0000004d)}
+  .card-name{font-size:1.02em;line-height:1.14;font-weight:bold;text-align:center;
+    min-height:2.28em;display:flex;align-items:center}
+  .card-rule{width:72%;height:.15em;margin:.18em 0 .34em;border-radius:.1em;
+    background:linear-gradient(90deg,transparent,var(--rarity),transparent);opacity:.85}
+  /* The two autos here and the one on the footer are the card's vertical rhythm: the eyebrow,
+     glyph, name and rule stack from the top, the footer pins to the bottom, and the effect
+     text plus its note float centred in whatever is left — so a two-line card and a four-line
+     card put their pips on the same baseline without either looking hollow. */
+  .card-text{margin-top:auto;font-size:.8em;line-height:1.34;text-align:center;color:#3a2d1e}
+  .card-note{margin:.5em 0 auto;font-size:.72em;line-height:1.28;text-align:center;
+    color:#6b5637;opacity:.7}
+  .card-foot{display:flex;align-items:center;justify-content:center;gap:.45em;
+    width:100%;min-height:.9em;margin-top:auto;padding-top:.4em}
+  .pips{display:flex;gap:.26em}
+  .pip{width:.52em;height:.52em;border-radius:50%;border:.12em solid #6b5637;background:#0000001f}
+  .pip.on{background:var(--rarity);border-color:#2b2118;box-shadow:0 0 .34em var(--rarity)}
+  .pip-count{font-size:.68em;color:#6b5637;font-variant-numeric:tabular-nums}
+  /* Both badges hang off the frame so neither eats into the face, and both hang off the LEFT
+     edge because that is the half of a card the fan leaves uncovered: every card in the strip
+     is painted over by its right-hand neighbour, so a badge on the right would be legible only
+     on the last card in the hand. */
+  .card-count{position:absolute;left:-.42em;top:1.85em;padding:.14em .44em;
+    background:#2b2118;color:#fbeec9;border:.17em solid var(--rarity);border-radius:1em;
+    font-size:.84em;font-weight:bold;line-height:1.2;box-shadow:.1em .12em 0 #17120d88}
+  /* Stacked copies also get a physical second card behind the first. The negative z-index puts
+     it behind this card's own background, so only the offset edge shows — which is the whole
+     illusion. It is decoration for the ×n chip above, never the only sign of a stack. */
+  .card[data-count]::before{content:"";position:absolute;z-index:-1;inset:0;
+    transform:translate(.34em,.36em) rotate(2.2deg);transform-origin:50% 100%;
+    background:#e3cfa4;border:.22em solid #2b2118;border-radius:.45em;
+    box-shadow:.16em .2em 0 #17120d55}
+  .card-key{position:absolute;left:-.34em;top:-.46em;padding:.08em .38em;
+    background:var(--paper);color:#2b2118;border:.17em solid #2b2118;border-radius:.24em;
+    font:bold .78em/1.3 var(--mono);box-shadow:.1em .12em 0 #17120d66}
+
+  /* ── the fanned hand ──
+     Bottom-centre, which is why the build dock moved to the corner (see the dock section
+     up top). The strip itself takes no pointer events — only the cards do — so the gaps
+     between the fanned cards stay clickable ground. Every card sits on ONE origin point
+     and is placed entirely by four variables src/ui/hand.js writes; the transform order is
+     centre, then fan offset, then tilt and lift about the card's own bottom edge, which is
+     what keeps the bottoms on a shallow curve instead of swinging them off it. */
+  /* The 520px this subtracts is the two bottom corners the fan must never reach into: the build
+     dock's rail on the left and the keyboard hint on the right, plus a lane either side.
+     src/ui/hand.js measures THIS box and fits the fan inside it, so the two stay in step
+     without either side hard-coding the other's width. */
+  #handDock{position:absolute;z-index:5;left:50%;bottom:0;transform:translateX(-50%);
+    width:min(600px,max(180px,100% - 520px));height:236px;pointer-events:none}
+  #handCards{position:absolute;left:50%;bottom:32px;width:0;height:0;--cw:var(--card-w)}
+  #handCards .card{position:absolute;left:0;bottom:0;pointer-events:auto;cursor:pointer;
+    transform-origin:50% 100%;
+    transform:translateX(-50%) translate(var(--x,0),var(--y,0)) rotate(var(--rot,0deg)) scale(var(--scale,1));
+    transition:transform .19s cubic-bezier(.2,.85,.3,1),box-shadow .19s ease-out,filter .19s ease-out}
+  #handCards .card:focus-visible{outline:2px solid var(--violet-lit);outline-offset:3px}
+  /* Raised — hovered, or sitting under the q/e browse cursor. It straightens, grows and is
+     the only card carrying a warm rim, so which card the next key press acts on is never
+     ambiguous even with the whole fan overlapping. */
+  #handCards .card.raised{box-shadow:inset 0 0 0 .17em var(--rarity),inset 0 .05em .9em #fffbe8b0,
+    inset 0 -1.1em 1.5em #97724026,0 .5em 1.4em #000000a8,0 0 0 .13em #f0d9a5}
+  /* Active — the simulation is running this card's placement flow. It holds itself up out of
+     the fan and wears the card system's violet until the last charge lands or the kit is
+     stowed, so the ghost on the map always has a visible owner down here. */
+  #handCards .card.active{box-shadow:inset 0 0 0 .17em var(--violet),inset 0 .05em .9em #fffbe8b0,
+    inset 0 -1.1em 1.5em #97724026,0 .4em 1.1em #000000a0,0 0 .9em .1em var(--violet);
+    animation:cardActive 1.5s ease-in-out infinite}
+  @keyframes cardActive{50%{filter:brightness(1.1) saturate(1.15)}}
+  #handCards .card.arriving{opacity:0}
+  #handCards .card.landed{animation:cardLand .38s ease-out}
+  @keyframes cardLand{0%{filter:brightness(1.7)}100%{filter:brightness(1)}}
+  #handCards .card.refused{animation:cardRefuse .22s ease-out}
+  @keyframes cardRefuse{25%{margin-left:-6px}75%{margin-left:6px}}
+  /* Flight layer: fixed to the viewport so a card can cross the letterbox, and clipped by
+     nothing. Empty whenever nothing is in the air. */
+  #cardFlights{position:fixed;inset:0;z-index:999;pointer-events:none;overflow:hidden;--cw:var(--card-w)}
+  .card-flight{position:fixed;pointer-events:none;will-change:transform,opacity}
+  /* Keyboard scheme, printed where it costs nothing: the empty bottom-right corner. The card
+     numbers themselves are on the cards, so this line only has to name the verbs. */
+  /* Two short lines rather than one long one: the corner has to stay narrow enough that a
+     hovered card at the right end of the fan never reaches it. */
+  #handHint{position:absolute;z-index:5;right:10px;bottom:9px;width:200px;text-align:right;
+    font-size:9px;line-height:1.72;color:#f1dfb7;opacity:.55;
+    text-shadow:1px 1px 2px #000c,0 0 6px #000;pointer-events:none}
+  #handHint[hidden]{display:none}
+  #handHint kbd{padding:0 3px;margin:0 1px;font-size:9px;background:#f1dfb7cc;color:#17120d}
+  /* The notification lane clears a raised card. #toast already transitions `bottom`. */
+  #game.hand-raised #stage{--toast-lane:356px}
+
+  /* ── the pick-3 overlay ──
+     One overlay, two headings: the level draft and the dawn payout. Full-stage like the skill
+     tree, so it is a modal in the same sense — src/ui/hud.js reads its `hidden` flag to answer
+     modalOpen(). Dawn recolours the ground from violet to sunrise; nothing else changes. */
+  #draftOverlay{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
+    color:#efe2c6;background:radial-gradient(106% 78% at 50% 40%,#2d1c46e0,#120b1a 74%),#0c0712fb;
+    --accent:var(--violet-lit);--band:#4a2f6a}
+  #draftOverlay[data-kind="dawn"]{--accent:#f0b45f;--band:#7a4a24;
+    background:radial-gradient(106% 78% at 50% 40%,#57301ce0,#1c0f08 74%),#120a06fb}
+  #draftOverlay[hidden]{display:none}
+  #draftOverlay.resolving{opacity:.26;pointer-events:none;transition:opacity .32s ease-out}
+  #draftHeader{flex:0 0 auto;text-align:center;padding-top:20px}
+  #draftTitle{width:fit-content;margin:0 auto;padding:0 26px 7px;font-size:23px;letter-spacing:.05em;
+    color:#fdf2d8;border-bottom:3px solid var(--accent);filter:drop-shadow(0 1px 8px #b48ae899)}
+  #draftOverlay[data-kind="dawn"] #draftTitle{filter:drop-shadow(0 1px 8px #f0b45f99)}
+  #draftSub{margin:9px 0 0;font-size:11px;color:#c9b894}
+  #draftPicks{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;gap:42px}
+  .pick{--cw:236px;display:flex;flex-direction:column;align-items:center;gap:13px;cursor:pointer;
+    animation:pickDeal .34s cubic-bezier(.2,.9,.3,1) var(--deal,0ms) backwards}
+  .pick .card{transition:transform .17s cubic-bezier(.2,.85,.3,1),box-shadow .17s ease-out}
+  /* The cursor state has to carry from across the room: it lifts, grows, takes a rim in the
+     overlay's accent and throws a halo the size of the card. */
+  .pick.on .card{transform:translateY(-20px) scale(1.045);
+    box-shadow:inset 0 0 0 .17em var(--rarity),inset 0 .05em .9em #fffbe8b0,
+      inset 0 -1.1em 1.5em #97724026,0 .7em 2em #000d,0 0 0 .15em var(--accent),
+      0 0 3.2em .3em color-mix(in srgb,var(--accent) 45%,transparent)}
+  .pick-dest{font-size:11px;letter-spacing:.06em;color:#a0906f;transition:color .17s,opacity .17s}
+  .pick.on .pick-dest{color:var(--accent)}
+  .pick.rejected{animation:pickReject .3s ease-in forwards}
+  .pick.chosen .card,.pick.chosen .pick-dest{opacity:0}
+  @keyframes pickDeal{from{opacity:0;transform:translateY(38px) rotate(-4deg) scale(.9)}}
+  @keyframes pickReject{to{opacity:0;transform:translateY(20px) scale(.94)}}
+  #draftBar{flex:0 0 auto;display:flex;justify-content:center;padding:11px;font-size:10px;
+    color:#bda98a;background:#050308;border-top:2px solid var(--band)}
+  #draftBar kbd{padding:1px 5px;margin:0 1px;background:#efe2c6;color:#17120d}
+
+  @media (prefers-reduced-motion:reduce){
+    /* Fades only. The fan still assembles itself — its geometry is where a card IS, not an
+       approach to it — but nothing travels: the card jumps to its raised position, the picks
+       do not deal in, and both flights are handled in JS, which drops to a plain fade. */
+    #handCards .card{transition:opacity .12s linear}
+    #handCards .card.active,#handCards .card.landed,#handCards .card.refused,
+    .pick,.pick.rejected{animation:none}
+    .pick .card{transition:none}
+    .pick.rejected{opacity:0}
+    #draftOverlay.resolving{transition:none}
+    #toast{transition:opacity .12s}
+  }
+
+  /* Same specificity as the rules these shadow, and later in the sheet, which is what lets a
+     matching query win — see the note on #stage at the top of this file. */
+  @container game-frame (max-width:799px){
+    #handDock{height:190px}#handCards{bottom:14px;--cw:86px}
+    #stage{--toast-lane:180px}#game.hand-raised #stage{--toast-lane:262px}
+    #draftTitle{font-size:16px;padding-bottom:5px;border-bottom-width:2px}
+    #draftSub{font-size:10px;margin-top:6px}
+    #draftPicks{gap:16px}.pick{--cw:150px;gap:7px}.pick-dest{font-size:9px}
+    #draftBar{padding:7px;font-size:9px}
+    #handHint{font-size:8px;right:6px;bottom:6px}#handHint kbd{font-size:8px}
   }
