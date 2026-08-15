@@ -208,10 +208,21 @@ These are not exclusive; merging is about density, clustering is about placement
 
 Manual clicks and steady-hand holding share one player-work cooldown, tuned by `PLAYER_CLICK_CPS`. The rate applies only to direct enemy attacks and tree, rock, or diamond gathering; other interactions remain immediate.
 
+## Resource-Drop AOE
+
+**Tags:** `Core Gameplay`
+
+A full hand can become a weapon: dropping carried resources over enemies deals 1 AOE damage per resource held before the drop. Hand-capacity upgrades therefore become an alternate combat build.
+
+Prevent repeatedly picking up and dropping the same resources for free infinite damage. Candidate rules: consume thrown resources, give the hand-drop attack a cooldown, or mark each resource unable to damage again until delivered and regathered.
+
 ## Picking Up Enemies
 
-- Let the player pick up enemies and drop them elsewhere using the same right-drag interaction as workers.
+- Let the player pick up light enemies and drop them elsewhere using the same right-drag interaction as workers.
+- Dropping a carried enemy deals AOE impact damage to units around the landing point.
+- Heavy enemies remain uncarryable; define weight by authored enemy data rather than scattered type checks.
 - Decide whether carrying pauses the enemy, whether drops require valid ground, and whether enemies can be dropped into hazards or tower range.
+- Decide whether impact damages enemies only, everyone nearby, or the dropped unit too.
 - Keep worker assignment priority and resource collection unambiguous when targets overlap.
 
 ## Fog and Expansion
@@ -301,6 +312,22 @@ Implement later:
 - Derive resource rates from actual resource events. Decide whether the window shows gathered, delivered, or both before implementation.
 
 The display should remain readable when many upgrades accumulate; likely collapse repeated upgrades into one entry with a count.
+
+## Enemy Mining and Remote Worker Camps
+
+**Tags:** `Core Gameplay`
+
+Add a dedicated **enemy worker** unit, separate from player workers and combat enemies. It mines world resources, hauls them for the enemy faction, and constructs worker-producing camps. This creates a visible enemy economy the player can disrupt instead of spawning every enemy for free.
+
+**Placement rule:** enemy construction must never occur near the player settlement. Camps belong at the remote frontier—preferably in fog—and need a hard exclusion radius around the base and player buildings. If no valid remote site exists, construction waits or fails; it must not fall back to building nearby.
+
+Open questions:
+
+- Do enemy miners use the same finite trees/rocks as the player, steal loose drops, or both?
+- Can destroying a camp refund its stored resources?
+- Do camps produce new enemy workers continuously, in batches, or only after resource deliveries?
+- Does the enemy worker flee from combat, defend itself weakly, or require escorts?
+- How is distant construction telegraphed before the first worker arrives?
 
 ## Resource-Thief Enemy
 

@@ -69,10 +69,11 @@ const cardName=id=>id.replace(/([a-z0-9])([A-Z])/g,"$1 $2").toLowerCase();
 // refs point at things that own no icon (buildings) or at nothing built yet (concepts), so those are
 // presentation-only picks made HERE, drawn from the same glyph vocabulary the authored tables use.
 const REF_GLYPHS={
-  "concept:clickCombat":"✊","concept:chopTime":"↻","concept:chopYield":"⛏","concept:crit":"⌖",
+  "concept:clickCombat":"✊","concept:chopTime":"↻","concept:chopYield":"⛏","concept:crit":"⌖","concept:chainLightning":"ϟ",
+  "concept:loadedDrop":"▣","concept:enemySlam":"↓",
   "concept:workerSpeed":"»","concept:workerCarry":"▣","concept:houseSlots":"⌂","concept:workerHp":"♥",
   "concept:dawnHeal":"☀","concept:towerDamage":"●","concept:towerSpeed":"↯","concept:towerRange":"◎",
-  "concept:dawnRepair":"▦","concept:baseHp":"⌂","concept:nightGather":"☾","concept:feedXp":"◉",
+  "concept:dawnRepair":"▦","concept:baseHp":"⌂","concept:retaliation":"↩","concept:nightGather":"☾","concept:feedXp":"◉",
   "concept:fireball":"♨","concept:treants":"♣","concept:healBase":"♥","concept:repairTowers":"▦","concept:rushBuild":"↯",
   "concept:bundle":"▣","concept:tempWorker":"☝","concept:calmNight":"☾","concept:longDay":"☀",
   "concept:draftMeta":"↻","concept:barracks":"⚔","concept:mendingBeacon":"♥","concept:towerStandard":"✦",
