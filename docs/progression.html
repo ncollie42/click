@@ -135,9 +135,10 @@
 <!-- ══════════════ 1 · TIMELINE ══════════════ -->
 <section>
   <div class="sec-head"><span class="tag">timeline</span><h2>One run, top to bottom</h2></div>
-  <p class="sec-note">Top strip: day/night cycles at the current <span class="mono" id="cycle-len"></span>
-  cycle. Below it: every <em>modeled draft moment</em> — the dopamine drip is emergent from the level
-  curve, not authored. Middle: phases — each changes what the player's <em>clicks are for</em>.
+  <p class="sec-note">Top strip: modeled day/night cycles using <span class="mono" id="cycle-len"></span>.
+  The night length is an estimate for this analytical timeline; gameplay dawn occurs only after all
+  scheduled wave enemies are defeated. Below it: every <em>modeled draft moment</em> — the dopamine drip
+  is emergent from the level curve, not authored. Middle: phases — each changes what the player's <em>clicks are for</em>.
   Bottom: structural beats only (the moments a draft can't provide); quiet gaps over the rule are flagged red.</p>
   <div class="card scroll-x"><svg id="timeline" role="img" aria-label="Run timeline: day/night stripes, modeled draft moments, phase bands, and structural beats with rule-violation flags"></svg></div>
   <div class="legend-row legend" style="display:flex;gap:18px;margin-top:10px;font-size:12.5px;color:var(--muted)">
@@ -203,12 +204,12 @@
 </main>
 
 <script type="module">
-import {FEED_XP,XP_TIERS,HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION,NIGHT_DURATION,
+import {FEED_XP,XP_TIERS,HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION,
         BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,RESOURCE_KINDS} from "../src/game/data.js";
 import {TUNE} from "../src/game/simulation.js";
 import {ARC,PHASES,BEATS,PLAYER_MODEL,LEVEL_CURVE,DRAFT_POLICY,phaseIndexAt} from "./progression-spec.js";
 import {cardById} from "../src/game/cards.js";
-import {runModel,DT} from "./progression-model.js";
+import {runModel,DT,MODELED_WAVE_CLEAR_SECONDS} from "./progression-model.js";
 
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const SVGNS="http://www.w3.org/2000/svg";
@@ -263,7 +264,6 @@ function tile(k,v,s,cls=""){
   d.children[0].textContent=k;d.children[1].textContent=v;d.children[2].textContent=s;
   verdict.appendChild(d);
 }
-const cycleMin=(DAY_DURATION+NIGHT_DURATION)/60;
 tile("run length",T+" min","authored target · one arc");
 tile("drafts dealt",levelUps.length,`first at ${levelUps[0]?levelUps[0].min.toFixed(1):"—"} min`,
      levelUps.length>=25&&levelUps.length<=45?"good":"warn");
@@ -282,13 +282,13 @@ tile("price walls",tallWalls.length,tallWalls.length?"unlocks that make you save
   const x=m=>L+m/T*plotW;
   const svg=document.getElementById("timeline");
   svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
-  document.getElementById("cycle-len").textContent=`${DAY_DURATION}s day + ${NIGHT_DURATION}s night`;
+  document.getElementById("cycle-len").textContent=`${DAY_DURATION}s day + ~${MODELED_WAVE_CLEAR_SECONDS}s wave-clear estimate`;
 
-  // row A — day/night stripes
+  // row A — modeled day/night stripes; actual night boundaries depend on full wave clearance.
   const yA=8,hA=10;
   el("rect",{x:L,y:yA,width:plotW,height:hA,rx:2,fill:"var(--surface-2)"},svg);
-  for(let s=0;s<T*60;s+=DAY_DURATION+NIGHT_DURATION){
-    const nightStart=(s+DAY_DURATION)/60,nightEnd=Math.min((s+DAY_DURATION+NIGHT_DURATION)/60,T);
+  for(let s=0;s<T*60;s+=DAY_DURATION+MODELED_WAVE_CLEAR_SECONDS){
+    const nightStart=(s+DAY_DURATION)/60,nightEnd=Math.min((s+DAY_DURATION+MODELED_WAVE_CLEAR_SECONDS)/60,T);
     if(nightStart>=T) break;
     el("rect",{x:x(nightStart),y:yA,width:x(nightEnd)-x(nightStart),height:hA,fill:"var(--night)"},svg);
   }
@@ -343,9 +343,9 @@ tile("price walls",tallWalls.length,tallWalls.length?"unlocks that make you save
   const wrap=document.getElementById("assumptions");
   const card=(cls,lbl,html)=>{const d=document.createElement("div");
     d.className="card "+cls;d.innerHTML=`<span class="lbl">${lbl}</span>`+html;wrap.appendChild(d);};
-  card("live","live · data.js + tune + cards.js",
+  card("live","live gameplay + modeled pacing",
     `<b>${TUNE.chopYield}</b> drop per chop · worker carry <b>${WORKER_CARRY}</b> ·
-     house = <b>${HOUSE_SLOTS}</b> workers · cycle <b>${DAY_DURATION}s + ${NIGHT_DURATION}s</b> ·
+     house = <b>${HOUSE_SLOTS}</b> workers · day <b>${DAY_DURATION}s</b> · modeled wave-clear <b>~${MODELED_WAVE_CLEAR_SECONDS}s</b> (estimate; actual dawn requires full scheduled-wave clearance) ·
      feed XP <b>${RESOURCE_KINDS.map(k=>FEED_XP[k]).join("/")}</b> (${RESOURCE_KINDS.join("/")}) ·
      buff effects from the <a href="cards.html" style="color:var(--accent)">card catalog</a>`);
   card("authored","authored · level curve + drafts",

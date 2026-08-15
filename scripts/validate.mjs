@@ -37,6 +37,8 @@ try{
   assert.deepEqual(Object.keys(data.FEED_XP),data.RESOURCE_KINDS);
   assert.deepEqual(Object.fromEntries(data.NIGHT_WAVE_RECIPES.map(recipe=>[recipe.id,recipe.minTier])),{raiderRush:0,archerLine:0,healerEscort:1,brutePush:2,twoFront:2});
   assert.equal(data.NIGHT_TIER_BONUS_SPAWNS,3);
+  assert.equal(Object.isFrozen(data.ENEMY_TYPES),true);assert.equal(Object.values(data.ENEMY_TYPES).every(Object.isFrozen),true);
+  assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.spawns)&&recipe.spawns.every(Object.isFrozen)),true);
   assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});assert.equal(data.SKILL_POINT_LEVELS,4);
   assert.deepEqual(data.XP_TIERS,[40,100,200,350]);   // dead table, still imported by docs/progression.html and render/scene.js
   assert.equal(Object.isFrozen(data.CHEST),true);assert.equal(Object.isFrozen(data.CHEST.weights),true);assert.equal(Object.isFrozen(data.CHEST.outcomeOdds),true);
@@ -95,8 +97,10 @@ try{
     }
     for(const id of spec.DRAFT_POLICY.cycle){const card=cards.cardById[id];assert.ok(card,`draft policy cycles unknown card ${id}`);assert.ok(card.model,`draft policy card ${id} carries no income model`);}
 
-    const {runModel}=await import(pathToFileURL(join(root,"docs/progression-model.js")));
+    const {runModel,MODELED_WAVE_CLEAR_SECONDS}=await import(pathToFileURL(join(root,"docs/progression-model.js")));
+    assert.equal(MODELED_WAVE_CLEAR_SECONDS,45,"the docs-only estimate must preserve the prior model output");
     const model=runModel();
+    assert.equal(model.eff,(data.DAY_DURATION+MODELED_WAVE_CLEAR_SECONDS*spec.ARC.nightIncomeFactor)/(data.DAY_DURATION+MODELED_WAVE_CLEAR_SECONDS));
     assert.ok(model.levelUps.length>=15&&model.levelUps.length<=80,`draft count ${model.levelUps.length} outside sanity range`);
     for(let i=1;i<model.levelUps.length;i++)assert.ok(model.levelUps[i].min>=model.levelUps[i-1].min,"level-up times must be monotonic");
     assert.ok(Number.isFinite(model.series.total[model.series.total.length-1]),"model income diverged");
@@ -121,8 +125,10 @@ try{
   }
   assert.throws(()=>sim.initializeRunMode("invalid"),/invalid run mode/);
   sim.spawnEnemy("north","raider");const taggedEnemy=sim.state.enemies[0];
+  assert.equal(taggedEnemy.waveNightNumber,undefined,"manual spawn silently joined a scheduled wave");assert.equal(sim.livingActiveWaveEnemies(),0);
   taggedEnemy.combatKind="invalid";assert.throws(()=>sim.validateSimulationInvariants(),/unknown combat kind/);taggedEnemy.combatKind="enemy";
   taggedEnemy.type="invalid";assert.throws(()=>sim.validateSimulationInvariants(),/unknown enemy type/);taggedEnemy.type="raider";
+  taggedEnemy.waveNightNumber=0;assert.throws(()=>sim.validateSimulationInvariants(),/malformed wave membership/);delete taggedEnemy.waveNightNumber;
   const invalidDrop={kind:"invalid",x:100,y:100,groundY:100,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null};sim.resourceDrops.push(invalidDrop);assert.throws(()=>sim.validateSimulationInvariants(),/unknown resource drop kind/);sim.resourceDrops.pop();
   sim.state.runMode="invalid";assert.throws(()=>sim.update(1/60),/invalid run mode/);sim.state.runMode="normal";
   // The house is placed the only way a house can be placed now: by playing the bpHouse card the
@@ -289,9 +295,9 @@ try{
       assert.equal(sim.skillPoints(),0);while(sim.state.level<SKILL_POINT_LEVELS){sim.debugGrantXp(1);drain();}assert.equal(sim.skillPoints(),1);
       while(sim.state.level<6){sim.debugGrantXp(1);drain();}assert.equal(sim.waveTier(),2);assert.equal(sim.skillPoints(),1);
       const first=sim.skillTreeNodes().find(node=>node.status==="available");assert.equal(sim.selectSkillNode(first.id),true);assert.equal(sim.skillPoints(),0);assert.equal(sim.selectSkillNode(sim.skillTreeNodes().find(node=>node.status==="available").id),false);
-      sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,sequence=[];assert.equal(wave.totalSpawns,NIGHT_WAVE_SPAWNS+2*NIGHT_TIER_BONUS_SPAWNS);sim.update(.01);sequence.push([sim.state.enemies[0].type,sim.state.enemies[0].spawnSide]);sim.state.enemies.length=0;
+      sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,sequence=[];assert.equal(wave.totalSpawns,NIGHT_WAVE_SPAWNS+2*NIGHT_TIER_BONUS_SPAWNS);sim.update(.01);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber);sequence.push([sim.state.enemies[0].type,sim.state.enemies[0].spawnSide]);sim.state.enemies.length=0;sim.update(.01);assert.equal(sim.state.clock.phase,"night","an early clear skipped later scheduled spawns");
       sim.debugGrantXp(2000);drain();assert.equal(sim.waveTier(),4);assert.equal(wave.totalSpawns,18,"active wave must retain its setup tier");
-      for(let i=1;i<18;i++){sim.update(30/18+.001);assert.equal(sim.state.enemies.length,1);sequence.push([sim.state.enemies[0].type,sim.state.enemies[0].spawnSide]);sim.state.enemies.length=0;}assert.equal(wave.remainingSpawns,0);assert.deepEqual(sequence.slice(12),sequence.slice(0,6),"bonus spawns must cycle recipe types and fronts");
+      for(let i=1;i<18;i++){sim.update(30/18+.001);assert.equal(sim.state.enemies.length,1);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber,"bonus recipe cycle lost scheduled membership");sequence.push([sim.state.enemies[0].type,sim.state.enemies[0].spawnSide]);sim.state.enemies.length=0;}assert.equal(wave.remainingSpawns,0);assert.deepEqual(sequence.slice(12),sequence.slice(0,6),"bonus spawns must cycle recipe types and fronts");
       // The cap holds however far the level runs.
       sim.debugGrantXp(2000000);drain();assert.ok(sim.state.level>=30);assert.equal(sim.waveTier(),4);
       sim.validateSimulationInvariants();console.log(JSON.stringify({checks:44,waveSpawns:18,level:sim.state.level}));
@@ -337,6 +343,62 @@ try{
     `
   }).trim());
   assert.ok(calmResult.calm<calmResult.plain);
+  // Night has no duration gate: cap-delayed schedules, surviving wave enemies, manual enemies,
+  // pause and game over each exercise the two-part clearance predicate in a clean process.
+  const waveClearanceResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+    cwd:root,encoding:"utf8",input:`
+      import assert from "node:assert/strict";
+      import * as sim from "./src/game/simulation.js";
+      import {DAY_DURATION,NIGHT_ENEMY_CAP,NIGHT_WAVE_SPAWNS} from "./src/game/data.js";
+      let seed=0xc1ea;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
+      try{
+        sim.initializeRunMode("normal");sim.DBG.invulnBase=true;
+        sim.update(DAY_DURATION-1);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.remaining,1);sim.update(1);assert.equal(sim.state.clock.phase,"night","the day countdown did not reach dusk at 75 seconds");
+        sim.debugStartWave("raiderRush");const wave=sim.state.nightWave,night=wave.activeNightNumber;
+        assert.equal(sim.state.clock.phase,"night");assert.equal(sim.state.clock.remaining,0);assert.ok(Number.isInteger(night)&&night>0);
+        for(let i=0;i<NIGHT_ENEMY_CAP;i++)sim.spawnEnemy("north","raider");
+        assert.equal(sim.state.enemies.every(enemy=>enemy.waveNightNumber===undefined),true,"manual enemies joined the active wave");
+        assert.equal(sim.livingActiveWaveEnemies(),0);
+        const beforePause={elapsed:wave.elapsed,remaining:wave.remainingSpawns,run:sim.state.clock.elapsed};
+        sim.togglePause();sim.update(60);assert.deepEqual({elapsed:wave.elapsed,remaining:wave.remainingSpawns,run:sim.state.clock.elapsed},beforePause,"pause advanced the wave");sim.togglePause();
+        sim.update(46);assert.equal(sim.state.clock.phase,"night","the former fixed boundary ended night");assert.equal(sim.state.clock.remaining,0);assert.equal(wave.remainingSpawns,NIGHT_WAVE_SPAWNS,"the enemy cap failed to delay scheduled spawns");
+        sim.state.enemies.length=0;sim.update(.01);
+        assert.equal(wave.remainingSpawns,0);assert.equal(sim.livingActiveWaveEnemies(),NIGHT_WAVE_SPAWNS);assert.equal(sim.state.enemies.every(enemy=>enemy.waveNightNumber===night),true,"scheduled spawn lost active-wave membership");
+        // Exhausted schedule is insufficient while one wave member survives.
+        const survivor=sim.state.enemies[0];sim.state.enemies.splice(1);sim.update(10);
+        assert.equal(sim.state.clock.phase,"night");assert.equal(sim.livingActiveWaveEnemies(),1);assert.equal(sim.state.clock.remaining,0);
+        // A debugger enemy is allowed to remain at dawn. Game over and pause still suppress updates.
+        sim.state.enemies.splice(sim.state.enemies.indexOf(survivor),1);assert.equal(sim.spawnEnemy("south","healer"),undefined,"manual spawn command changed its return contract");const manual=sim.state.enemies.at(-1);assert.equal(manual.waveNightNumber,undefined);assert.equal(sim.livingActiveWaveEnemies(),0);
+        sim.state.gameOver=true;sim.update(1);assert.equal(sim.state.clock.phase,"night","game over transitioned to dawn");sim.state.gameOver=false;
+        sim.togglePause();sim.update(1);assert.equal(sim.state.clock.phase,"night","pause transitioned to dawn");sim.togglePause();
+        sim.update(1/60);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.completedNights,1);assert.equal(wave.activeNightNumber,null);assert.equal(sim.state.enemies.includes(manual),true,"manual enemy blocked or disappeared at dawn");
+        assert.equal(sim.draftKind(),"dawn");const reward=sim.draftPending();assert.ok(reward);sim.update(10);assert.equal(sim.state.clock.completedNights,1);assert.equal(sim.draftPending(),reward,"clearance duplicated the dawn reward");
+        sim.validateSimulationInvariants();
+        console.log(JSON.stringify({night,elapsed:wave.elapsed,spawns:NIGHT_WAVE_SPAWNS,rewards:1,manualSurvived:sim.state.enemies.includes(manual)}));
+      }finally{Math.random=old;}
+    `
+  }).trim());
+  assert.equal(waveClearanceResult.rewards,1);assert.equal(waveClearanceResult.manualSurvived,true);assert.ok(waveClearanceResult.elapsed>45);
+  const hudResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+    cwd:root,encoding:"utf8",input:`
+      import assert from "node:assert/strict";
+      import * as sim from "./src/game/simulation.js";
+      const elements=new Map();
+      const element=id=>elements.get(id)||elements.set(id,{id,textContent:"",hidden:false,style:{},dataset:{},children:[],classList:{toggle(){},contains(){return false;}},replaceChildren(){this.children.length=0;},appendChild(child){this.children.push(child);}}).get(id);
+      globalThis.document={getElementById:element,createElement:()=>({textContent:""})};
+      const {syncPhaseHud}=await import("./src/ui/hud.js");
+      sim.initializeRunMode("normal");sim.DBG.invulnBase=true;syncPhaseHud();
+      assert.equal(element("phaseTime").textContent,"1:15");assert.equal(element("phaseProgressFill").style.width,"0.00%");
+      sim.debugStartWave("raiderRush");sim.update(.01);syncPhaseHud();
+      assert.match(element("phaseTime").textContent,/^elapsed 0:00$/);assert.match(element("forecastRemaining").textContent,/1 wave enemy alive · 11 scheduled spawns remaining/);assert.equal(element("phaseProgressFill").style.width,"0.00%");
+      sim.update(30);sim.state.enemies.splice(1);syncPhaseHud();
+      assert.match(element("forecastRemaining").textContent,/1 wave enemy alive · 0 scheduled spawns remaining/);assert.equal(element("phaseProgressFill").style.width,"91.67%");
+      sim.state.enemies.length=0;syncPhaseHud();assert.equal(element("forecastRemaining").textContent,"wave clear · 0 enemies alive · 0 scheduled spawns remaining");assert.equal(element("phaseProgressFill").style.width,"100.00%");const clear=element("phaseProgressFill").style.width;
+      sim.update(1/60);syncPhaseHud();assert.equal(element("phaseName").textContent,"day 2");assert.equal(element("phaseTime").textContent,"1:15");
+      console.log(JSON.stringify({spawning:"1/11",survivor:"1/0",clear,day:element("phaseTime").textContent}));
+    `
+  }).trim());
+  assert.equal(hudResult.spawning,"1/11");assert.equal(hudResult.survivor,"1/0");assert.equal(hudResult.clear,"100.00%");assert.equal(hudResult.day,"1:15");
   // A drafted buff must move a MEASURED number, not just a ledger entry.
   const buffResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
@@ -363,8 +425,20 @@ try{
         assert.ok(Math.abs(after/before-CARD_BUFFS.clickSpeed**2)<1e-9,"two clickSpeed stacks must compound to 1.2544x");
         assert.equal(sim.vacuumRadius(),baseRadius+CARD_BUFFS.vacuumRadius*sim.buffStacks("vacuumRadius"));
         assert.equal(sim.TUNE.vacuumRadius,45,"a card must never write the authored tuning value");
+        while(sim.buffStacks("critClicks")<1&&guard++<1200){
+          if(!sim.draftPending())sim.debugGrantXp(400);
+          const offer=sim.draftPending();if(!offer)continue;
+          const at=offer.indexOf("critClicks");sim.chooseDraft(at>=0?at:Math.max(0,offer.findIndex(id=>!["calmNight","longDay"].includes(id))));
+        }
+        assert.equal(sim.buffStacks("critClicks"),1,"critClicks never appeared in a draft");
+        while(sim.draftPending())sim.chooseDraft(0);
+        Math.random=()=>0;const dropsBefore=sim.resourceDrops.length;
+        sim.setPointerWorld(tree.x,tree.y);sim.primaryPress();sim.update(1);sim.primaryRelease();
+        const critDrops=sim.resourceDrops.length-dropsBefore;
+        assert.equal(critDrops,sim.TUNE.chopYield+1,"a resource crit must add exactly one drop");
+        assert.equal(sim.damageNumbers.at(-1).critical,true,"the critical resource drop disagrees with its damage number");
         sim.validateSimulationInvariants();
-        console.log(JSON.stringify({before,after,ratio:after/before,stacks:sim.buffStacks("clickSpeed")}));
+        console.log(JSON.stringify({before,after,ratio:after/before,stacks:sim.buffStacks("clickSpeed"),critDrops}));
       }finally{Math.random=old;}
     `
   }).trim());
@@ -596,7 +670,11 @@ try{
     `
   }).trim());
   assert.equal(handResult.playable,cardCatalog.CARDS.filter(card=>card.inPool&&card.category==="consumable").length);
-  const html=readFileSync(join(root,"index.html"),"utf8"),overlay=readFileSync(join(root,"src/render/overlay.js"),"utf8"),debuggerSource=readFileSync(join(root,"src/debug/view-debugger.js"),"utf8");
+  const html=readFileSync(join(root,"index.html"),"utf8"),overlay=readFileSync(join(root,"src/render/overlay.js"),"utf8"),debuggerSource=readFileSync(join(root,"src/debug/view-debugger.js"),"utf8"),hudSource=readFileSync(join(root,"src/ui/hud.js"),"utf8"),progressionHtml=readFileSync(join(root,"docs/progression.html"),"utf8");
+  assert.ok(hudSource.includes('"elapsed "+formatDuration(wave.elapsed)'),"night HUD does not present elapsed time");
+  assert.ok(hudSource.includes("livingActiveWaveEnemies()")&&hudSource.includes("scheduled spawn"),"night HUD omits clearance inputs");
+  assert.ok(hudSource.includes("(DAY_DURATION-clock.remaining)/DAY_DURATION"),"day HUD countdown progress drifted");
+  assert.match(progressionHtml,/wave-clear estimate/);assert.match(progressionHtml,/gameplay dawn occurs only after all\s+scheduled wave enemies are defeated/);
   const viewPanel=html.slice(html.indexOf('<section id="viewPanel"'),html.indexOf('<!-- Empty showcase roots'));
   assert.equal(/<p class="hint">/.test(viewPanel),false);
   const expectedSubtabs={visibility:["scan","readability"],input:["hand","click","projectiles"],overlays:["damage","bars","badge"],gameplay:["economy","builders","time","combat","population","cards"]};
@@ -613,7 +691,7 @@ try{
   // Markup, styles, the HUD adapter and the simulation must all agree, or a dead selector or a
   // dangling command would sit around waiting to be re-wired by mistake.
   {
-    const css=readFileSync(join(root,"styles.css"),"utf8"),hud=readFileSync(join(root,"src/ui/hud.js"),"utf8"),simSource=readFileSync(join(root,"src/game/simulation.js"),"utf8");
+    const css=readFileSync(join(root,"styles.css"),"utf8"),hud=hudSource,simSource=readFileSync(join(root,"src/game/simulation.js"),"utf8");
     for(const [name,text] of [["index.html",html],["styles.css",css]])
       for(const token of ["buildDock","buildCards","buildTabs","dock-tab","build-category"])
         assert.equal(text.includes(token),false,`${name} still mentions the removed dock (${token})`);
@@ -636,12 +714,13 @@ try{
   const elapsedBeforeSpeed=sim.state.clock.elapsed;for(let i=0;i<3;i++)sim.update(dt);assert.ok(Math.abs(sim.state.clock.elapsed-elapsedBeforeSpeed-3*dt)<1e-9);
   const elapsedBeforePause=sim.state.clock.elapsed;sim.togglePause();for(let i=0;i<60;i++)sim.update(dt);assert.equal(sim.state.clock.elapsed,elapsedBeforePause);sim.togglePause();
   sim.pressKey("KeyD");
-  // 200 simulated seconds cross two dusks and two dawns, and every dawn deals its own reward — which
-  // freezes the world exactly like a level offer. Taking it immediately is what keeps time moving.
+  // The sustained run clears a complete authored schedule once it is fully spawned. Each resulting
+  // dawn deals its own reward, which is taken immediately so the simulation keeps moving.
   let dawnRewards=0;
   for(let i=0;i<normalSteps;i++){
     if(i===300)sim.releaseKey("KeyD");
     sim.update(dt);
+    if(sim.state.clock.phase==="night"&&sim.state.nightWave.remainingSpawns===0&&sim.livingActiveWaveEnemies()>0)sim.debugClearEnemies();
     while(sim.draftPending()){
       const kind=sim.draftKind();assert.ok(["level","dawn"].includes(kind),"a pending offer must name its kind");
       if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>["consumable","blueprint"].includes(cardCatalog.cardById[id].category)),true,"a dawn offer dealt something other than a consumable or blueprint");}
@@ -650,7 +729,7 @@ try{
     if(i%120===0)sim.validateSimulationInvariants();
   }
   assert.equal(sim.state.gameOver,false);assert.ok(sim.state.clock.elapsed>=normalSteps*dt);
-  assert.ok(dawnRewards>=1,"200 simulated seconds must have paid at least one dawn reward");
+  assert.ok(dawnRewards>=1,"the sustained run must clear a complete wave and receive its dawn reward");
   assert.equal(sim.hand().length>0,true,"the dawn rewards must be sitting in the hand");
   for(const entry of sim.hand()){assert.ok(cardCatalog.cardById[entry.id],"hand holds an unknown card");assert.ok(Number.isInteger(entry.count)&&entry.count>=1,"hand stack count must be a positive integer");}
   sim.validateSimulationInvariants();
@@ -684,7 +763,7 @@ try{
         sim.initializeRunMode("showcase");
         assert.throws(()=>sim.initializeRunMode("normal"),/already initialized/);
         const expected={buildings:authored.SHOWCASE_FIXTURE_COUNTS.buildings+authored.SHOWCASE_FIXTURE_COUNTS.towers+authored.SHOWCASE_FIXTURE_COUNTS.progress,chests:authored.SHOWCASE_FIXTURE_COUNTS.chests,dummies:authored.SHOWCASE_FIXTURE_COUNTS.dummies,props:authored.SHOWCASE_FIXTURE_COUNTS.props,enemies:authored.SHOWCASE_FIXTURE_COUNTS.enemies,workers:authored.SHOWCASE_FIXTURE_COUNTS.workers};
-        const check=()=>{sim.validateSimulationInvariants();assert.equal(sim.buildings.length,expected.buildings);assert.equal(sim.chests.length,expected.chests);assert.equal(sim.damageDummies.length,expected.dummies);assert.equal(sim.showcaseProps.length,expected.props);assert.equal(sim.state.enemies.length,expected.enemies);assert.equal(sim.state.workers.length,expected.workers);assert.equal(sim.state.enemies.every(e=>e.displayUnit),true);assert.equal(sim.state.workers.every(w=>w.displayUnit),true);};
+        const check=()=>{sim.validateSimulationInvariants();assert.equal(sim.buildings.length,expected.buildings);assert.equal(sim.chests.length,expected.chests);assert.equal(sim.damageDummies.length,expected.dummies);assert.equal(sim.showcaseProps.length,expected.props);assert.equal(sim.state.enemies.length,expected.enemies);assert.equal(sim.state.workers.length,expected.workers);assert.equal(sim.state.enemies.every(e=>e.displayUnit&&e.waveNightNumber===undefined),true);assert.equal(sim.state.workers.every(w=>w.displayUnit),true);assert.equal(sim.state.nightWave.activeNightNumber,null);assert.equal(sim.livingActiveWaveEnemies(),0);};
         check();
         assert.equal(sim.debugGrantXp(105),true);assert.equal(sim.xp(),105);assert.equal(sim.skillPoints(),2);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);check();
         const firstRevision=sim.showcaseLabels().revision;
@@ -707,7 +786,7 @@ try{
     `
   }).trim());
 
-  console.log(`validate ok | syntax ${jsFiles.length} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level waves ${tierOneResult.spawns}/${xpResult.waveSpawns} | calm night ${calmResult.plain}->${calmResult.calm} | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
+  console.log(`validate ok | syntax ${jsFiles.length} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level waves ${tierOneResult.spawns}/${xpResult.waveSpawns} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

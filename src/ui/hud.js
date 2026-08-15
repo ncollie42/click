@@ -36,7 +36,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import {
   NIGHT_WAVE_RECIPES,
-  DAY_DURATION,NIGHT_DURATION
+  DAY_DURATION
 } from "../game/data.js";
 import {
   state,
@@ -44,7 +44,7 @@ import {
   closeUpgradeMenu, selectUpgrade, acceptUpgrade, openSkillTree,
   // queries — pure reads
   hoverTarget, costText, upgradeList,
-  xp, skillPoints, oppositeMapSide, clamp
+  xp, skillPoints, livingActiveWaveEnemies, oppositeMapSide, clamp
 } from "../game/simulation.js";
 
 // The pointer surface (<canvas id="overlay">) — handed in by main.js at init. The HUD touches
@@ -110,12 +110,12 @@ function formatDuration(totalSeconds){
   return hours?hours+":"+pad(minutes)+":"+pad(s%60):minutes+":"+pad(s%60);
 }
 export function syncPhaseHud(){
-  const clock=state.clock,wave=state.nightWave,isDay=clock.phase==="day",duration=isDay?DAY_DURATION:NIGHT_DURATION;
+  const clock=state.clock,wave=state.nightWave,isDay=clock.phase==="day";
   const recipeState=isDay?wave.upcomingRecipe:wave.activeRecipe,recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===recipeState?.id),side=isDay?wave.upcomingSide:wave.activeSide;
   const secondary=recipe?.id==="twoFront"?(isDay?oppositeMapSide(side):wave.secondarySide):null,panel=document.getElementById("phaseHud");
   const setText=(id,text)=>{const element=document.getElementById(id);if(element.textContent!==text)element.textContent=text;};
-  const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber;
-  setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"));
+  const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber,living=isDay?0:livingActiveWaveEnemies();
+  setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",isDay?Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"elapsed "+formatDuration(wave.elapsed));
   setText("runTime",formatDuration(clock.elapsed));
   // The run's ONE progress bar is the level bar in #xpHud, and src/ui/draft.js owns it — this row
   // carries the other number, the lifetime total fed, beside the skill-point badge it shares a line
@@ -124,8 +124,12 @@ export function syncPhaseHud(){
   setText("xpReadout","xp "+xp()+" fed");
   setText("skillPointCount",String(points));badge.hidden=points===0;
   panel.classList.toggle("night",!isDay);
-  document.getElementById("phaseProgressFill").style.width=(100*clamp((duration-clock.remaining)/duration,0,1)).toFixed(2)+"%";
-  setText("forecastLabel",isDay?"next attack":"current wave");setText("forecastRemaining",isDay?"":wave.remainingSpawns+" scheduled spawns remaining");
+  // During night, spawning merely transfers work from the schedule to the battlefield. Only an
+  // active-wave defeat advances clearance, while cap-delayed scheduled work keeps the bar bounded.
+  const progress=isDay?clamp((DAY_DURATION-clock.remaining)/DAY_DURATION,0,1):clamp((wave.totalSpawns-wave.remainingSpawns-living)/Math.max(1,wave.totalSpawns),0,1);
+  document.getElementById("phaseProgressFill").style.width=(100*progress).toFixed(2)+"%";
+  setText("forecastLabel",isDay?"next attack":"current wave");
+  setText("forecastRemaining",isDay?"":living===0&&wave.remainingSpawns===0?"wave clear · 0 enemies alive · 0 scheduled spawns remaining":living+" wave enem"+(living===1?"y":"ies")+" alive · "+wave.remainingSpawns+" scheduled spawn"+(wave.remainingSpawns===1?"":"s")+" remaining");
   const signature=[clock.phase,recipe?.id,side,secondary].join("|");
   if(panel.dataset.forecast!==signature){
     panel.dataset.forecast=signature;

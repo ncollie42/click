@@ -5,12 +5,15 @@
 // tuning. All game numbers arrive live from data.js/simulation.js; all intent
 // arrives from progression-spec.js; buff effects from src/game/cards.js.
 
-import {HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION,NIGHT_DURATION} from "../src/game/data.js";
+import {HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION} from "../src/game/data.js";
 import {TUNE} from "../src/game/simulation.js";
 import {ARC,LEVEL_CURVE,DRAFT_POLICY,PLAYER_MODEL,phaseIndexAt} from "./progression-spec.js";
 import {cardById} from "../src/game/cards.js";
 
 export const DT=1/12; // 5-second steps — early drafts land ~30s apart
+// Analytical estimate only. Gameplay dawn has no duration: it occurs after every scheduled wave
+// enemy is defeated. Keeping a 45-second estimate preserves this model's tuned output.
+export const MODELED_WAVE_CLEAR_SECONDS=45;
 
 export function levelCost(level){return LEVEL_CURVE.base*Math.pow(LEVEL_CURVE.growth,level);}
 
@@ -35,7 +38,7 @@ function makeDrafter(){
 
 export function runModel(){
   const T=ARC.targetMinutes;
-  const eff=(DAY_DURATION+NIGHT_DURATION*ARC.nightIncomeFactor)/(DAY_DURATION+NIGHT_DURATION);
+  const eff=(DAY_DURATION+MODELED_WAVE_CLEAR_SECONDS*ARC.nightIncomeFactor)/(DAY_DURATION+MODELED_WAVE_CLEAR_SECONDS);
   const steps=Math.round(T/DT)+1;
   const mults={hand:1,worker:1,global:1,xp:1};
   const draft=makeDrafter();

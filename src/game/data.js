@@ -134,29 +134,31 @@ export const TOWER_VARIANTS={
 };
 
 // ── enemies and the night schedule ──────────────────────────────────────────
-export const ENEMY_TYPES={
-  raider:{name:"raider",hp:5,speed:52,damage:2,range:40,rate:1,size:1},
-  archer:{name:"archer",hp:4,speed:42,damage:1,range:155,rate:1.8,size:1},
-  healer:{name:"healer",hp:5,speed:38,damage:0,range:180,rate:0,size:1},
-  brute:{name:"brute",hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35}
-};
+export const ENEMY_TYPES=Object.freeze({
+  raider:Object.freeze({name:"raider",hp:5,speed:52,damage:2,range:40,rate:1,size:1}),
+  archer:Object.freeze({name:"archer",hp:4,speed:42,damage:1,range:155,rate:1.8,size:1}),
+  healer:Object.freeze({name:"healer",hp:5,speed:38,damage:0,range:180,rate:0,size:1}),
+  brute:Object.freeze({name:"brute",hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35})
+});
 export const MAP_SIDE={NORTH:"north",EAST:"east",SOUTH:"south",WEST:"west"},MAP_SIDES=Object.values(MAP_SIDE);
 export const WAVE_FRONT_SECONDARY="secondary";
-export const ENEMY_POOL=["raider","raider","archer","healer","brute"];
+export const ENEMY_POOL=Object.freeze(["raider","raider","archer","healer","brute"]);
 export const NIGHT_WAVE_SPAWNS=12,NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
 // Per-tier bonus spawns are read only by simulation.js; no runtime path may assign into this value.
 export const NIGHT_TIER_BONUS_SPAWNS=3;
-// Authored order/composition shapes the forecast; simulation.js alone reads minTier, and no runtime path may assign it.
-export const NIGHT_WAVE_RECIPES=[
+// Authored order/composition shapes the forecast. Freeze every level so a live wave can retain a
+// recipe reference without any runtime or debugger path changing later spawn types or fronts.
+const freezeWaveRecipe=recipe=>Object.freeze({...recipe,spawns:Object.freeze(recipe.spawns.map(spawn=>Object.freeze(spawn)))});
+export const NIGHT_WAVE_RECIPES=Object.freeze([
   {id:"raiderRush",minTier:0,spawns:[["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
   {id:"archerLine",minTier:0,spawns:[["raider","primary"],["archer","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"]]},
   {id:"healerEscort",minTier:1,spawns:[["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
   {id:"brutePush",minTier:2,spawns:[["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"]]},
   {id:"twoFront",minTier:2,spawns:[["raider","primary"],["raider","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"],["brute","primary"],["brute","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"]]}
-];
+].map(freezeWaveRecipe));
 
 // ── day / night pacing ──────────────────────────────────────────────────────
-export const DAY_DURATION=75,NIGHT_DURATION=45;
+export const DAY_DURATION=75;
 export const NIGHT_OVERLAY_ALPHA=.5,LIGHT_FADE_TIME=6;
 
 // ── the king ────────────────────────────────────────────────────────────────

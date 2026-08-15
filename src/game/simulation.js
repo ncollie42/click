@@ -12,7 +12,7 @@ import {
   ENEMY_TYPES,MAP_SIDE,MAP_SIDES,WAVE_FRONT_SECONDARY,
   ENEMY_POOL,
   NIGHT_WAVE_SPAWNS,NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_TIER_BONUS_SPAWNS,NIGHT_WAVE_RECIPES,
-  DAY_DURATION,NIGHT_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
+  DAY_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
   KING,STEADY_HAND_RATE,FIREBALL
 } from "./data.js";
 import {
@@ -155,11 +155,12 @@ const state = {
   // "leave a building" with an instant effect at the anchor.
   cardTargeting:null,
   baseHp:100,baseMax:100,gameOver:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
-  // elapsed: total simulated seconds this run. It accumulates the same dt the phase countdown
-  // spends, so it is game time, not wall time — it does not advance while paused or after a loss,
-  // and a raised game speed makes it run as fast as the phases do.
+  // elapsed is simulated run time. remaining is the authoritative DAY countdown only; night has
+  // no deadline and ends from active-wave clearance after the frame's complete combat pipeline.
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
-  nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0},
+  // activeNightNumber owns the generation currently eligible to gate dawn. Scheduled enemies copy
+  // it to enemy.waveNightNumber; manual/showcase enemies deliberately omit that field.
+  nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0,activeNightNumber:null},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
   upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,showcaseFocus:null,
   // revealed: every node the player can SEE; selected: the subset taken, always a subset of it.
@@ -205,6 +206,12 @@ function waveTier(){return Math.min(4,Math.floor(state.level/3));}
 // One night's spawn quota, calm-night discount included. The discount is consumed by whoever sets
 // a wave up, so a card drafted at night shrinks the NEXT wave, never the one already running.
 function nightSpawnTotal(){const total=NIGHT_WAVE_SPAWNS+waveTier()*NIGHT_TIER_BONUS_SPAWNS;return state.draft.calmNight?Math.max(1,Math.floor(total*CARD_CONSUMABLES.calmNightFactor)):total;}
+/** Living scheduled enemies from this night only. Manual/debug and showcase enemies have no
+ * waveNightNumber, while survivors from a force-ended older night retain their retired identity. */
+function livingActiveWaveEnemies(){
+  const activeNightNumber=state.nightWave.activeNightNumber;
+  return activeNightNumber===null?0:state.enemies.reduce((count,enemy)=>count+(enemy.hp>0&&enemy.waveNightNumber===activeNightNumber?1:0),0);
+}
 function chooseUpcomingNight(){
   const wave=state.nightWave,choices=MAP_SIDES.filter(side=>!wave.lastSides.includes(side));
   const recipes=NIGHT_WAVE_RECIPES.filter(recipe=>recipe.minTier<=waveTier());
@@ -322,7 +329,9 @@ let startingHandDealt=false;
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
   if(initializedMode&&initializedMode!==mode)throw new Error("run mode already initialized as "+initializedMode);
+  const firstInitialization=initializedMode===null;
   initializedMode=mode;state.runMode=mode;
+  if(firstInitialization)state.nightWave.activeNightNumber=null;
   if(mode==="normal"){
     invariant(!damageDummies.length&&!showcaseProps.length,"normal mode contains showcase entities");
     // Dealt through addToHand() — the same writer takeCard() uses for a drafted card — so a seeded
@@ -331,7 +340,7 @@ export function initializeRunMode(mode="normal"){
     if(!startingHandDealt){startingHandDealt=true;for(const id of STARTING_HAND)addToHand(id);}
     validateSimulationInvariants();return;
   }
-  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
+  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.activeSide=null;state.nightWave.secondarySide=null;state.nightWave.activeRecipe=null;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
 }
 export function rebuildShowcase(){if(state.runMode!=="showcase")return false;resetShowcaseEconomy();buildShowcaseFixtures();return true;}
 
@@ -342,6 +351,8 @@ export function validateSimulationInvariants(){
   invariant(Number.isInteger(state.level)&&state.level>=0,"illegal level");
   invariant(Number.isFinite(state.levelXp)&&state.levelXp>=0&&state.levelXp<levelCost(state.level),"illegal level progress");
   invariant(Number.isInteger(state.skillPoints)&&state.skillPoints>=0,"illegal skill points");
+  invariant(["day","night"].includes(state.clock.phase),"illegal phase "+state.clock.phase);
+  invariant(Number.isFinite(state.clock.remaining)&&state.clock.remaining>=0,"illegal phase countdown");
   const offer=state.draft.offer;
   invariant(offer===null||(Array.isArray(offer)&&offer.length>0&&offer.length<=3&&new Set(offer).size===offer.length&&offer.every(id=>cardById[id]?.inPool)),"illegal draft offer");
   invariant(offer===null?state.draft.offerKind===null:DRAFT_KINDS.includes(state.draft.offerKind),"draft offer kind disagrees with the pending offer");
@@ -365,10 +376,21 @@ export function validateSimulationInvariants(){
   }
   const collections=[trees,rocks,diamonds,resourceDrops,chests,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers];
   for(const collection of collections)for(const item of collection)invariant(Number.isFinite(item.x)&&Number.isFinite(item.y),"non-finite entity coordinates");
+  const wave=state.nightWave;
+  invariant(Number.isInteger(wave.nightNumber)&&wave.nightNumber>=0,"illegal night number");
+  invariant(wave.activeNightNumber===null||(Number.isInteger(wave.activeNightNumber)&&wave.activeNightNumber>0&&wave.activeNightNumber===wave.nightNumber),"illegal active wave identity");
+  invariant((state.clock.phase==="night")===(wave.activeNightNumber!==null),"active wave identity disagrees with phase");
+  invariant(Number.isInteger(wave.totalSpawns)&&wave.totalSpawns>=0,"illegal wave total");
+  invariant(Number.isInteger(wave.remainingSpawns)&&wave.remainingSpawns>=0&&wave.remainingSpawns<=wave.totalSpawns,"illegal remaining wave spawns");
+  if(state.clock.phase==="night")invariant(NIGHT_WAVE_RECIPES.includes(wave.activeRecipe)&&wave.totalSpawns>0,"night has no authored active recipe");
   for(const enemy of state.enemies){
     invariant(assertCombatKind(enemy)==="enemy","non-enemy in enemy collection");
     invariant(ENEMY_TYPES[enemy.type],"unknown enemy type "+enemy.type);
     invariant(enemy.hp>=0&&enemy.hp<=enemy.max,"illegal enemy health");
+    if(enemy.waveNightNumber!==undefined){
+      invariant(Number.isInteger(enemy.waveNightNumber)&&enemy.waveNightNumber>0&&enemy.waveNightNumber<=wave.nightNumber,"malformed wave membership");
+      invariant(!enemy.displayUnit&&!enemy.showcaseKey,"showcase enemy has wave membership");
+    }
   }
   for(const dummy of damageDummies){invariant(assertCombatKind(dummy)==="damage-dummy","non-dummy in dummy collection");invariant(dummy.hp>=0&&dummy.hp<=dummy.max,"illegal dummy health");}
   invariant(new Set(chests).size===chests.length,"duplicate chest ownership");
@@ -768,8 +790,9 @@ function hitChest(chest,quiet=false){
 
 // Player and harvesting workers share this path: harvesting automation creates physical drops, never stored resources.
 function hitResource(target,kind,automatic,quiet=false){
-  // Only a player chop can crit; worker automation keeps its one authored drop per hit.
-  const critical=!automatic&&critHit(),drops=automatic?1:TUNE.chopYield*(critical?CARD_BUFFS.critMultiplier:1);
+  // Only a player chop can crit. A resource crit adds exactly one drop; the ×3 critical
+  // multiplier remains combat-only. Worker automation keeps its one authored drop per hit.
+  const critical=!automatic&&critHit(),drops=automatic?1:TUNE.chopYield+(critical?1:0);
   // Player and worker chops share this impact path, so every damaged resource gets combat text.
   addDamageNumber(target,1,{critical});
   target.hp--;
@@ -1635,19 +1658,19 @@ function updateWorker(worker,dt){
   else{clearWorkerTask(worker);worker.job="guard";worker.jobTarget=null;updateGuard(worker,dt);}
 }
 
-// Only this function changes phase identity and owns both phase-boundary side effects.
+// Only this function changes phase identity and owns both phase-boundary side effects. Normal dawn
+// calls it from the post-combat clearance check; debugger commands may intentionally force it.
 function transitionPhase(){
-  const clock=state.clock;
+  const clock=state.clock,wave=state.nightWave;
   if(clock.phase==="day"){
-    const wave=state.nightWave;
-    clock.phase="night";clock.remaining=NIGHT_DURATION;
+    clock.phase="night";clock.remaining=0;
     // Tier is snapshotted at night setup: leveling mid-wave changes the next telegraphed night only.
     const totalSpawns=nightSpawnTotal();state.draft.calmNight=false;
-    wave.activeSide=wave.upcomingSide;wave.activeRecipe=wave.upcomingRecipe;wave.secondarySide=wave.activeRecipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;wave.lastSides=wave.secondarySide?[wave.activeSide,wave.secondarySide]:[wave.activeSide];wave.totalSpawns=totalSpawns;wave.remainingSpawns=totalSpawns;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/totalSpawns;wave.nightNumber++;
+    wave.activeSide=wave.upcomingSide;wave.activeRecipe=wave.upcomingRecipe;wave.secondarySide=wave.activeRecipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;wave.lastSides=wave.secondarySide?[wave.activeSide,wave.secondarySide]:[wave.activeSide];wave.totalSpawns=totalSpawns;wave.remainingSpawns=totalSpawns;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/totalSpawns;wave.nightNumber++;wave.activeNightNumber=wave.nightNumber;
   }else{
     // A long day drafted at night is banked here, so the card is never silently wasted.
     clock.phase="day";clock.remaining=DAY_DURATION+state.draft.dayBonus;state.draft.dayBonus=0;clock.completedNights++;
-    state.nightWave.activeSide=null;state.nightWave.secondarySide=null;state.nightWave.activeRecipe=null;state.nightWave.remainingSpawns=0;
+    wave.activeSide=null;wave.secondarySide=null;wave.activeRecipe=null;wave.remainingSpawns=0;wave.activeNightNumber=null;
     // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
     chooseUpcomingNight();
     // Surviving the night IS the reward: one pick of three consumables or blueprints, straight into
@@ -1657,9 +1680,13 @@ function transitionPhase(){
 }
 function updateClock(dt){
   const clock=state.clock;
-  clock.elapsed+=dt;   // same dt the countdown spends, so the two can never drift apart
-  clock.remaining-=dt;
-  while(clock.remaining<=0){const overflow=-clock.remaining;transitionPhase();clock.remaining-=overflow;}
+  clock.elapsed+=dt;
+  // Only day owns a countdown. Clamp before transition so a large or long-running frame can never
+  // leave a negative timer looping across an indefinite night.
+  if(clock.phase==="day"){
+    clock.remaining=Math.max(0,clock.remaining-dt);
+    if(clock.remaining===0)transitionPhase();
+  }
   const target=clock.phase==="night"?NIGHT_OVERLAY_ALPHA:0,step=dt*NIGHT_OVERLAY_ALPHA/LIGHT_FADE_TIME;
   clock.light=target>clock.light?Math.min(target,clock.light+step):Math.max(target,clock.light-step);
 }
@@ -1672,7 +1699,10 @@ function updateNightEnemyWave(dt){
   while(wave.remainingSpawns>0&&wave.elapsed>=wave.nextSpawnAt&&state.enemies.length<NIGHT_ENEMY_CAP){
     const index=(wave.totalSpawns-wave.remainingSpawns)%wave.activeRecipe.spawns.length;
     const spawn=wave.activeRecipe.spawns[index],side=spawn[1]===WAVE_FRONT_SECONDARY?wave.secondarySide:wave.activeSide;
-    spawnEnemy(side,spawn[0]);wave.remainingSpawns--;wave.nextSpawnAt+=interval;
+    // This is the sole membership writer. spawnEnemy() stays membership-neutral for debugger calls
+    // and preserves its command-style undefined return contract.
+    spawnEnemy(side,spawn[0]);state.enemies[state.enemies.length-1].waveNightNumber=wave.activeNightNumber;
+    wave.remainingSpawns--;wave.nextSpawnAt+=interval;
   }
 }
 
@@ -1779,7 +1809,12 @@ function updateNormal(dt){
   updateWorkerSpawns(dt);updateBuildings(dt,true);recruitWorkers();
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
-  updateParticles(dt);updateDamageNumbers(dt);effects.afterUpdate();
+  updateParticles(dt);updateDamageNumbers(dt);
+  // Stable completion point: scheduled spawning plus every kill-capable stage (player/status/enemy,
+  // king, towers, hazards, workers) has finished. The phase flip makes this condition false before
+  // any later frame, so transitionPhase() owns exactly one dawn reward.
+  if(state.clock.phase==="night"&&state.nightWave.remainingSpawns===0&&livingActiveWaveEnemies()===0)transitionPhase();
+  effects.afterUpdate();
 }
 
 // Dedicated showcase policy: deliberately lists the sandbox stages instead of branching inside the
@@ -2226,7 +2261,7 @@ export {
   workerOccupancyStatus, workerOccupancyAt, durablePostStatus, vacantDurablePosts,
   workerIsLoaned, workerCoatColor, workerLoad, carriedTotal, resourceIsActive, oppositeMapSide,
   // skill tree — read-only projections of the authored graph over this run's two id sets
-  skillTreeNodes, skillTreeEdges, xp, skillPoints, waveTier, levelCost, buffStacks,
+  skillTreeNodes, skillTreeEdges, xp, skillPoints, waveTier, livingActiveWaveEnemies, levelCost, buffStacks,
   // the effective vacuum reach, buffs included — the drawn ring should read this, not TUNE alone
   vacuumRadius,
   // shared numeric helpers (defined here, so nothing restates them)
