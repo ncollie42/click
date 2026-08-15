@@ -3,13 +3,15 @@
 // Three.js render → 2D overlay → showcase UI projection → deferred debugger scans.
 // simulation.js owns mutable gameplay; render and UI adapters consume queries and injected effects.
 import {connect as connectSimulation, initializeRunMode, TUNE, update, toast, setBuildDockCategory} from "./game/simulation.js";
+// Namespace as well as named bindings: the ?draftDemo console helpers below reach for a handful of
+// debug commands that nothing else in the composition names.
+import * as SIMULATION from "./game/simulation.js";
 import {connect as connectScene, resizeRenderer, drawScene, renderScene} from "./render/scene.js";
 import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
 import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
-import {connectCards, tickCards, debugDealCard, debugSetHand, debugOpenDraft, draftKind} from "./ui/cards.js";
-import {initHand, renderHand, debugHoldFlights} from "./ui/hand.js";
-import {DRAFT_EFFECTS, initDraft} from "./ui/draft.js";
+import {initHand, renderHand, syncHandTargeting, debugHoldFlights} from "./ui/hand.js";
+import {DRAFT_EFFECTS, initDraft, syncLevelHud} from "./ui/draft.js";
 import {initInput} from "./input.js";
 import {initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, drainScans} from "./debug/view-debugger.js";
 import {initShowcaseUi, updateShowcaseUi} from "./ui/showcase.js";
@@ -33,18 +35,22 @@ function resizeView(){
 // surface the HUD was handed), and input before the debugger (its window keydown must stay ahead of
 // the shift+digit handler). initSkillTree() only binds listeners to markup that is always there,
 // so its position is free; it sits with the other adapters.
-// handChanged / draftChanged / levelChanged ride in the same record as every other effect, so
-// a simulation that grows the card contract natively calls straight through to the same sinks
-// the local model in src/ui/cards.js calls today (see the header there).
-const CARD_EFFECTS = {handChanged(){renderHand();}, ...DRAFT_EFFECTS};
-connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...CARD_EFFECTS,
-  phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();}
+// handChanged / draftChanged / levelChanged ride in the same record as every other effect, so the
+// card UI is driven entirely by the simulation raising them — nothing polls.
+connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...DRAFT_EFFECTS,
+  handChanged(){renderHand();},
+  phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();},
+  // Arming and cancelling a card's placement is a BUILD-hud move in the simulation's eyes: only
+  // which card owns the cursor changed, not the hand itself. The fan listens too, so the lifted,
+  // violet-lit card settles back the instant a right-click stows a part-spent kit.
+  buildHudChanged(){SIM_EFFECTS.buildHudChanged();syncHandTargeting();}
 });
-connectCards(CARD_EFFECTS);
 // ── Mode-selection data flow ──
 // Browser URL is read only here. The simulation receives one initialization command and remains
 // independent of window/location; absent or unknown values preserve the normal default lifecycle.
-const requestedMode=new URLSearchParams(window.location.search).get("mode")==="showcase"?"showcase":"normal";
+const search=new URLSearchParams(window.location.search);
+const requestedMode=search.get("mode")==="showcase"?"showcase":"normal";
+if(search.get("draftDemo")==="1")draftDemo();
 connectScene({isModalOpen(){return modalOpen();}});
 initHud(surface);
 initSkillTree(surface);
@@ -53,7 +59,7 @@ initSkillTree(surface);
 // completely covers, and the hand has to clear its browse cursor on escape before the pause
 // chain sees that press. Neither consumes anything while a modal is open or a digit is shifted.
 initHand();
-initDraft();
+initDraft(surface);
 initInput(surface, {cameraChanged(){ syncViewInputs(); }});
 initViewDebugger({resizeView});
 // Initialize after adapters bind their authored defaults, so showcase camera/fixtures are the final
@@ -61,27 +67,6 @@ initViewDebugger({resizeView});
 initializeRunMode(requestedMode);
 if(requestedMode==="showcase"){syncViewInputs();initShowcaseUi({cameraChanged(){syncViewInputs();}});}
 window.addEventListener("resize", resizeView);
-
-// ── card demo helpers ─────────────────────────────────────────────────────
-// Screenshot and console staging only; nothing below runs unless it is called. `?draftDemo=1`
-// deals a representative hand at boot (a stacked copy and a part-spent kit among them) so the
-// strip can be looked at without playing up to it.
-//   window.__draftDemo.deal()        real level offer (boons in the mix)
-//   window.__draftDemo.dawn()        real dawn offer (hand cards only)
-//   window.__draftDemo.hand([...])   set the hand outright; "id" or {id,count,charges}
-//   window.__draftDemo.add(id,n)     deal one card in, the way a draft does
-//   window.__draftDemo.freeze(on)    pause/resume card flights mid-air for a photograph
-const DEMO_HAND=[{id:"spikeKit",count:1,charges:2},{id:"rations",count:2},"coinPurse",
-  "watchPlan","tarBarrels","harvestFeast"];
-window.__draftDemo={
-  deal(){return debugOpenDraft("level");},
-  dawn(){return debugOpenDraft("dawn");},
-  hand(entries=DEMO_HAND){return debugSetHand(entries);},
-  add(id,copies=1){return debugDealCard(id,copies);},
-  freeze(on=true){debugHoldFlights(on);},
-  kind(){return draftKind();},
-};
-if(new URLSearchParams(window.location.search).get("draftDemo")==="1")window.__draftDemo.hand();
 
 // Visibility may add scene pins before rendering; debugger scans drain only after the visible frame.
 function draw(){
@@ -95,19 +80,43 @@ function draw(){
 
 // ── boot ──────────────────────────────────────────────────────────────
 resizeView();
-syncBuildHud();syncPhaseHud();setBuildDockCategory(null);
+syncBuildHud();syncPhaseHud();syncLevelHud();setBuildDockCategory(null);
 let previous=performance.now();
 function frame(now){
   const dt=Math.min(.033,(now-previous)/1000);previous=now;
   // Speed-up runs extra whole steps rather than stretching dt — a 3x-longer dt
   // would let enemies skip past melee range and break contact-damage checks.
   for(let i=0;i<TUNE.gameSpeed;i++)update(dt);
-  // After the step, before the frame: the card model watches for the three things the
-  // simulation raises no effect for — a placement landing on the active card, a tier crossing
-  // and a night completing. It is a no-op until one of those numbers moves.
-  tickCards();
   draw();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 toast(requestedMode==="showcase"?"showcase ready — towers use production combat stats":"left-hold a tree or rock to gather");
+
+// ── dev-only: ?draftDemo=1 ────────────────────────────────────────────
+// Console and screenshot staging over the REAL simulation — every helper below is a debug COMMAND
+// the simulation already exports, so a staged hand is dealt, played and spent through exactly the
+// paths a run uses. Nothing here fabricates a card, an offer or a level.
+//   window.__draftDemo.deal(n)       level n times over, so real level offers appear
+//   window.__draftDemo.dawn()        run a night to its end, so the real dawn reward is queued
+//   window.__draftDemo.hand([...])   deal a list of card ids into the hand ("id" or [id, copies])
+//   window.__draftDemo.add(id,n)     deal one card in, the way a draft does
+//   window.__draftDemo.freeze(on)    pause/resume card flights mid-air for a photograph
+const DEMO_HAND=[["woodBundle",2],"spikeKit","fireball","bpSniper","calmNight","healBase"];
+function draftDemo(){
+  window.__draftDemo={
+    deal(count=1){for(let i=0;i<count;i++){const s=SIMULATION.levelState();SIMULATION.debugGrantXp(Math.max(1,Math.ceil(SIMULATION.levelCost(s.level)-s.xp)));}},
+    dawn(){SIMULATION.debugGoToPhase("night");SIMULATION.debugGoToPhase("day");},
+    hand(entries=DEMO_HAND){
+      const dealt=[];
+      for(const entry of entries){
+        const [id,copies]=Array.isArray(entry)?entry:[entry,1];
+        for(let i=0;i<copies;i++)if(SIMULATION.debugDealCard(id))dealt.push(id);
+      }
+      return dealt;
+    },
+    add(id,copies=1){let dealt=0;for(let i=0;i<copies;i++)if(SIMULATION.debugDealCard(id))dealt++;return dealt;},
+    freeze(on=true){debugHoldFlights(on);},
+    kind(){return SIMULATION.draftKind();},
+  };
+}

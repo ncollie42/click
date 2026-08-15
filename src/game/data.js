@@ -48,10 +48,38 @@ BASE.footprint=FOOTPRINT_3x3;
 // upgrade costs) is keyed by these names, and iteration order here is the order
 // costs, tallies and grants are read in.
 export const RESOURCE_KINDS=["wood","stone","dust","coin","diamond"];
+// One unopened chest is seeded with the world. Rewards stay authored by existing resource kind;
+// runtime contents are deliberately absent until destruction resolves this table.
+export const CHEST=Object.freeze({
+  startingCount:1,
+  maxHp:4,
+  footprint:FOOTPRINT_1x1,
+  outcomeOdds:Object.freeze({cache:.5,pinata:.5}),
+  cachePayout:5,
+  pinataPayout:12,
+  discoverMinRadius:128,
+  discoverMaxRadius:352,
+  weights:Object.freeze({wood:38,stone:36,dust:12,coin:11,diamond:3}),
+});
 // Feeding values are read only by simulation.js; no runtime path may assign into this table.
 export const FEED_XP={wood:1,stone:1,dust:5,coin:5,diamond:12};
-// Tier thresholds are read only by simulation.js; no runtime path may assign into this array.
-export const XP_TIERS=[40,100,200,350];
+// THE level curve: going from level n to n+1 costs base*growth**n xp. docs/progression-spec.js
+// re-exports this table, so the design docs and the game can never quote different numbers.
+export const LEVEL_CURVE={base:6,growth:1.19};
+export const SKILL_POINT_LEVELS=4;   // placeholder cadence: one skill point per this many levels
+export const XP_TIERS=[40,100,200,350];   // dead: superseded by LEVEL_CURVE, still imported by docs/progression.html
+
+// ── draft card numbers ──────────────────────────────────────────────────────
+// Per-stack buff magnitudes and consumable payouts for the catalog in cards.js, which owns the
+// ids, rarities, texts and stack limits but none of the arithmetic. Read only by simulation.js;
+// no runtime path may assign into these tables — a taken card tallies a stack in run state and
+// the accessors layer these numbers over the authored values at read time.
+export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,towerDamage:1.1,towerSpeed:1.1,baseHp:5,clickDamage:1};
+export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay:20,calmNightFactor:.75};
+// The fireball card's cast: an instant area hit that leaves nothing behind. The radius matches the
+// blast charge's effectRadius on purpose — the cast borrows the blast placement ghost, so the ring
+// the player aims with IS the area this damages.
+export const FIREBALL={damage:6,radius:135};
 
 // ── houses and workers ──────────────────────────────────────────────────────
 export const HOUSE_SLOTS=2,HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
@@ -72,10 +100,10 @@ export const BUILDING_TYPES = {
   house:{name:"house",resource:null,cost:HOUSE_COST,footprint:FOOTPRINT_1x1},
   obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},footprint:FOOTPRINT_1x1},
   tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},footprint:FOOTPRINT_3x3},
-  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},effectRadius:135,instant:true,footprint:FOOTPRINT_1x1},
-  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},instant:true,stack:true,footprint:FOOTPRINT_1x1},
-  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},effectRadius:65,instant:true,stack:true,footprint:FOOTPRINT_1x1},
-  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},effectRadius:22,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_1x1}
+  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},effectRadius:135,damage:3,innerDamage:5,instant:true,footprint:FOOTPRINT_1x1},
+  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},damage:2,cooldown:.55,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},effectRadius:65,damage:8,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},effectRadius:22,damage:0,cooldown:.25,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_1x1}
 };
 export const UPGRADES=[
   {id:"hardness",icon:"⛏",name:"click hardness",cost:{wood:5,stone:5},description:"placeholder: mine tougher resources with each click."},

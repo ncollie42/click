@@ -1,9 +1,10 @@
-// Owns: the "view" side panel — its tabs, its ~60 control bindings, the sightline scan and its
-// readouts. Owns no gameplay state and no meshes; it only writes the holders other modules expose.
+// Owns: the "view" side panel — its top-level/contextual tabs, ~60 control bindings, sightline
+// scan/readouts, and footer utilities. Owns no gameplay state and no meshes; it only writes the
+// holders other modules expose.
 // ═══════════════════════════════════════════════════════════════════════════
 // VIEW DEBUGGER
-// Ported from prototype-3d. Tabs are generated from the panes, so adding a
-// section means adding a <section class="pane" data-tab="..."> and nothing else.
+// Ported from prototype-3d. Top tabs come from .pane[data-tab]; crowded panes declare direct-child
+// .vSubpane[data-subtab] groups, and this module generates their contextual navigation.
 //
 // Tab ownership (same order as the panes, and as the binding groups below):
 //   camera / visibility / input / overlays / selectors — view + presentation only.
@@ -18,7 +19,7 @@
 //             authored tables (ENEMY_TYPES, NIGHT_WAVE_RECIPES, RESOURCE_KINDS) the selects and
 //             grant buttons are filled from. All read-only: nothing here may mutate authored data.
 //   Writes:   every value a binding writes is either a property on a mutable holder exported by a
-//             render module (view, VIEW_TUNE, IND, BARS, BADGE), a property on the simulation's
+//             render module (view, VIEW_TUNE, IND, BARS, DAMAGE_TEXT, BADGE), a property on the simulation's
 //             tunable holders (TUNE, DBG), or a setter a module exposes (setOrthoCamera,
 //             setShadows, setOutlines, setSelectorPreview, setCapacity, setPins). None of them is a
 //             bare imported binding: those are read-only, and assigning to one throws.
@@ -28,6 +29,9 @@
 //             HOOKS.resizeView() — injected by main.js. Toggling the orthographic camera needs the
 //             ONE resize path (scene first, then the overlay with the same box), and main.js owns
 //             that composition; re-deriving it here would fork the invariant.
+//   Keeps:    authored normalized defaults for reportable bindV() controls, captured once while
+//             those bindings initialize. The changed-values utility compares live controls to this
+//             ordered snapshot; it never persists or reapplies values.
 //   Supplies: syncViewInputs() — push programmatic camera changes back into the sliders. Called by
 //             main.js's frame (auto-orbit advanced the yaw) and, through main.js's hook wiring, by
 //             src/input.js's wheel handler.
@@ -35,7 +39,9 @@
 //             counters behind them (frameTick, scanPending, scanTimer, scanData) are module-private
 //             on purpose: an imported binding cannot be reassigned by its importer.
 //
-// localStorage: one key, "wd3d.tab", the selected pane. Nothing else here persists.
+// localStorage: "wd3d.tab" stores the selected top pane; "wd3d.subtabs" defensively stores one
+// object mapping grouped pane names to their selected contextual subgroup. Footer utilities and
+// control values persist nothing.
 // ═══════════════════════════════════════════════════════════════════════════
 import {
   RESOURCE_KINDS,
@@ -43,7 +49,7 @@ import {
   NIGHT_WAVE_RECIPES
 } from "../game/data.js";
 import {
-  TUNE, DBG, state, xp, xpTier, skillPoints,
+  TUNE, DBG, state, xp, waveTier, skillPoints, levelState,
   setCameraZoom, setCapacity, openSkillTree,
   // debug entry points (view panel > gameplay)
   spawnEnemy, debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
@@ -55,7 +61,7 @@ import {
   setPins, scanSubjects, scanBlockers, countVisible, updateWorldMatrices
 } from "../render/scene.js";
 import {setOutlines, outlineMat} from "../render/models.js";
-import {BARS, BADGE, BADGE_ICON_RATIO} from "../render/overlay.js";
+import {BARS, BADGE, BADGE_ICON_RATIO, DAMAGE_TEXT} from "../render/overlay.js";
 import {syncBuildHud} from "../ui/hud.js";
 
 // ── host hooks ──────────────────────────────────────────────────────────────
@@ -69,13 +75,15 @@ const $v = id => document.getElementById(id);
 // Module-private orchestration state. None of it is exported: an importer cannot reassign an
 // imported binding, so every one of these would have to become a holder the moment it left.
 let scanData = [], scanTimer = 0, scanPending = false, frameTick = 0;
-let vPanes = [];
+let vPanes = [], subtabState = {};
+const boundDefaults = new Map();
 
 // ── tabs ────────────────────────────────────────────────────────────────────
+function resetPaneScroll(){ $v("vPanes").scrollTop = 0; }
 function showVTab(name){
   for(const p of vPanes) p.classList.toggle("on", p.dataset.tab===name);
   for(const b of $v("vTabs").children) b.classList.toggle("on", b.dataset.tab===name);
-  $v("vPanes").scrollTop = 0;
+  resetPaneScroll();
   try{ localStorage.setItem("wd3d.tab", name); }catch{}
 }
 function buildTabs(){
@@ -93,12 +101,86 @@ function buildTabs(){
   showVTab(first);
 }
 
+function saveSubtabs(){
+  try{ localStorage.setItem("wd3d.subtabs", JSON.stringify(subtabState)); }catch{}
+}
+function showSubtab(pane, key, focus=false){
+  const subpanes = [...pane.querySelectorAll(":scope > .vSubpane")];
+  if(!subpanes.some(subpane=>subpane.dataset.subtab===key)) key = subpanes[0]?.dataset.subtab;
+  if(!key)return;
+  for(const subpane of subpanes) subpane.hidden = subpane.dataset.subtab!==key;
+  const buttons = [...pane.querySelectorAll(":scope > .vSubTabs > button")];
+  for(const button of buttons){
+    const on = button.dataset.subtab===key;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+    button.tabIndex = on ? 0 : -1;
+    if(on&&focus)button.focus();
+  }
+  subtabState[pane.dataset.tab] = key;
+  saveSubtabs();
+  resetPaneScroll();
+}
+function buildSubtabs(){
+  try{
+    const saved = JSON.parse(localStorage.getItem("wd3d.subtabs")||"{}");
+    if(saved&&typeof saved==="object"&&!Array.isArray(saved)) subtabState = saved;
+  }catch{ subtabState = {}; }
+
+  for(const [paneIndex,pane] of vPanes.entries()){
+    const subpanes = [...pane.querySelectorAll(":scope > .vSubpane")];
+    if(!subpanes.length)continue;
+    const nav = document.createElement("nav");
+    nav.className = "vSubTabs";
+    nav.setAttribute("role", "tablist");
+    nav.setAttribute("aria-label", pane.dataset.tab+" sections");
+    const buttons = subpanes.map((subpane,subpaneIndex)=>{
+      const key = subpane.dataset.subtab;
+      const button = document.createElement("button");
+      const buttonId = `vSubtab-${paneIndex}-${subpaneIndex}`;
+      const panelId = `vSubpane-${paneIndex}-${subpaneIndex}`;
+      button.type = "button";
+      button.id = buttonId;
+      button.dataset.subtab = key;
+      button.textContent = subpane.dataset.subtabLabel?.trim()||key;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-controls", panelId);
+      subpane.id = panelId;
+      subpane.setAttribute("role", "tabpanel");
+      subpane.setAttribute("aria-labelledby", buttonId);
+      button.addEventListener("click", ()=>showSubtab(pane,key));
+      nav.appendChild(button);
+      return button;
+    });
+    nav.addEventListener("keydown", event=>{
+      const current = buttons.indexOf(document.activeElement);
+      if(current<0)return;
+      let next;
+      if(event.key==="ArrowLeft") next = (current-1+buttons.length)%buttons.length;
+      else if(event.key==="ArrowRight") next = (current+1)%buttons.length;
+      else if(event.key==="Home") next = 0;
+      else if(event.key==="End") next = buttons.length-1;
+      else return;
+      event.preventDefault();
+      showSubtab(pane,buttons[next].dataset.subtab,true);
+    });
+    pane.prepend(nav);
+    const saved = subtabState[pane.dataset.tab];
+    showSubtab(pane,subpanes.some(subpane=>subpane.dataset.subtab===saved) ? saved : subpanes[0].dataset.subtab);
+  }
+}
+
 // ── control binding ─────────────────────────────────────────────────────────
-// Binds one control to one presentation field. Three control shapes: range (numeric), checkbox
-// (boolean) and <select> (numeric, from the option's value — so `apply` always sees a number and
-// callers never branch on the widget). The o_<id> readout span is optional; a <select> already shows
-// its own label, so those omit it.
-function bindV(id, apply, fmt){
+// Binds one control to one presentation field. Values are normalized once for both `apply` and the
+// changed-values snapshot: checkboxes stay boolean, numeric widgets/selects become numbers, and a
+// non-numeric select stays a string. The o_<id> readout span is optional. `report=false` is reserved
+// for transient action selectors whose selection is a command preview, not a tunable value.
+function normalizedControlValue(el){
+  if(el.type==="checkbox")return el.checked;
+  const number = Number(el.value);
+  return el.value!==""&&Number.isFinite(number) ? number : el.value;
+}
+function bindV(id, apply, fmt, report=true){
   const el = $v(id), out = $v("o_"+id), select = el.tagName === "SELECT";
   // Browsers restore form-control values across a reload, so a slider left at
   // some test value keeps applying it while the markup still reads its default.
@@ -108,8 +190,9 @@ function bindV(id, apply, fmt){
   // browser restored, and with none marked the first option is the default.
   else if(select) el.selectedIndex = Math.max(0, [...el.options].findIndex(o=>o.hasAttribute("selected")));
   else if(el.hasAttribute("value")) el.value = el.getAttribute("value");
+  if(report) boundDefaults.set(id,{el,value:normalizedControlValue(el)});
   const run = ()=>{
-    const v = el.type==="checkbox" ? el.checked : +el.value;
+    const v = normalizedControlValue(el);
     apply(v);
     if(out) out.textContent = fmt ? fmt(v) : v;
   };
@@ -119,6 +202,32 @@ function bindV(id, apply, fmt){
 
 /** Buttons, the shape bindV() does not cover (no value, no readout span). */
 function bindBtn(id, fn){ $v(id).addEventListener("click", fn); }
+
+function changedValuesReport(){
+  const lines = [];
+  for(const [id,{el,value:authored}] of boundDefaults){
+    const current = normalizedControlValue(el);
+    if(!Object.is(current,authored)) lines.push(`${id}: ${current} (default ${authored})`);
+  }
+  return lines.join("\n")||"no changed values";
+}
+async function showChangedValues(){
+  const report = changedValuesReport(), output = $v("vChangedOutput");
+  output.value = report;
+  output.hidden = false;
+  try{ await navigator.clipboard.writeText(report); }catch{}
+}
+function openShowcase(){
+  if(state.runMode==="showcase")return;
+  const url = new URL(location.href);
+  url.searchParams.set("mode","showcase");
+  location.assign(url.href);
+}
+function syncShowcaseAction(){
+  const button = $v("vShowcase"), active = state.runMode==="showcase";
+  button.disabled = active;
+  button.textContent = active ? "showcase active" : "open showcase";
+}
 
 /** Fill a <select> from data so the options can never drift from the tables. */
 function fillSelect(id, items){
@@ -167,10 +276,21 @@ function bindControls(){
   bindV("vSelFollow",  v=>{ IND.follow=v; },      v=>v>=1?"snap":v.toFixed(2));
   // The one control here that is not a style knob: it draws sample marks (drawSelectorPreview) instead
   // of restyling the live ones, and it stays render-only — see the comment on that function.
-  bindV("vSelPreview", v=>{ setSelectorPreview(v); });
+  bindV("vSelPreview", v=>{ setSelectorPreview(v); }, null, false);
 
   bindV("vYield", v=>{ TUNE.chopYield=v; },      v=>v+"x");
   bindV("vDamage",v=>{ TUNE.clickDamage=v; },    v=>v+" hp");
+
+  // ── floating combat text: presentation only; hit creation and age stay in simulation.js ──
+  bindV("vDamageText",    v=>{ DAMAGE_TEXT.enabled=v; });
+  bindV("vDamageFadeIn",  v=>{ DAMAGE_TEXT.fadeIn=v; },       v=>v.toFixed(2)+"s");
+  bindV("vDamageHold",    v=>{ DAMAGE_TEXT.hold=v; },         v=>v.toFixed(2)+"s");
+  bindV("vDamageFadeOut", v=>{ DAMAGE_TEXT.fadeOut=v; },      v=>v.toFixed(2)+"s");
+  bindV("vDamageRise",    v=>{ DAMAGE_TEXT.rise=v; },         v=>v+"px");
+  bindV("vDamageSpread",  v=>{ DAMAGE_TEXT.spread=v; },       v=>v+"px");
+  bindV("vDamageGrow",    v=>{ DAMAGE_TEXT.grow=v; },         v=>Math.round(v*100)+"%");
+  bindV("vDamageSize",    v=>{ DAMAGE_TEXT.size=v; },         v=>v+"px");
+  bindV("vDamageCrit",    v=>{ DAMAGE_TEXT.criticalScale=v; },v=>v.toFixed(2)+"x");
 
   // ── overlay bar sizing / placement ──
   bindV("vBarScale",v=>{ BARS.scale=v; });
@@ -249,7 +369,12 @@ function bindControls(){
   bindBtn("vOpenSkillTree", ()=>{ openSkillTree(); });
 }
 
-export function syncXpReadout(){$v("vXpReadout").textContent="xp "+xp()+" · tier "+xpTier()+" · "+skillPoints()+" points";}
+// Three different numbers on purpose: xp is everything ever fed, the level is what the draft rides
+// on, and the wave tier is what the night reads off that level.
+export function syncXpReadout(){
+  const level=levelState();
+  $v("vXpReadout").textContent="xp "+xp()+" · lv "+level.level+" ("+level.xp.toFixed(1)+"/"+level.next.toFixed(1)+") · tier "+waveTier()+" · "+skillPoints()+" points";
+}
 /** Push programmatic camera changes (orbit, wheel zoom) back into the sliders. */
 export function syncViewInputs(){
   $v("vYaw").value = Math.round(view.yaw);  $v("o_vYaw").textContent = Math.round(view.yaw)+"°";
@@ -340,12 +465,20 @@ export function initViewDebugger(hooks={}){
   Object.assign(HOOKS, hooks);
 
   buildTabs();
+  // Build and select every contextual group before controls apply their authored defaults; hidden
+  // controls remain ordinary DOM controls and must initialize through the same binding path.
+  buildSubtabs();
   $v("vToggle").addEventListener("click", ()=>{
     const on = $v("viewPanel").classList.toggle("collapsed");
     $v("vToggle").textContent = on ? "view ▸" : "view ▾";
   });
   bindControls();
   $v("vRescan").addEventListener("click", ()=>runScan());
+  $v("vShowcase").addEventListener("click", openShowcase);
+  $v("vChanged").addEventListener("click", showChangedValues);
+  // main.js initializes run mode synchronously after this adapter returns. Defer the label check so
+  // it reads simulation-owned state without duplicating URL mode selection in the debugger.
+  queueMicrotask(syncShowcaseAction);
 
   // shift+digit switches tabs; plain digits stay free for the game. Silent while the skill tree is
   // up: it covers this panel, and the `inert` it hangs on the rest of the frame stops clicks and
@@ -359,5 +492,5 @@ export function initViewDebugger(hooks={}){
   $v("vRestart").addEventListener("click", ()=>location.reload());
   // One warm-up frame: layout has settled, so the renderer can be re-measured through the host's
   // one resize path and the first sightline sweep has a real camera to sweep.
-  requestAnimationFrame(()=>{ HOOKS.resizeView(); runScan(); });
+  requestAnimationFrame(()=>{ syncShowcaseAction(); HOOKS.resizeView(); runScan(); });
 }

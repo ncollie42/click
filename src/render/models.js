@@ -19,6 +19,11 @@ import * as THREE from "three";
 import {PAL, DROP_COLOR} from "./palette.js";
 import {W,H,BASE,CELL} from "../game/data.js";
 import {buildingFootprint} from "../game/grid.js";
+// Reviewed sim-px models (see docs/quality-bar.md): standalone modules the model viewer also
+// loads. Adopted into the game's scale/shadow/outline conventions by adoptModel() below.
+import {MODELS as PEG_MODELS, dressCarry} from "./models/worker-peg.js";
+import {MODELS as BASE_MODELS} from "./models/the-hole.js";
+import {MODELS as ENEMY_MODELS} from "./models/enemy-shard.js";
 
 // ── the one unit conversion the whole render layer shares ───────────────────
 // The simulation thinks in 2D game pixels; three.js thinks in world units. game (x, y) maps to
@@ -78,7 +83,9 @@ export function disposeGroup(g){
       return;
     }
     o.geometry.dispose();
-    if(o.material.dispose) o.material.dispose();
+    // Material may be an array (multi-group meshes in the reviewed sim-px models).
+    for(const m of Array.isArray(o.material) ? o.material : [o.material])
+      if(m && m.dispose) m.dispose();
   });
 }
 
@@ -135,14 +142,8 @@ export function makeDrop(kind){
   g.userData = {body:m};
   return g;
 }
-// Enemies borrow the prototype's unit form — capsule body, sphere head, cone
-// cap — and read apart by colour and bulk rather than by props.
-const ENEMY_LOOK = {
-  raider:{body:PAL.raider, cap:PAL.raiderCap, r:.26, len:.46},
-  archer:{body:PAL.archer, cap:PAL.archerCap, r:.22, len:.56},
-  healer:{body:PAL.healer, cap:PAL.healerCap, r:.29, len:.40},
-  brute: {body:PAL.brute, cap:PAL.bruteCap, r:.34, len:.54},
-};
+// Enemies use the reviewed shadow-shard models (src/render/models/enemy-shard.js); the old
+// prototype capsules are gone. makeEnemy() lives below the adoption layer it depends on.
 export function makeDamageDummy(){
   const g=new THREE.Group();
   const post=meshOf(new THREE.CylinderGeometry(.18,.24,1.45,8),flat(PAL.timber));post.position.y=.72;
@@ -150,6 +151,24 @@ export function makeDamageDummy(){
   const bull=meshOf(new THREE.CylinderGeometry(.32,.32,.2,12),flat(PAL.bad));bull.rotation.x=Math.PI/2;bull.position.set(0,1.35,.03);
   const base=meshOf(new THREE.BoxGeometry(1.15,.16,.75),flat(PAL.masonryDark));base.position.y=.08;
   g.add(post,target,bull,base);g.userData={target,bull};return g;
+}
+
+export function makeChest(){
+  const g=new THREE.Group(),timber=flat(PAL.chestTimber),frame=flat(PAL.chestFrame),metal=flat(PAL.chestLatch);
+  const body=meshOf(new THREE.BoxGeometry(1.28,.62,.82),timber);body.position.y=.34;
+  // A broad faceted half-cylinder lid reads as a chest at gameplay zoom, unlike the square crate.
+  const lid=meshOf(new THREE.CylinderGeometry(.43,.43,1.3,8,1,false,0,Math.PI),timber);
+  lid.name="chest-lid";lid.rotation.z=Math.PI/2;lid.position.y=.68;
+  const lidRail=meshOf(new THREE.BoxGeometry(1.36,.12,.9),frame);lidRail.position.y=.64;
+  const baseRail=meshOf(new THREE.BoxGeometry(1.36,.12,.9),frame);baseRail.position.y=.1;
+  for(const x of [-.45,.45]){
+    const strap=meshOf(new THREE.BoxGeometry(.1,.78,.88),frame);strap.position.set(x,.43,0);g.add(strap);
+  }
+  const latch=meshOf(new THREE.BoxGeometry(.23,.34,.11),metal);latch.name="chest-latch";latch.position.set(0,.55,.47);
+  const keyhole=meshOf(new THREE.CylinderGeometry(.035,.035,.025,8),frame);keyhole.rotation.x=Math.PI/2;keyhole.position.set(0,.54,.535);
+  g.add(body,lid,lidRail,baseRail,latch,keyhole);
+  g.userData={body,lid,latch,wearMats:[timber,frame,metal]};
+  return g;
 }
 
 export function makeShowcaseProp(model){
@@ -164,33 +183,77 @@ export function makeShowcaseProp(model){
   return g;
 }
 
-export function makeEnemy(type){
+// ── sim-px model adoption ───────────────────────────────────────────────────
+// The reviewed models (src/render/models/worker-peg.js, the-hole.js) are standalone modules
+// authored at SIM-PIXEL scale with zero game imports, so the model viewer can load them bare.
+// Adoption happens here, at the mount point: one wrapper group scaled by S maps their pixels to
+// world units, shadows are switched on (the-hole's noShadow property locks keep their own answer),
+// and ink outlines are added to every lit, opaque, single-sided prop mesh. Geometry and materials
+// are never edited — the viewer and the game render the identical model.
+// Their outline shells need thickness in SIM PX (the shared outlineMat's is in world units and
+// would vanish under the 1/16 wrapper): outlineMatPx is a clone whose thickness scene.js mirrors
+// from outlineMat every frame, so the view panel's weight slider drives both.
+export const outlineMatPx = outlineMat.clone();
+outlineMatPx.uniforms.thickness.value = outlineMat.uniforms.thickness.value / S;
+function addPxOutline(mesh){
+  const shell = new THREE.Mesh(mesh.geometry, outlineMatPx);
+  shell.castShadow = shell.receiveShadow = false;
+  shell.userData.outline = true;
+  shell.visible = OUTLINE_ON;
+  mesh.add(shell);
+  outlineShells.push(shell);
+}
+function adoptModel(group){
+  group.traverse(o=>{
+    if(!o.isMesh || isOutline(o)) return;
+    o.castShadow = true;                 // silently refused by the-hole's emissive/decal locks
+    o.receiveShadow = true;
+    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+    if(o.castShadow && !m.isMeshBasicMaterial && !m.transparent && m.side !== THREE.DoubleSide)
+      addPxOutline(o);
+  });
+  return group;
+}
+
+// Job -> dressed peg. Key format "worker-<job>[+carry]": the +carry suffix dresses the SAME job
+// model with the log bundle (dressCarry), so a loaded courier stays denim rather than turning tan.
+// The wrapper owns world placement/scale; scene.js drives the anims on userData.inner.
+export function makePegWorker(key){
+  const [name, carry] = key.split("+");
+  const def = PEG_MODELS[name] || PEG_MODELS["worker-gatherer"];
+  const inner = def.build();
+  inner.rotation.y = 0;                  // zero the sheet display yaw; facing is the wrapper's job
+  if(carry) dressCarry(inner);
+  adoptModel(inner);
   const g = new THREE.Group();
-  const L = ENEMY_LOOK[type] || ENEMY_LOOK.raider;
-  const body = meshOf(new THREE.CapsuleGeometry(L.r, L.len, 3, 8), flat(L.body));
-  body.position.y = L.r + L.len/2;
-  const head = meshOf(new THREE.SphereGeometry(L.r*.82, 8, 6), flat(PAL.skin));
-  head.position.y = L.r*2 + L.len + .04;
-  const cap = meshOf(new THREE.ConeGeometry(L.r*1.18, L.r*1.05, 7), flat(L.cap));
-  cap.position.y = head.position.y + L.r*.86;
-  g.add(body, head, cap);
-  g.userData = {body, head, cap, baseColor:L.body};
+  g.add(inner);
+  g.scale.setScalar(S);
+  g.userData = {inner, anims: def.anims};
   return g;
 }
-export function makeWorker(){
+// Enemy type -> adopted shard model. The models bake the brute's ×1.35 (ENEMY_TYPES.size), so the
+// wrapper applies S only — never multiply by def.size again in scene.js. userData.tintMats collects
+// the unique BODY materials (lit, zero-emissive Lambert) so hit-flash/burn tint the rock and never
+// the seam floors, eyes or ability FX (those are unlit/emissive and are excluded by the filter).
+// The sim draws its own shot beam (scene.js beam() off shotFlash/shotX), so the archer's modelled
+// bolt is hidden at build; its charge flash and recoil remain.
+export function makeEnemy(type){
+  const def = ENEMY_MODELS["enemy-"+type] || ENEMY_MODELS["enemy-raider"];
+  const inner = def.build();
+  adoptModel(inner);
+  if(type==="archer"){ const bolt = inner.getObjectByName("bolt"); if(bolt) bolt.visible = false; }
+  const tintMats = [], seenMats = new Set();
+  inner.traverse(o=>{
+    if(!o.isMesh || isOutline(o)) return;
+    for(const m of Array.isArray(o.material) ? o.material : [o.material]){
+      if(seenMats.has(m)) continue; seenMats.add(m);
+      if(m.isMeshLambertMaterial && m.emissive && m.emissive.getHex()===0) tintMats.push(m);
+    }
+  });
   const g = new THREE.Group();
-  const body = meshOf(new THREE.CapsuleGeometry(.26,.42,3,7), flat(PAL.coat));
-  body.position.y = .55;
-  const head = meshOf(new THREE.SphereGeometry(.24,8,6), flat(PAL.skin));
-  head.position.y = 1.08;
-  const hat = meshOf(new THREE.ConeGeometry(.3,.26,7), flat(PAL.hat));
-  hat.position.y = 1.3;
-  const load = meshOf(new THREE.BoxGeometry(.28,.28,.28), flat(PAL.wood));
-  load.position.set(-.38,.72,0); load.visible = false;
-  const tool = meshOf(new THREE.BoxGeometry(.08,.62,.08), flat(PAL.tool));
-  tool.position.set(.36,.72,0);
-  g.add(body, head, hat, load, tool);
-  g.userData = {body, load, tool};
+  g.add(inner);
+  g.scale.setScalar(S);
+  g.userData = {inner, anims:def.anims, tintMats};
   return g;
 }
 export function makeCorpse(coat){
@@ -202,94 +265,25 @@ export function makeCorpse(coat){
   g.add(m);
   return g;
 }
-// ── the keep ────────────────────────────────────────────────────────────────
-// A compact square watchtower: a stone shaft whose walls taper inward, a slightly projecting open
-// crown with chunky crenellations, and one small dark entrance. No pitched roof, no flag, no
-// corner towers - the silhouette is meant to read as a single tall block, not a house.
-//
-// The VISUAL MASS IS INTENTIONALLY 1x1 (about 2.0 x 2.0 world units, the centre cell) while
-// GAMEPLAY OCCUPANCY REMAINS 3x3 (BASE.footprint = FOOTPRINT_3x3). The outer ring of the pad is
-// courtyard: an entrance path and a couple of low props, everything kept below doorway height so
-// nothing competes with the tower. canPlace(), enemy targeting and BASE.r read the footprint and
-// BASE.r, never the model, so shrinking the mesh changes nothing in the simulation.
-export function makeBase(){
+// ── main base: keep and precursor pit ───────────────────────────────────────
+// The reviewed model (the-hole.js) replaces the inline keep+pit that used to live here. The
+// asymmetric model sits on the same authored anchor and 3x3 footprint: the grass pad below it is
+// the reserved-cells contract (identical to every building's), the model rides a sim-px holder
+// lifted to the pad top, and placement/targeting/storage continue to read BASE untouched.
+export function makeMainBase(awake){
+  const name = awake ? "main-base-awake" : "main-base";
+  const inner = BASE_MODELS[name].build();
+  adoptModel(inner);
   const g = new THREE.Group();
-  const Y0 = FLOOR_TOP;               // the footprint pad's top face; every course stacks off it
-  const LAP = .03;                    // each course sinks this far into the one below, so no two
-                                      // solid faces ever end up coplanar and z-fighting
-  // Square prisms come from a 4-segment cylinder turned 45deg, which lands flat faces on the X and
-  // Z axes. Width across those faces is r*sqrt(2), so sq() converts a wall width into the radius
-  // three.js wants. A frustum (bottom wider than top) is what gives the walls their taper.
-  const sq = w => w/Math.SQRT2;
-  const prism = (wBottom, wTop, h, mat) => {
-    const m = meshOf(new THREE.CylinderGeometry(sq(wTop), sq(wBottom), h, 4), mat);
-    m.rotation.y = Math.PI/4;
-    return m;
-  };
-  const PLINTH_H = .30, SHAFT_H = 3.5, CORBEL_H = .22, MERLON_H = .48;
-  const PLINTH_TOP = Y0 + PLINTH_H;                       // .396
-  const SHAFT_BOT  = PLINTH_TOP - LAP;
-  const SHAFT_TOP  = SHAFT_BOT + SHAFT_H;                 // 3.866
-  const CROWN_TOP  = SHAFT_TOP - LAP + CORBEL_H;          // 4.056 - walkway level
-
-  const plinth = meshOf(new THREE.BoxGeometry(2.0,PLINTH_H,2.0), flat(PAL.keepTrim));
-  plinth.position.y = Y0 + PLINTH_H/2;
-  // 1.86 -> 1.42 across 3.5 of height: a taper you can read in silhouette without the tower
-  // looking like a cone. Widest point (1.86) still sits inside the 2.0 plinth.
-  const body = prism(1.86, 1.42, SHAFT_H, flat(PAL.keepWall));
-  body.position.y = SHAFT_BOT + SHAFT_H/2;
-  // The crown flares back OUT past the shaft top (1.42 -> 1.84), so it overhangs by ~.21 a side.
-  const corbel = prism(1.46, 1.84, CORBEL_H, flat(PAL.keepTrim));
-  corbel.position.y = SHAFT_TOP - LAP + CORBEL_H/2;
-  // Shadowed interior, glimpsed through the gaps between merlons and from above: this is what
-  // makes the crown read as open rather than as a solid capstone.
-  // 1.04 wide keeps it just inside the merlon ring's inner edge (+-.52), so it fills the gaps
-  // between the teeth without clipping into them.
-  const well = meshOf(new THREE.BoxGeometry(1.04,.12,1.04), flat(PAL.doorway));
-  well.position.y = CROWN_TOP + .02;
-  g.add(plinth, body, corbel, well);
-  // Crenellations: four corners plus one merlon at the middle of each side. .40 blocks with .32
-  // gaps around a 1.84 crown, so at gameplay zoom they read as separate teeth, not a serrated rim.
-  for(const [mx,mz] of [[-.72,-.72],[.72,-.72],[-.72,.72],[.72,.72],[0,-.72],[0,.72],[-.72,0],[.72,0]]){
-    const merlon = meshOf(new THREE.BoxGeometry(.40,MERLON_H,.40), flat(PAL.keepWall));
-    merlon.position.set(mx, CROWN_TOP - LAP + MERLON_H/2, mz);
-    g.add(merlon);
-  }
-  // Entrance faces the king. gz() maps sim y straight to world z, and the king stands at
-  // BASE.y+18, so "toward the king" is +Z. The dark block stands slightly proud of the plinth
-  // (front face z=1.05 vs the plinth's 1.0) so it never z-fights the wall it sits in.
-  const door = meshOf(new THREE.BoxGeometry(.58,1.00,.30), flat(PAL.doorway));
-  door.position.set(0, PLINTH_TOP - .02 + .50, .90);
-  // The king never moves off BASE.y+18, i.e. z=+1.125 with a .26 body radius, so he occupies
-  // z .865-1.385 right where a slab tucked against the plinth would go. The step therefore sits at
-  // the HEAD OF THE PATH (back face z=1.405) and the king stands on the pad between it and the
-  // door; anything nearer the wall would be drawn through his legs.
-  const step = meshOf(new THREE.BoxGeometry(.90,.14,.55), flat(PAL.keepTrim));
-  step.position.set(0, Y0 + .07, 1.68);
-  // One arrow slit high on the same face, so the tower still has an eye when the king is standing
-  // in the doorway. The wall has drawn back to z=.78 by this height, so .87 clears it.
-  const slit = meshOf(new THREE.BoxGeometry(.20,.42,.14), flat(PAL.doorway));
-  slit.position.set(0, 2.80, .80);
-  // Worn approach across the courtyard. cast=false, exactly like the pad: no outline shell, no
-  // shadow, and invisible to blockerMeshes() so it can never occlude a unit.
-  // Reaches z=2.70, so even at the store pulse's peak 1.1x group scale it stays inside the pad.
-  const path = meshOf(new THREE.BoxGeometry(.60,.05,1.60), flat(PAL.dirt), false, true);
-  path.position.set(0, Y0 + .02, 1.90);
-  g.add(door, step, slit, path);
-  // Three low props, all well under the doorway's 1.38 and well inside the pad: two gate posts
-  // flanking the path and a small stack of cut stone in a back corner. The rest stays open.
-  for(const px of [-.62, .62]){
-    const post = meshOf(new THREE.BoxGeometry(.28,.36,.28), flat(PAL.keepTrim));
-    post.position.set(px, Y0 + .18, 2.45); g.add(post);
-  }
-  const block = meshOf(new THREE.BoxGeometry(.52,.30,.52), flat(PAL.stone));
-  block.position.set(-1.85, Y0 + .15, -1.95);
-  const blockTop = meshOf(new THREE.BoxGeometry(.34,.24,.34), flat(PAL.stone));
-  blockTop.position.set(-1.78, Y0 + .30 - LAP + .12, -2.02);
-  const floor = makeFootprintFloor(BASE.footprint);
-  g.add(floor, block, blockTop);
+  const floor = makeFootprintFloor(BASE.footprint, PAL.grass);
+  g.add(floor);
+  const holder = new THREE.Group();
+  holder.add(inner);
+  holder.scale.setScalar(S);
+  holder.position.y = FLOOR_TOP;
+  g.add(holder);
   g.position.set(gx(BASE.x), 0, gz(BASE.y));
-  g.userData = {body, floor};
+  g.userData = {floor, inner, anims: BASE_MODELS[name].anims};
   return g;
 }
 export function makeKing(){
@@ -326,23 +320,180 @@ export function makeFootprintFloor(fp, color=PAL.pad){
   return m;
 }
 
+// Fresh closed triangular prism for a pitched-roof gable. Positions are local to the wall top;
+// non-indexed faces keep the low-poly planes hard and let disposeGroup() own the geometry normally.
+function gablePrismGeometry(w,h,d){
+  const x=w/2,z=d/2;
+  const fL=[-x,0,z],fR=[x,0,z],fT=[0,h,z];
+  const bL=[-x,0,-z],bR=[x,0,-z],bT=[0,h,-z];
+  const faces=[
+    fL,fR,fT, bR,bL,bT,                   // front and back
+    fL,bT,bL, fL,fT,bT,                   // left roof slope
+    fR,bR,bT, fR,bT,fT,                   // right roof slope
+    fL,bL,bR, fL,bR,fR,                   // hidden bottom closes the volume
+  ];
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.Float32BufferAttribute(faces.flat(),3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
 export function makeBuilding(type){
   const g = new THREE.Group();
   const parts = [];
   const add = (m)=>{ g.add(m); parts.push(m); return m; };
   if(type==="tower"){
-    for(const [dx,dz] of [[-.5,-.5],[.5,-.5],[-.5,.5],[.5,.5]]){
-      const leg = add(meshOf(new THREE.BoxGeometry(.2,3.0,.2), flat(PAL.timber)));
-      leg.position.set(dx,1.5,dz);
+    // The basic chassis owns the silhouette shared by every permanent tower variant. Keep it
+    // weaponless: variants tint the roof through userData.roof, while gameplay/VFX remain separate.
+    const beam = (a,b,width,color=PAL.timberDark)=>{
+      const from=new THREE.Vector3(...a),to=new THREE.Vector3(...b),delta=to.clone().sub(from);
+      const m=add(meshOf(new THREE.BoxGeometry(width,delta.length(),width),flat(color)));
+      m.position.copy(from).add(to).multiplyScalar(.5);
+      m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
+      return m;
+    };
+
+    // Uneven local stone course: low enough to read as hand-set footings rather than a stone tower.
+    const stones=[
+      [-1.05,-1.20,.72,.40,.54,-.03],[-.32,-1.18,.68,.34,.52,.02],[.38,-1.21,.70,.42,.56,-.02],[1.09,-1.18,.66,.36,.50,.03],
+      [-1.08, 1.19,.68,.35,.52,.02],[-.38, 1.21,.70,.41,.55,-.03],[.35, 1.18,.66,.36,.50,.02],[1.05, 1.20,.74,.40,.54,-.02],
+      [-1.22,-.42,.52,.38,.70,.02],[-1.19,.36,.54,.34,.68,-.03],[1.20,-.38,.50,.36,.72,-.02],[1.22,.38,.54,.40,.68,.03],
+    ];
+    stones.forEach(([x,z,w,h,d,turn],i)=>{
+      const stone=add(meshOf(new THREE.BoxGeometry(w,h,d),flat(i%3===1?PAL.rockDark:PAL.rock)));
+      stone.position.set(x,FLOOR_TOP+h/2,z);stone.rotation.y=turn;
+    });
+
+    // Four wide-set, slightly irregular legs; crossed beams carry the load on every face.
+    const legs=[[-1.02,-1.01,.28,.31,-.018],[1.00,-1.03,.31,.28,.014],[-1.04,1.02,.29,.32,.012],[1.03,1.00,.30,.29,-.016]];
+    for(const [x,z,w,d,lean] of legs){
+      const leg=add(meshOf(new THREE.BoxGeometry(w,2.82,d),flat(PAL.timber)));
+      leg.position.set(x,1.72,z);leg.rotation.z=lean;
     }
-    const deck = add(meshOf(new THREE.BoxGeometry(1.7,.3,1.7), flat(PAL.timber)));
-    deck.position.y = 3.1;
-    const roof = add(meshOf(new THREE.ConeGeometry(1.4,1.0,4), flat(PAL.timberDark)));
-    roof.position.y = 3.8; roof.rotation.y = Math.PI/4;
-    g.userData.roof = roof;
+    for(const z of [-1.02,1.02]){
+      beam([-.94,.55,z],[.94,2.72,z],.15);
+      beam([.94,.55,z],[-.94,2.72,z],.15);
+    }
+    for(const x of [-1.02,1.02]){
+      beam([x,.55,-.94],[x,2.72,.94],.15);
+      beam([x,.55,.94],[x,2.72,-.94],.15);
+    }
+
+    // Chunky under-frame plus individual deck planks keep the open platform readable from above.
+    for(const z of [-1.14,1.14]){
+      const frame=add(meshOf(new THREE.BoxGeometry(2.70,.24,.24),flat(PAL.timberDark)));
+      frame.position.set(0,2.98,z);
+    }
+    for(let i=0;i<6;i++){
+      const plank=add(meshOf(new THREE.BoxGeometry(.40,.16,2.58),flat(i%2?PAL.timber:PAL.timberDark)));
+      plank.position.set((i-2.5)*.42,3.16+(i%3===0?.015:0),0);
+    }
+
+    // Roof posts double as railing uprights. The ladder-facing (+Z) rail has a central opening.
+    for(const [x,z] of [[-1.23,-1.23],[1.23,-1.23],[-1.23,1.23],[1.23,1.23]]){
+      const post=add(meshOf(new THREE.BoxGeometry(.18,1.18,.18),flat(PAL.timber)));
+      post.position.set(x,3.76,z);
+    }
+    const rail=(w,d,x,z)=>{
+      const m=add(meshOf(new THREE.BoxGeometry(w,.16,d),flat(PAL.timber)));
+      m.position.set(x,3.62,z);
+    };
+    rail(2.30,.14,0,-1.23);rail(.14,2.30,-1.23,0);rail(.14,2.30,1.23,0);
+    rail(.72,.14,-.82,1.23);rail(.72,.14,.82,1.23);
+
+    // One solid low-poly gable keeps the variant-accent contract as a single material target.
+    const roofGeo=new THREE.BufferGeometry();
+    const roofVertices=[
+      -1.52,4.27,-1.34, -1.52,5.02,0, -1.52,4.27,1.34,
+       1.52,4.27,-1.34,  1.52,4.27,1.34,  1.52,5.02,0,
+      -1.52,4.27,-1.34,  1.52,4.27,-1.34,  1.52,5.02,0,
+      -1.52,4.27,-1.34,  1.52,5.02,0,    -1.52,5.02,0,
+      -1.52,4.27,1.34,  -1.52,5.02,0,     1.52,5.02,0,
+      -1.52,4.27,1.34,   1.52,5.02,0,     1.52,4.27,1.34,
+      -1.52,4.27,-1.34, -1.52,4.27,1.34,  1.52,4.27,1.34,
+      -1.52,4.27,-1.34,  1.52,4.27,1.34,  1.52,4.27,-1.34,
+    ];
+    roofGeo.setAttribute("position",new THREE.Float32BufferAttribute(roofVertices,3));
+    // Non-indexed triangles keep normals split at every ridge/eave for hard low-poly facets.
+    roofGeo.computeVertexNormals();
+    const roof=add(meshOf(roofGeo,flat(PAL.timberDark)));
+    g.userData.roof=roof;
+
+    // Ladder leans against the open side and terminates at the deck opening, not through a rail.
+    beam([-.35,.30,1.60],[-.35,3.30,1.34],.12,PAL.timber);
+    beam([.35,.30,1.60],[.35,3.30,1.34],.12,PAL.timber);
+    for(let i=0;i<7;i++){
+      const t=(i+1)/8,y=.30+(3.30-.30)*t,z=1.60+(1.34-1.60)*t;
+      beam([-.38,y,z],[.38,y,z],.10,PAL.timberDark);
+    }
   } else if(type==="house"){
-    const b = add(meshOf(new THREE.BoxGeometry(2.4,1.6,2.0), flat(PAL.plaster))); b.position.y=.8;
-    const r = add(meshOf(new THREE.ConeGeometry(1.9,1.2,4), flat(PAL.roof))); r.position.y=2.2; r.rotation.y=Math.PI/4;
+    // Front is +Z, matching the house worker spawn/post at simulation y+23. The body and every prop
+    // stay inside the footprint's 2x2 world-unit pad, while the anchor remains the group's origin.
+    const wallH=1.14,wallW=1.46,wallD=1.30,wallTop=FLOOR_TOP+wallH;
+    const walls=add(meshOf(new THREE.BoxGeometry(wallW,wallH,wallD),flat(PAL.plaster)));
+    walls.position.y=FLOOR_TOP+wallH/2;
+
+    const roofRun=.89,roofRise=.90,roofDepth=1.58;
+    const gable=add(meshOf(gablePrismGeometry(wallW,roofRise,wallD),flat(PAL.plaster)));
+    gable.position.y=wallTop;
+
+    // Three broad, overlapping rows per slope suggest hand-laid shingles without texture detail.
+    const slope=Math.hypot(roofRun,roofRise),angle=Math.atan2(roofRise,roofRun),rows=3;
+    for(const side of [-1,1]) for(let i=0;i<rows;i++){
+      const t=(i+.5)/rows;
+      const shingle=add(meshOf(
+        new THREE.BoxGeometry(slope/rows+.08,.09,roofDepth),
+        flat((i+(side>0?1:0))%2 ? PAL.timberDark : PAL.timber)
+      ));
+      shingle.position.set(side*roofRun*(1-t),wallTop+roofRise*t,0);
+      shingle.rotation.z=side<0?angle:-angle;
+    }
+    const ridge=add(meshOf(new THREE.BoxGeometry(.14,.14,roofDepth+.04),flat(PAL.timberDark)));
+    ridge.position.y=wallTop+roofRise;
+
+    // Rough timber frame. Front jambs and lintel enlarge the door read; the other beams expose the
+    // plaster-over-frame construction from any camera quarter without ornamenting it.
+    for(const [x,z] of [[-wallW/2,-wallD/2],[wallW/2,-wallD/2],[-wallW/2,wallD/2],[wallW/2,wallD/2]]){
+      const post=add(meshOf(new THREE.BoxGeometry(.12,wallH+.04,.12),flat(PAL.timber)));
+      post.position.set(x,FLOOR_TOP+wallH/2,z);
+    }
+    for(const x of [-wallW/2,wallW/2]){
+      const eave=add(meshOf(new THREE.BoxGeometry(.13,.13,wallD+.08),flat(PAL.timberDark)));
+      eave.position.set(x,wallTop,0);
+    }
+    const frontBeam=add(meshOf(new THREE.BoxGeometry(wallW+.08,.13,.13),flat(PAL.timberDark)));
+    frontBeam.position.set(0,wallTop,wallD/2+.025);
+    const gablePost=add(meshOf(new THREE.BoxGeometry(.11,roofRise,.11),flat(PAL.timber)));
+    gablePost.position.set(0,wallTop+roofRise/2,wallD/2+.035);
+
+    const door=add(meshOf(new THREE.BoxGeometry(.66,1.04,.14),flat(PAL.timberDark)));
+    door.position.set(0,FLOOR_TOP+.52,wallD/2+.07);
+    for(const x of [-.39,.39]){
+      const jamb=add(meshOf(new THREE.BoxGeometry(.13,1.10,.16),flat(PAL.timber)));
+      jamb.position.set(x,FLOOR_TOP+.55,wallD/2+.10);
+    }
+    const lintel=add(meshOf(new THREE.BoxGeometry(.91,.15,.17),flat(PAL.timber)));
+    lintel.position.set(0,FLOOR_TOP+1.08,wallD/2+.10);
+
+    // The chimney is three slightly misaligned stone courses, not one machined extrusion.
+    for(let i=0;i<3;i++){
+      const course=add(meshOf(new THREE.BoxGeometry(.31-(i%2)*.02,.27,.31),flat(PAL.rock)));
+      course.position.set(.43+(i===1?.025:0),1.84+i*.255,-.27);
+      course.rotation.y=(i-1)*.045;
+    }
+
+    // Tiny side props keep the doorway clear for worker births at +Z.
+    for(const [z,y] of [[-.24,.20],[-.08,.20],[-.16,.38]]){
+      const log=add(meshOf(new THREE.CylinderGeometry(.09,.10,.42,6),flat(PAL.timber)));
+      log.rotation.x=Math.PI/2;
+      log.position.set(.82,FLOOR_TOP+y,z);
+    }
+    for(const z of [.30,.76]){
+      const post=add(meshOf(new THREE.BoxGeometry(.11,.55,.11),flat(PAL.timberDark)));
+      post.position.set(-.89,FLOOR_TOP+.275,z);
+    }
+    const rail=add(meshOf(new THREE.BoxGeometry(.10,.10,.53),flat(PAL.timber)));
+    rail.position.set(-.89,FLOOR_TOP+.36,.53);
   } else if(type==="lumber"){
     const b = add(meshOf(new THREE.BoxGeometry(2.4,1.3,1.9), flat(PAL.scaffold))); b.position.y=.65;
     const r = add(meshOf(new THREE.BoxGeometry(2.7,.28,2.2), flat(PAL.roofDark))); r.position.y=1.42;
@@ -379,7 +530,8 @@ export function makeBuilding(type){
   }
   // Added after `parts` is filled and deliberately NOT pushed into it: the tower hurt-flash and the
   // ghost tint iterate `parts`/meshes for the MODEL, and the ground pad must not join those effects.
-  const floor = makeFootprintFloor(buildingFootprint(type));
+  const grassTile = type==="house" || type==="tower";
+  const floor = makeFootprintFloor(buildingFootprint(type), grassTile?PAL.grass:PAL.pad);
   g.add(floor);
   g.userData.floor = floor;
   g.userData.parts = parts;

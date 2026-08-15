@@ -1,7 +1,7 @@
 // Owns and validates immutable showcase fixtures.
 
 import {
-  W,H,BASE,BUILD_MARGIN,RESOURCE_KINDS,RESOURCE_FOOTPRINT,
+  W,H,BASE,BUILD_MARGIN,RESOURCE_KINDS,RESOURCE_FOOTPRINT,CHEST,
   BUILDING_TYPES,TOWER_VARIANTS,ENEMY_TYPES
 } from "./data.js";
 import {
@@ -29,6 +29,9 @@ const manifest = {
     {id:"dust",section:"resources",x:288,y:608,label:"loose dust"},
     {id:"coin",section:"resources",x:384,y:608,label:"loose coin"},
     {id:"diamond",section:"resources",x:480,y:608,label:"loose diamond"},
+  ],
+  chests:[
+    {id:"unopened",section:"props",x:1344,y:896,label:"unopened chest"},
   ],
   buildings:[
     {id:"lumber",section:"buildings",x:96,y:672,label:"lumber camp"},
@@ -98,7 +101,9 @@ function validateManifest(){
   sameMembers("tower variants",manifest.towers.map(f=>f.id),Object.keys(TOWER_VARIANTS));
   sameMembers("enemies",manifest.enemies.map(f=>f.id),Object.keys(ENEMY_TYPES));
 
-  const groups=["resourceNodes","looseResources","buildings","towers","enemies","workers","progress","dummies","props"];
+  sameMembers("chests",manifest.chests.map(f=>f.id),["unopened"]);
+
+  const groups=["resourceNodes","looseResources","chests","buildings","towers","enemies","workers","progress","dummies","props"];
   const keys=new Set();
   for(const group of groups){
     const ids=new Set();
@@ -143,6 +148,7 @@ function validateManifest(){
 
   const placed=[
     ...manifest.resourceNodes.map(f=>({...f,key:"resourceNodes:"+f.id,footprint:RESOURCE_FOOTPRINT})),
+    ...manifest.chests.map(f=>({...f,key:"chests:"+f.id,footprint:CHEST.footprint})),
     ...manifest.buildings.map(f=>({...f,key:"buildings:"+f.id,footprint:buildingFootprint(f.id)})),
     ...manifest.towers.map(f=>({...f,key:"towers:"+f.id,footprint:buildingFootprint("tower")})),
     ...manifest.progress.map(f=>({...f,key:"progress:"+f.id,footprint:buildingFootprint(f.type)})),

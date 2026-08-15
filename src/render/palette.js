@@ -57,6 +57,9 @@ export const PAL = {
   // ── structures ─────────────────────────────────────────
   timber:     0x8a7358,
   timberDark: 0x5c4a38,
+  chestTimber:0x9a6b3f,
+  chestFrame: 0x493728,
+  chestLatch: 0xc2b9a5,
   plaster:    0xc0a170,
   plasterLit: 0xc9b48a,
   roof:       0x8e5f3c,
@@ -66,10 +69,11 @@ export const PAL = {
   quarryWall: 0x777775,
   quarryRoof: 0x5f6061,
   doorway:    0x49392d,
-  // the keep: pale dressed stone, deliberately cooler and lighter than masonry (the obelisk) so
-  // the base reads as the one landmark on the map. keepTrim is the plinth/crown/prop course.
-  keepWall:   0xb9b6b0,
-  keepTrim:   0x93908a,
+  // Main-base precursor pit. Violet stays isolated here; the keep uses the shared stone/timber set.
+  pitRim:     0xa783df,
+  pitMid:     0x5d476f,
+  pitDeep:    0x29232f,
+  pitThroat:  0x151219,
   pole:       0x5d4935,
   banner:     0xa94634,
   metal:      0xbdb7ab,

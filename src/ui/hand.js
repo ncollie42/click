@@ -4,14 +4,22 @@
 // HAND ADAPTER
 //
 // Ownership / data flow
-//   Reads:    src/ui/cards.js (the hand/draft contract) and src/render/scene.js's project(),
-//             which is the ONE world->screen conversion in the codebase — the consume flight
-//             aims at the base with it rather than guessing a screen point.
-//   Writes:   the DOM under #handDock and #cardFlights, and nothing else. Every gameplay
-//             change leaves through playCard(); this file never touches `state`.
+//   Reads:    src/game/simulation.js — hand(), playCard() and state.cardTargeting, which are the
+//             whole contract this file needs; src/game/cards.js for a card's DISPLAY fields; the
+//             two authored icon tables in src/game/data.js; and src/render/scene.js's project(),
+//             which is the ONE world->screen conversion in the codebase — the consume flight aims
+//             at the base with it rather than guessing a screen point.
+//   Writes:   the DOM under #handDock and #cardFlights, and nothing else. Every gameplay change
+//             leaves through playCard(); this file never assigns into `state`.
 //   Supplies: initHand() (registration), renderHand() (repaint — the handChanged sink),
+//             syncHandTargeting() (the buildHudChanged sink; see the note on it),
 //             cardFace() (the shared card anatomy the draft overlay builds its picks from),
 //             expectArrival()/playArrival() (the two halves of "a drafted card flies to hand").
+//
+// No card rule lives here. What a card DOES, how many charges it carries and where a played one
+// goes are all simulation.js's; this file only draws what hand() reports and asks playCard() to
+// change it. The one thing it authors is the card's PICTURE — glyph, name casing, category word —
+// because src/game/cards.js is a design catalog and holds no presentation.
 //
 // Layout note — dock coexistence. The build dock used to sit bottom-CENTRE, which is where a
 // fanned hand has to live: the fan is the widest thing on screen and its cards rise on hover.
@@ -22,8 +30,9 @@
 // constants in two files that could drift. The toast lane moved with them, from just above
 // the dock to just above the fan, and steps up again while a card is raised.
 // ═══════════════════════════════════════════════════════════════════════════
-import {CARDS, CATEGORY_LABEL, hand, playCard, activeIndex} from "./cards.js";
-import {BASE} from "../game/data.js";
+import {cardById} from "../game/cards.js";
+import {hand, playCard, state} from "../game/simulation.js";
+import {BASE, TOWER_VARIANTS, UPGRADES, BUILDING_TYPES} from "../game/data.js";
 import {project} from "../render/scene.js";
 
 // ── tuning ──────────────────────────────────────────────────────────────────
@@ -55,30 +64,100 @@ let focus=-1;        // keyboard browse cursor
 let hover=-1;        // pointer hover
 let reduced=false;
 
+// ── the card's picture ──────────────────────────────────────────────────────
+// src/game/cards.js authors the card's MEANING (category, rarity, text, charges) and no
+// presentation at all, so the three things a face needs beyond that are made here — for the whole
+// 57-card registry, not a hand-picked subset, because any inPool card can turn up in an offer.
+//
+// Card ids are camelCase and the whole UI is lowercase, so an id is split at its humps rather than
+// flattened into one word: chopYield -> "chop yield". Nothing else renames a card.
+const cardName=id=>id.replace(/([a-z0-9])([A-Z])/g,"$1 $2").toLowerCase();
+const CATEGORY_LABEL={buff:"buff",consumable:"consumable",aura:"aura",blueprint:"blueprint"};
+
+// The glyph. A card's `ref` already names what it unlocks, so towers and upgrades read their
+// authored icon straight out of data.js and stay in step with it for free. The rest of the refs
+// point at things that own no icon (buildings) or at nothing built yet (concepts), so those are
+// presentation-only picks made HERE, drawn from the same glyph vocabulary the authored tables use.
+const REF_GLYPHS={
+  "concept:clickCombat":"✊","concept:chopTime":"↻","concept:chopYield":"⛏","concept:crit":"⌖",
+  "concept:workerSpeed":"»","concept:workerCarry":"▣","concept:houseSlots":"⌂","concept:workerHp":"♥",
+  "concept:dawnHeal":"☀","concept:towerDamage":"●","concept:towerSpeed":"↯","concept:towerRange":"◎",
+  "concept:dawnRepair":"▦","concept:baseHp":"⌂","concept:nightGather":"☾","concept:feedXp":"◉",
+  "concept:fireball":"♨","concept:treants":"♣","concept:healBase":"♥","concept:repairTowers":"▦","concept:rushBuild":"↯",
+  "concept:bundle":"▣","concept:tempWorker":"☝","concept:calmNight":"☾","concept:longDay":"☀",
+  "concept:draftMeta":"↻","concept:barracks":"⚔","concept:mendingBeacon":"♥","concept:towerStandard":"✦",
+  "concept:warDrum":"⚔","concept:frostTotem":"❄","concept:luckyTotem":"◆","concept:wildFoundation":"♣",
+  "concept:dustSiphon":"⌁","concept:coinPress":"◎","concept:diamondDrill":"◈",
+  "building:blast":"●","building:spikes":"▲","building:landmine":"◉","building:tar":"≋","building:obelisk":"▰",
+};
+// The last resort, one per category — so a card added to the registry tomorrow draws a picture the
+// day it lands instead of a hole where one should be. Nothing here can return empty.
+const CATEGORY_GLYPHS={buff:"✦",consumable:"◈",aura:"◎",blueprint:"⌂"};
+function cardGlyph(card){
+  const [kind,name]=String(card.ref||"").split(":");
+  const authored=kind==="tower"?TOWER_VARIANTS[name]?.icon
+    :kind==="upgrade"?UPGRADES.find(upgrade=>upgrade.id===name)?.icon
+    :REF_GLYPHS[card.ref];
+  return authored||CATEGORY_GLYPHS[card.category]||"✦";
+}
+
+/** The authored name of whatever a ref points at, or null for a concept that owns no table row. */
+function refName(ref){
+  const [kind,name]=String(ref||"").split(":");
+  return kind==="tower"?TOWER_VARIANTS[name]?.name||null
+    :kind==="building"?BUILDING_TYPES[name]?.name||null:null;
+}
+/** A blueprint's id is a slug for the thing it unlocks ("bpSniper"), and that thing already has an
+ *  authored name — head the card with what it builds rather than with the slug. */
+function cardTitle(card){ return card.category==="blueprint"&&refName(card.ref)||cardName(card.id); }
+/** A blueprint's own `text` is its category said a third time ("blueprint: sniper tower"), after
+ *  the eyebrow and the name. The authored table that NAMES the thing also describes it, so the
+ *  card carries that line instead and says something the rest of the face does not. */
+function cardText(card){
+  const [kind,name]=String(card.ref||"").split(":");
+  return card.category==="blueprint"&&kind==="tower"&&TOWER_VARIANTS[name]?.description||card.text;
+}
+/**
+ * The note line under the effect text: rarity, then whatever ELSE the catalog fields say outright.
+ * Composed rather than quoted, because `notes` in the registry is a design/feature-tracker field
+ * written for the people building the game ("layered over TUNE.clickDamage at read time"), not a
+ * line to put in front of a player. Every branch below reads one authored field and states it.
+ */
+function cardNote(card){
+  const detail=card.category==="blueprint"?(refName(card.ref)?"the next "+refName(card.ref)+" is free":"a plan for something unbuilt")
+    :card.category==="aura"?"one placement · "+card.durationSeconds+"s"
+    :card.charges>1?card.charges+" placements"
+    :card.category==="buff"&&card.stacks>1?"stacks to "+card.stacks
+    :"";
+  return [card.rarity,detail].filter(Boolean).join(" · ");
+}
+
 // ── the card face ───────────────────────────────────────────────────────────
 // One anatomy, two sizes. Everything inside is em-based off the card's own font-size, which
 // styles.css derives from --cw, so a 104px hand card and a 236px draft pick are the same
 // drawing at two scales rather than two drawings. Category eyebrow, glyph, name, rule,
 // effect text, notes line, then the footer that carries charge pips and the count badge.
 export function cardFace(id,{key=null,count=1,charges=null}={}){
-  const def=CARDS[id];
+  // An id with no catalog row cannot happen through hand() or draftPending(), but the face is the
+  // last thing between a catalog bug and a blank rectangle on screen, so it draws one anyway.
+  const def=cardById[id]||{id,category:"consumable",rarity:"common",text:"",ref:""};
   const el=document.createElement("article");
   el.className="card r-"+def.rarity+" c-"+def.category;
   el.dataset.id=id;
   const add=(tag,cls,text)=>{const node=document.createElement(tag);node.className=cls;if(text!==undefined)node.textContent=text;el.appendChild(node);return node;};
   if(key!==null){const k=document.createElement("kbd");k.className="card-key";k.textContent=key;el.appendChild(k);}
-  add("header","card-eyebrow",CATEGORY_LABEL[def.category]);
-  add("div","card-glyph",def.glyph);
-  add("h4","card-name",def.name);
+  add("header","card-eyebrow",CATEGORY_LABEL[def.category]||def.category);
+  add("div","card-glyph",cardGlyph(def));
+  add("h4","card-name",cardTitle(def));
   add("div","card-rule");
-  add("p","card-text",def.text);
-  add("p","card-note",def.notes);
+  add("p","card-text",cardText(def));
+  add("p","card-note",cardNote(def));
   const foot=add("footer","card-foot");
   // Charge pips: the kit's authored total, filled to whatever is left. A card with no charge
   // track draws no pips at all, so the row only ever appears on something that can be spent
   // in pieces. `charges` is null while every copy is untouched — that reads as a full kit.
-  if(def.charges){
-    const left=charges===null?def.charges:charges;
+  if(def.charges>1){
+    const left=charges===null||charges===undefined?def.charges:charges;
     const pips=document.createElement("span");pips.className="pips";
     pips.setAttribute("aria-label",left+" of "+def.charges+" placements left");
     for(let i=0;i<def.charges;i++){const pip=document.createElement("i");pip.className="pip"+(i<left?" on":"");pips.appendChild(pip);}
@@ -98,6 +177,12 @@ export function cardFace(id,{key=null,count=1,charges=null}={}){
 // so a repaint and a hover are the same code path and the transition between them is CSS's
 // problem. Cards tilt about their own bottom edge, which is what keeps the bottoms on a
 // shallow curve instead of swinging them off it.
+/** Which held card is running the simulation's placement flow, or -1. state.cardTargeting names
+ *  the card by id and the hand holds one entry per id, so the two cannot disagree. */
+function activeIndex(){
+  const id=state.cardTargeting?.id;
+  return id?hand().findIndex(entry=>entry.id===id):-1;
+}
 function placeCards(){
   const cards=[...list.children],n=cards.length;
   if(!n)return;
@@ -127,6 +212,7 @@ function placeCards(){
     el.classList.toggle("raised",i===raised);
     el.classList.toggle("active",i===active&&i!==raised);
   });
+  root.classList.toggle("targeting",active>=0);
   // A raised card is tall enough to reach the notification lane, so the lane steps up out of
   // its way. #toast already transitions `bottom`, so this costs one class and no new motion.
   document.getElementById("game").classList.toggle("hand-raised",raised>=0);
@@ -135,7 +221,7 @@ function placeCards(){
 let arrivalId=null;   // an id the next repaint must hold back for a flight
 export function renderHand(){
   if(!list)return;
-  const cards=hand(),active=activeIndex();
+  const cards=hand();
   list.replaceChildren();
   cards.forEach((entry,i)=>{
     const el=cardFace(entry.id,{key:i<MAX_KEY?String(i+1):null,count:entry.count,charges:entry.charges});
@@ -150,10 +236,17 @@ export function renderHand(){
   if(focus>=cards.length)focus=cards.length?cards.length-1:-1;
   if(hover>=cards.length)hover=-1;
   root.classList.toggle("empty",cards.length===0);
-  root.classList.toggle("targeting",active>=0);
   if(hint)hint.hidden=cards.length===0;
   placeCards();
 }
+/**
+ * The buildHudChanged sink. Cancelling a placement (right-click, escape, the dock) clears
+ * state.cardTargeting and raises buildHudChanged, not handChanged — nothing about the cards
+ * themselves moved, only which one owns the cursor. Re-placing the fan is the whole response:
+ * the lifted card settles back and its violet goes out. Cheap, and it keeps hover alive, which
+ * a full repaint would not.
+ */
+export function syncHandTargeting(){ if(list)placeCards(); }
 
 // ── playing ─────────────────────────────────────────────────────────────────
 // The card's own rectangle is measured BEFORE the play, because "applied" repaints the hand

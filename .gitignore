@@ -1,3 +1,6 @@
 /.pi/prompts
 /.pi/subagents
 /.nojekyll
+
+/node_modules
+/tools/shots

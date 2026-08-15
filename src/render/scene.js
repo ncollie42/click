@@ -24,12 +24,13 @@
 // only reads its client rect to build a raycast ray.
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
-import {PAL, css, DROP_COLOR, TOWER_TOP} from "./palette.js";
+import {PAL, css, TOWER_TOP} from "./palette.js";
 import {
   S,WU,HU,gx,gz, flat, meshOf, isOutline, disposeGroup, FLOOR_TOP,
-  makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeWorker, makeCorpse,
-  makeDamageDummy, makeShowcaseProp,
-  makeBase, makeKing, makeBuilding, makeBlueprint, handMeshFor
+  makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeCorpse,
+  makeChest, makeDamageDummy, makeShowcaseProp,
+  makeMainBase, makePegWorker, makeKing, makeBuilding, makeBlueprint, handMeshFor,
+  outlineMat, outlineMatPx
 } from "./models.js";
 import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,
@@ -38,7 +39,8 @@ import {
   RESOURCE_KINDS,
   WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_LEASH,
   BUILDING_TYPES,
-  ENEMY_TYPES
+  ENEMY_TYPES,
+  XP_TIERS
 } from "../game/data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -46,10 +48,11 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, resourceDrops, buildings, damageDummies, showcaseProps, workerCorpses, particles,
+  trees, rocks, diamonds, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles,
   badgeAction, hoveredBuilding,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
-  heldWorker, heldBuilding, heldProp, workerCoatColor, workerLoad,
+  heldWorker, heldBuilding, heldChest, heldProp, workerLoad,
+  vacuumRadius,
   clamp, distance
 } from "../game/simulation.js";
 
@@ -68,7 +71,8 @@ export function connect(hooks){ Object.assign(HOOKS, hooks); }
 // between the two holders is by READER, not by widget: nothing below is ever read by the simulation,
 // and nothing in TUNE is presentation-only.
 //   handArc / shotSpeed / shotArc / shotSize — pure visuals of a flight the sim already resolved.
-//   showVacuumRing — whether to DRAW the ring; its radius is TUNE.vacuumRadius, the real reach.
+//   showVacuumRing — whether to DRAW the ring; its radius is the simulation's vacuumRadius(), the
+//                    real reach with the drafted buff stacks already in it, not TUNE alone.
 export const VIEW_TUNE = {
   handArc:2,           // world units a collected drop arcs on its way in   [slider vArc]
   showVacuumRing:true, //                                                   [slider vRing]
@@ -77,13 +81,6 @@ export const VIEW_TUNE = {
   shotSize:1,          // projectile scale multiplier                       [slider vShotSize]
 };
 
-function workerToolKind(worker){
-  if(worker.displayUnit)return worker.displayTool;
-  if(worker.job==="harvest")return worker.jobTarget?.kind;
-  if(worker.job==="staff")return BUILDING_TYPES[worker.jobTarget?.type]?.resource;
-  if(worker.job==="build")return "build";
-  return null;
-}
 
 // ─────────────────────────────────────────────────────────── renderer & cameras
 const sceneCanvas = document.getElementById("scene");
@@ -322,6 +319,14 @@ const syncDiamonds = makeLayer(makeDiamond, (g,n)=>{
   if(!spent) d.gem.rotation.y += .02;
   g.scale.y = view.heightScale/100;
 });
+const syncChests = makeLayer(makeChest,(g,chest)=>{
+  const held=chest===heldChest()&&state.mouse.inside,t=performance.now()/1000,wear=.9+.1*(chest.hp/chest.max);
+  if(held)g.position.set(gx(state.mouse.x),2.2+Math.sin(t*5)*.14,gz(state.mouse.y));else setXZ(g,chest);
+  g.rotation.z=held?Math.sin(t*7)*.09:shakeOf(chest);
+  g.userData.lid.rotation.x=chest.shake?Math.sin(chest.shake*30)*.08:0;
+  for(const material of g.userData.wearMats)material.emissive.setHex(chest.hp<chest.max?PAL.hurtGlow:0x000000);
+  g.scale.set(wear,wear*view.heightScale/100,wear);
+});
 const syncDrops = makeLayer(e=>makeDrop(e.kind), (g,r)=>{
   if(r.target==="hand"){
     // Flying to the cursor: parabolic hop, fast tumble, shrinking as it lands.
@@ -350,40 +355,166 @@ const syncShowcaseProps = makeLayer(p=>makeShowcaseProp(p.model),(g,p)=>{
   if(held)g.position.set(gx(state.mouse.x),2.2+Math.sin(performance.now()/200)*.14,gz(state.mouse.y));else setXZ(g,p);
   g.rotation.z=held?Math.sin(performance.now()/140)*.1:0;g.scale.y=view.heightScale/100;
 });
-const syncEnemies = makeLayer(e=>makeEnemy(e.type), (g,e)=>{
-  const def = ENEMY_TYPES[e.type], s = def.size;
-  setXZ(g,e, Math.abs(Math.sin(e.wob))*.1);
-  g.scale.set(s, s*view.heightScale/100, s);
-  g.rotation.z = Math.sin(e.wob)*.09;                    // the wobble-walk
-  const d = g.userData;
-  d.body.material.color.setHex(e.flash ? PAL.flash : d.baseColor);
-  const burning = !!e.status?.burn;
-  d.body.material.emissive.setHex(burning ? PAL.emberGlow : 0x000000);
-});
-const syncWorkers = makeLayer(makeWorker, (g,w)=>{
+// Enemies use the reviewed shard models (see makeEnemy in models.js): one model per enemy for its
+// whole life (types never change), a store rec for render-side facing/edge state, and exactly one
+// deterministic anim call per frame — the same contract syncWorkers follows. Drivers derive from
+// existing sim state only: movement deltas (locomotion + facing), attackCooldown cycling off
+// ENEMY_TYPES.rate (lunge/fire/thump strike frames land on the sim's actual hit, the worker-jab
+// phase trick), healFlash rising edge (one heal cast), wob (the sim's locomotion clock) for hop
+// phases. Showcase fixtures hold attackCooldown at 0, so they rest in idle poses by construction.
+// Status tints go through userData.tintMats — body rock only, never seams/eyes/FX.
+const enemyStore = new Map();
+function syncEnemies(list){
   const t = performance.now()/1000;
-  if(w===heldWorker() && state.mouse.inside){
-    // Lifted units ride the cursor, exactly like the demo's carried object.
-    g.position.set(gx(state.mouse.x), 2.2 + Math.sin(t*5)*.14, gz(state.mouse.y));
-    g.rotation.z = Math.sin(t*7)*.13;
-  } else {
-    setXZ(g,w, Math.abs(Math.sin(w.step*8))*.08);
-    g.rotation.z = Math.sin(w.step*8)*.10;
+  const seen = new Set();
+  for(const e of list){
+    let rec = enemyStore.get(e);
+    if(!rec){
+      const g = makeEnemy(e.type);
+      g.traverse(o=>{ if(o.isMesh) o.userData.ent = e; });   // for the occlusion test
+      scene.add(g);
+      rec = {g, inner:g.userData.inner, anims:g.userData.anims, tintMats:g.userData.tintMats,
+             px:e.x, py:e.y, yaw:Math.PI, targetYaw:undefined, healT:-9};
+      enemyStore.set(e, rec);
+    }
+    seen.add(e);
+    const {g, inner, anims} = rec;
+    g.visible = true;
+    // facing: movement direction while marching, the recorded shot target while planted
+    const dx = e.x-rec.px, dz = e.y-rec.py;
+    const moving = Math.hypot(dx,dz) > .05;
+    if(moving) rec.targetYaw = Math.atan2(dx,dz);
+    else if(e.shotFlash>0 && e.shotX!==undefined) rec.targetYaw = Math.atan2(e.shotX-e.x, e.shotY-e.y);
+    rec.px = e.x; rec.py = e.y;
+    if(rec.targetYaw!==undefined) rec.yaw += yawWrap(rec.targetYaw-rec.yaw)*.2;
+    const def = ENEMY_TYPES[e.type];
+    const engaged = e.attackCooldown>0;      // cycling combat timer; 0 = never attacked / fixture
+    const combatPhase = strike =>
+      (strike + (1 - clamp(e.attackCooldown,0,def.rate)/def.rate)) % 1;
+    if(e.type==="healer"){
+      if(e.healFlash>0 && t-rec.healT>1.2) rec.healT = t;   // rising edge: one cast cycle
+      if(t-rec.healT<.9 && anims.heal) anims.heal(inner, (t-rec.healT)/.9, t);
+      else anims.hover(inner, 0, t);
+    } else if(e.type==="archer"){
+      if(engaged && anims.fire) anims.fire(inner, combatPhase(.5), t);
+      else anims.sway(inner, 0, t);
+    } else if(e.type==="brute"){
+      // thump is both gait and swing: landing (~.55) syncs to the sim's hit when engaged,
+      // and to the wob clock while lumbering.
+      if(engaged && anims.thump) anims.thump(inner, combatPhase(.55), t);
+      else anims.thump(inner, moving ? (e.wob*.12)%1 : 0, t);
+    } else {
+      if(engaged && anims.lunge) anims.lunge(inner, combatPhase(.5), t);
+      else anims.scuttle(inner, moving ? (e.wob*.2)%1 : 0, t);
+    }
+    const burning = !!e.status?.burn;
+    for(const m of rec.tintMats)
+      m.emissive.setHex(e.flash>0 ? PAL.flash : burning ? PAL.emberGlow : 0x000000);
+    setXZ(g, e, 0);
+    g.rotation.set(0, rec.yaw, 0);
+    // ENEMY_TYPES.size is baked into the models — S only, plus the debug height slider.
+    g.scale.set(S, S*view.heightScale/100, S);
   }
-  g.scale.y = view.heightScale/100;
-  const d = g.userData;
-  d.body.material.color.set(workerCoatColor(w));
-  const load = workerLoad(w);
-  d.load.visible = load>0;
-  if(load){
-    const k = w.carried.diamond?"diamond":w.carried.coin?"coin":w.carried.dust?"dust":w.carried.stone?"stone":"wood";
-    d.load.material.color.setHex(DROP_COLOR[k]);
+  for(const [e,rec] of enemyStore){
+    if(seen.has(e)) continue;
+    scene.remove(rec.g); disposeGroup(rec.g); enemyStore.delete(e);
   }
-  const tool = workerToolKind(w);
-  const swinging = (w.combatTarget && w.attackCooldown>WORKER_ATTACK_RATE-.2) ||
-                   (tool && w.hitCooldown>WORKER_HIT_COOLDOWN-.2);
-  d.tool.rotation.z = swinging ? -1.1 : .25;
-});
+}
+// Workers swap their whole model when their job or carrying-state changes (the buildingStore
+// pattern) — the reviewed pegs carry the tool and the load IN the model, so there is nothing to
+// tint or toggle per frame; the per-frame work is choosing an animation and a facing.
+// The held worker is spliced out of state.workers by the sim, so it is appended back here — the
+// lifted unit rides the cursor as the real mesh, per the held-object contract below.
+const workerStore = new Map();
+const workerModelKey = w =>
+  (w.job==="haul" ? "worker-courier" : w.job==="build" ? "worker-builder" :
+   w.job==="guard" ? "worker-guard" : "worker-gatherer") + (workerLoad(w)>0 ? "+carry" : "");
+const yawWrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+function syncWorkers(){
+  const t = performance.now()/1000;
+  const held = heldWorker();
+  const list = held ? [...state.workers, held] : state.workers;
+  const seen = new Set();
+  for(const w of list){
+    const key = workerModelKey(w);
+    let rec = workerStore.get(w);
+    if(!rec || rec.key!==key){
+      if(rec){ scene.remove(rec.g); disposeGroup(rec.g); }
+      const g = makePegWorker(key);
+      g.traverse(o=>{ if(o.isMesh) o.userData.ent = w; });   // for the occlusion test
+      scene.add(g);
+      // yaw 0 faces +z — south, toward the default camera — so idle units show their faces.
+      rec = {key, g, inner:g.userData.inner, anims:g.userData.anims,
+             px:w.x, py:w.y, yaw:0, shield:0, moveT:-9, moveStart:-9};
+      workerStore.set(w, rec);
+    }
+    seen.add(w);
+    const {g, inner, anims} = rec;
+    g.visible = true;
+    // movement + facing from render-side position deltas; the sim knows nothing of either
+    const dx = w.x-rec.px, dz = w.y-rec.py;
+    const moving = Math.hypot(dx,dz) > .12;
+    if(moving){
+      rec.targetYaw = Math.atan2(dx,dz);
+      if(t-rec.moveT > .5) rec.moveStart = t;      // fresh start after standing: one carry-lag beat
+      rec.moveT = t;
+    } else if(w.combatTarget){
+      rec.targetYaw = Math.atan2(w.combatTarget.x-w.x, w.combatTarget.y-w.y);
+    } else if((w.job==="harvest"||w.job==="staff") && w.taskTarget?.x!==undefined){
+      rec.targetYaw = Math.atan2(w.taskTarget.x-w.x, w.taskTarget.y-w.y);
+    }
+    rec.px = w.x; rec.py = w.y;
+    if(rec.targetYaw!==undefined) rec.yaw += yawWrap(rec.targetYaw-rec.yaw)*.22;
+    // pose: exactly one anim per frame; every anim restores from rest first, so switching is safe
+    const guard = w.job==="guard";
+    const chopping = !moving && !w.combatTarget && (w.job==="harvest"||w.job==="staff") &&
+                     w.hitCooldown>0 && anims.chop;
+    let braced = false;
+    if(w===held && state.mouse.inside){
+      anims.idle(inner, 0, t);
+      g.position.set(gx(state.mouse.x), 2.2 + Math.sin(t*5)*.14, gz(state.mouse.y));
+      g.rotation.set(0, rec.yaw, Math.sin(t*7)*.13);
+      g.scale.set(S, S*view.heightScale/100, S);
+      continue;
+    }
+    if(guard && w.combatTarget && anims.jab){
+      // attackCooldown counts down from WORKER_ATTACK_RATE after each hit; the jab's thrust
+      // (p~.35) lands at the moment the sim struck, then recovers into the next wind.
+      anims.jab(inner, (.35 + (1 - clamp(w.attackCooldown,0,WORKER_ATTACK_RATE)/WORKER_ATTACK_RATE)) % 1, t);
+    } else if(chopping){
+      // hitCooldown counts down from WORKER_HIT_COOLDOWN after each swing; contact (p=.46)
+      // lands exactly at the strike, recovery and the next wind-up fill the cooldown.
+      anims.chop(inner, (.46 + (1 - clamp(w.hitCooldown,0,WORKER_HIT_COOLDOWN)/WORKER_HIT_COOLDOWN)) % 1, t);
+    } else if(moving){
+      if(rec.key.endsWith("+carry") && anims.carryLag && t-rec.moveStart < 1.1)
+        anims.carryLag(inner, (t-rec.moveStart)/1.1, t);
+      else anims.walk(inner, 0, t);
+    } else if(guard && anims.shieldUp){
+      // shield rises while an enemy is inside the leash and eases back down after
+      let threat = false;
+      for(const e of state.enemies)
+        if(distance(w.postX,w.postY,e.x,e.y) <= WORKER_LEASH){ threat = true; break; }
+      rec.shield = clamp(rec.shield + (threat ? .07 : -.05), 0, 1);
+      if(rec.shield > .02){ anims.shieldUp(inner, rec.shield, t); braced = true; }
+      else anims.idle(inner, 0, t);
+    } else {
+      anims.idle(inner, 0, t);
+    }
+    if(braced && w.combatTarget===null){
+      // face the nearest threat while braced, not the last walk direction
+      let best=1e9, bx=null, bz=null;
+      for(const e of state.enemies){ const d=distance(w.x,w.y,e.x,e.y); if(d<best){best=d;bx=e.x;bz=e.y;} }
+      if(bx!==null) rec.yaw += yawWrap(Math.atan2(bx-w.x, bz-w.y)-rec.yaw)*.22;
+    }
+    setXZ(g, w, 0);
+    g.rotation.set(0, rec.yaw, 0);
+    g.scale.set(S, S*view.heightScale/100, S);
+  }
+  for(const [w,rec] of workerStore){
+    if(seen.has(w)) continue;
+    scene.remove(rec.g); disposeGroup(rec.g); workerStore.delete(w);
+  }
+}
 const syncCorpses = makeLayer(c=>makeCorpse(c.coat), (g,c)=>{
   g.position.set(gx(c.x+c.pose), .1, gz(c.y+c.pose*.35));
   g.rotation.y = c.flip<0 ? Math.PI : 0;
@@ -428,7 +559,26 @@ function syncBuildings(){
   }
 }
 
-const baseMesh = makeBase(); scene.add(baseMesh);
+// The main base swaps between its asleep and awake models at the first XP tier (the orb wakes with
+// the thing). Its gulp is driven off the sim's basePulse RISING EDGE with a local clock, because
+// basePulse itself decays in a third of a second — too fast to phase a readable swallow.
+let baseRec = null, lastBasePulse = 0, gulpStart = -9;
+function syncBase(t){
+  const awake = state.xp >= XP_TIERS[0];
+  if(!baseRec || baseRec.awake!==awake){
+    if(baseRec){ scene.remove(baseRec.g); disposeGroup(baseRec.g); }
+    baseRec = {awake, g: makeMainBase(awake)};
+    scene.add(baseRec.g);
+  }
+  const g = baseRec.g;
+  g.scale.y = view.heightScale/100;
+  if(state.basePulse > lastBasePulse + .5) gulpStart = t;   // a delivery landed
+  lastBasePulse = state.basePulse;
+  const {inner, anims} = g.userData;
+  const gp = (t-gulpStart)/0.9;
+  if(gp>=0 && gp<1 && anims.gulp) anims.gulp(inner, gp, t);
+  else anims.idle(inner, 0, t);
+}
 const kingMesh = makeKing(); scene.add(kingMesh);
 
 // ─────────────────────────────────────────────────────────── ground rings (zones)
@@ -556,7 +706,7 @@ function drawAttacks(){
     if(!b.complete || b.type!=="tower" || !b.tower) continue;
     const t = b.tower, v = towerVariant(b);
     const col = v.impactColor || v.accent || css(PAL.ok);
-    const topH = 3.4*hs;                       // the tower deck
+    const topH = 3.7*hs;                       // open platform inside the chassis roof
     const area = v.attackMode==="periodic area" || v.attackMode==="manual area";
 
     // A rising flash means it just fired. Launch the visual for that shot.
@@ -1202,7 +1352,7 @@ function drawZones(){
 
   // Vacuum reach while right-drag is collecting — the real collectDrop() radius.
   if(VIEW_TUNE.showVacuumRing && state.collecting && m.inside)
-    ring(m.x, m.y, TUNE.vacuumRadius, css(PAL.ok), .45 + Math.sin(t*6)*.18);
+    ring(m.x, m.y, vacuumRadius(), css(PAL.ok), .45 + Math.sin(t*6)*.18);
 
   // The cursor bracket: one mark, always present, that RETARGETS instead of appearing and vanishing.
   // cursorMark() picks what it frames (see above) and the glide carries it there, so moving off a tree
@@ -1259,6 +1409,11 @@ function drawZones(){
       else  ring(m.x,m.y,WORKER_LEASH,css(PAL.bad),.7);
       ring(m.x, m.y, 16, a?css(PAL.ok):css(PAL.bad), .8);
     } else {
+      const chest=heldChest();
+      if(chest){
+        const a=snapToCellCenter(m.x,m.y),ok=canPlace(a.x,a.y,null,null,null,chest);
+        showFootprint(null,a.x,a.y,ok);showSelector(cellWorldRect(a.x,a.y),{color:css(ok?PAL.cellOk:PAL.cellBad),opacity:.9,pulse:indicatorPulse(t)});
+      }
       const prop=heldProp();
       if(prop){
         const a=snapToCellCenter(m.x,m.y),ok=canPlace(a.x,a.y,null,null,prop);
@@ -1307,16 +1462,15 @@ export function drawScene(){
   gridMat.opacity = GRID_OPACITY * (1 - night*.55);
 
   syncTrees(trees); syncRocks(rocks); syncDiamonds(diamonds);
+  syncChests(heldChest()?[...chests,heldChest()]:chests);
   syncDrops(resourceDrops); syncCorpses(workerCorpses);
-  syncEnemies(state.enemies); syncWorkers(state.workers);
+  syncEnemies(state.enemies); syncWorkers();
   syncDummies(damageDummies);syncShowcaseProps(showcaseProps);
   syncBuildings(); syncParticles(); syncHand();
 
-  const basePulse = 1 + state.basePulse*.1;
-  baseMesh.scale.set(basePulse, view.heightScale/100, basePulse);
-  // The pad marks BASE's RESERVED CELLS, so it must not breathe with the store pulse - same
-  // counter-scale syncBuildings() applies to every other building's footprint floor.
-  baseMesh.userData.floor.scale.set(1/basePulse, 1, 1/basePulse);
+  // Sim-px outline shells track the view panel's weight slider through the world-unit material.
+  outlineMatPx.uniforms.thickness.value = outlineMat.uniforms.thickness.value / S;
+  syncBase(performance.now()/1000);
   const king = state.king;
   kingMesh.position.set(gx(king.x), 0, gz(king.y));
   kingMesh.scale.y = view.heightScale/100;
@@ -1355,6 +1509,10 @@ export function scanSubjects(){
   for(const r of rocks)    if(r.depleted<=0) out.push([r,.6]);
   for(const n of diamonds) if(n.depleted<=0) out.push([n,.9]);
   for(const d of resourceDrops) out.push([d,.3]);
+  for(const chest of chests) out.push([chest,.8]);
+  // Extra tuple coordinates are render-space truth for held objects: the entity retains its exact
+  // restoration origin while its pooled model is lifted at the cursor.
+  if(heldChest()){const held=heldChest(),x=state.mouse.inside?state.mouse.x:held.x,y=state.mouse.inside?state.mouse.y:held.y;out.push([held,.8,x,y]);}
   for(const w of state.workers) out.push([w,.8]);
   for(const e of state.enemies) out.push([e,.8]);
   for(const d of damageDummies) out.push([d,1.2]);
@@ -1370,8 +1528,8 @@ export function scanBlockers(){
 export function countVisible(list, blockers){
   let vis = 0;
   const hidden = [];
-  for(const [e,h] of list){
-    _sp.set(gx(e.x), h*view.heightScale/100, gz(e.y));
+  for(const [e,h,scanX=e.x,scanY=e.y] of list){
+    _sp.set(gx(scanX), h*view.heightScale/100, gz(scanY));
     const dir = _sp.clone().sub(camera3.position);
     const dist = dir.length();
     occRay.set(camera3.position, dir.normalize());

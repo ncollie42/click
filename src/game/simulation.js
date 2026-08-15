@@ -5,7 +5,7 @@ import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
   GRID_COLS,
   FOOTPRINT_1x1,RESOURCE_FOOTPRINT,
-  RESOURCE_KINDS,FEED_XP,XP_TIERS,
+  RESOURCE_KINDS,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
   HOUSE_SLOTS,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,BLUEPRINT_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
@@ -13,7 +13,7 @@ import {
   ENEMY_POOL,
   NIGHT_WAVE_SPAWNS,NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_TIER_BONUS_SPAWNS,NIGHT_WAVE_RECIPES,
   DAY_DURATION,NIGHT_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
-  KING,STEADY_HAND_RATE
+  KING,STEADY_HAND_RATE,FIREBALL
 } from "./data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -23,6 +23,9 @@ import {
 import {SKILL_NODES,SKILL_EDGES,SKILL_TREE_ROOT_ID,SKILL_NODES_BY_ID,SKILL_NEIGHBORS} from "./skill-tree-data.js";
 // Authored showcase coordinates are immutable input; all live fixture objects remain owned here.
 import {SHOWCASE_MANIFEST} from "./showcase-data.js";
+// The authored card catalog: the draft reads it and NEVER writes it — a taken card tallies a
+// stack in state.draft, and cards.js keeps its implemented/inPool flags as authored.
+import {CARDS,RARITY_WEIGHTS,cardById} from "./cards.js";
 
 // ── runtime-tunable gameplay constants ──────────────────────────────────────
 // The view debugger REASSIGNS these while the game runs. An imported binding is
@@ -71,6 +74,9 @@ const NO_EFFECTS = {
   afterUpdate(){},           // one whole simulation step finished
   gameOver(){},              // the base fell; the run is over
   pauseChanged(){},          // (paused)
+  levelChanged(){},          // xp progress or the level itself moved
+  draftChanged(){},          // an offer appeared, was consumed, or was replaced by the next one
+  handChanged(){},           // the held-card list moved: a card arrived, was spent, or lost a charge
   buildHudChanged(){},       // build dock buttons / stack counts / house cost moved
   buildDockChanged(){},      // (category) which dock category is open
   upgradeMenuOpened(){},     // state.upgradeMenu is populated; show and render the panel
@@ -101,6 +107,10 @@ const rocks = [];
 const diamonds = [];
 const resourceDrops = [];
 const buildings = [];
+// Unopened chest ownership is exclusive: this collection owns placed chests; held chests are
+// temporarily owned only by state.heldObject. Destruction removes identity permanently before payout.
+// Normal lifetime is world seed until pickup/destruction/page reload; showcase rebuild replaces fixtures.
+const chests = [];
 // ── Showcase resource ownership flow ──
 // Written by: initializeRunMode()/rebuildShowcase() create and reset live sandbox fixtures.
 // Read by:    combat below and the read-only render/UI consumers.
@@ -117,12 +127,34 @@ let showcaseRevision=0;
 // Lifetime:   page load until run restart; no decay or removal.
 const workerCorpses = [];
 const particles = [];
+// Detached impact snapshots. Damage owns creation/age; overlay.js only projects and styles them.
+// `critical` is carried now so future crit resolution changes the hit call, not this data flow.
+const damageNumbers = [];
+let damageNumberSequence=0;
+// Deterministic validation/debug seam: only the next outcome tag is held, never resource contents.
+// Destruction consumes and clears it before rolling the authored weighted payout.
+let forcedChestOutcome=null;
 const state = {
   runMode:"normal",
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
-  xp:0,skillPoints:0,
-  baseHp:100,baseMax:100,gameOver:false,paused:false,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
+  // xp is the run TOTAL ever fed; levelXp is only the progress into the current level, so the two
+  // never have to be reconstructed from each other. Both are written by feedBase() alone.
+  xp:0,levelXp:0,level:0,skillPoints:0,
+  // The draft's whole run ledger: queued level-ups, queued dawn rewards, the live 3-card offer and
+  // which kind of offer it is, buff stacks taken, blueprints spent, banked free-cost waivers, and
+  // the two banked consumable effects. Authored tables stay untouched.
+  draft:{queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},blueprints:new Set(),waivers:{},calmNight:false,dayBonus:0},
+  // ── the hand ──
+  // Every card the player is HOLDING, oldest first. One entry per id: {id, count, charges} where
+  // count is how many copies are held and charges is the partially-spent kit's remaining placements
+  // (null when the top copy is untouched). Written only by the hand helpers below.
+  hand:[],
+  // The card currently steering state.buildMode, or null: {id, type, cast}. `type` is the authored
+  // BUILDING_TYPES key whose ghost/footprint the placement flow draws; `cast` (fireball) replaces
+  // "leave a building" with an instant effect at the anchor.
+  cardTargeting:null,
+  baseHp:100,baseMax:100,gameOver:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,buildMode:null,buildDockCategory:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed: total simulated seconds this run. It accumulates the same dt the phase countdown
   // spends, so it is game time, not wall time — it does not advance while paused or after a loss,
   // and a raised game speed makes it run as fast as the phases do.
@@ -168,10 +200,15 @@ const DBG={
 function legitimateGlobalUpgradeOwned(id){return buildings.some(building=>building.complete&&building.type==="obelisk"&&building.upgrades[id]);}
 function globalUpgradeEnabled(id){return legitimateGlobalUpgradeOwned(id);}
 function oppositeMapSide(side){return side===MAP_SIDE.NORTH?MAP_SIDE.SOUTH:side===MAP_SIDE.SOUTH?MAP_SIDE.NORTH:side===MAP_SIDE.EAST?MAP_SIDE.WEST:MAP_SIDE.EAST;}
-function xpTier(){return XP_TIERS.reduce((tier,threshold)=>tier+(state.xp>=threshold),0);}
+// THE night difficulty dial, re-derived from the level rather than stored: every third level opens
+// the next recipe tier and adds a bonus spawn batch, and tier 4 is the authored ceiling.
+function waveTier(){return Math.min(4,Math.floor(state.level/3));}
+// One night's spawn quota, calm-night discount included. The discount is consumed by whoever sets
+// a wave up, so a card drafted at night shrinks the NEXT wave, never the one already running.
+function nightSpawnTotal(){const total=NIGHT_WAVE_SPAWNS+waveTier()*NIGHT_TIER_BONUS_SPAWNS;return state.draft.calmNight?Math.max(1,Math.floor(total*CARD_CONSUMABLES.calmNightFactor)):total;}
 function chooseUpcomingNight(){
   const wave=state.nightWave,choices=MAP_SIDES.filter(side=>!wave.lastSides.includes(side));
-  const recipes=NIGHT_WAVE_RECIPES.filter(recipe=>recipe.minTier<=xpTier());
+  const recipes=NIGHT_WAVE_RECIPES.filter(recipe=>recipe.minTier<=waveTier());
   wave.upcomingSide=choices[(Math.random()*choices.length)|0];
   wave.upcomingRecipe=recipes[(Math.random()*recipes.length)|0];
 }
@@ -211,15 +248,19 @@ function seedWorld(){
     return place(80,45,(x,y)=>trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:trees.length%3,footprint:RESOURCE_FOOTPRINT}))
       && place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT}))
       && place(5,110,(x,y)=>diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT}),
-        (x,y)=>distance(x,y,BASE.x,BASE.y)>600);
+        (x,y)=>distance(x,y,BASE.x,BASE.y)>600)
+      // Chest samples after every authored node batch, so existing node counts and spacing stay intact.
+      // It still shares this attempt's occupied cells and bounded rejection budget.
+      && place(CHEST.startingCount,0,(x,y)=>chests.push({x,y,hp:CHEST.maxHp,max:CHEST.maxHp,shake:0,footprint:CHEST.footprint}),
+        (x,y)=>{const d=distance(x,y,state.camera.x,state.camera.y);return d>=CHEST.discoverMinRadius&&d<=CHEST.discoverMaxRadius;});
   };
   // A dense tree/rock scatter can leave no far-from-base cell that still clears the diamond gap, and no
   // amount of extra dart throwing fixes that layout — so a shortfall discards the world and re-rolls.
   for(let layout=0;layout<SEED_LAYOUT_TRIES;layout++){
-    trees.length=rocks.length=diamonds.length=0;
+    trees.length=rocks.length=diamonds.length=chests.length=0;
     if(attempt())return;
   }
-  throw new Error(`seedWorld: could not place 80 trees / 24 rocks / 5 diamonds in ${SEED_LAYOUT_TRIES} layout attempts`);
+  throw new Error(`seedWorld: could not place 80 trees / 24 rocks / 5 diamonds / ${CHEST.startingCount} chest in ${SEED_LAYOUT_TRIES} layout attempts`);
 }
 seedWorld();
 
@@ -232,7 +273,7 @@ function assertCombatKind(target){
   return target.combatKind;
 }
 function assertHeldKind(held){
-  invariant(held&&["worker","building","showcase-prop"].includes(held.kind),"unknown held kind "+held?.kind);
+  invariant(held&&["worker","building","chest","showcase-prop"].includes(held.kind),"unknown held kind "+held?.kind);
   return held.kind;
 }
 function makeShowcaseWorker(f,index){
@@ -241,13 +282,14 @@ function makeShowcaseWorker(f,index){
 }
 function clearShowcaseLive(){
   cancelHeldObject();closeUpgradeMenu();resetChop();state.showcaseFocus=null;
-  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=0;state.workers.length=state.enemies.length=0;
+  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=0;state.workers.length=state.enemies.length=0;
   invariant(!state.heldObject,"held object survived showcase teardown");
 }
 function buildShowcaseFixtures(){
   clearShowcaseLive();
   for(const f of SHOWCASE_MANIFEST.resourceNodes){const common={x:f.x,y:f.y,hp:10,max:10,shake:0,footprint:RESOURCE_FOOTPRINT,showcaseKey:"resource-node:"+f.id,showcaseLabel:f.label,showcaseSection:f.section};if(f.id==="wood")trees.push({...common,stump:0,variant:0});else if(f.id==="stone")rocks.push({...common,depleted:0});else diamonds.push({...common,depleted:0});}
   for(const f of SHOWCASE_MANIFEST.looseResources)resourceDrops.push({kind:f.id,x:f.x,y:f.y,groundY:f.y,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null,showcaseKey:"loose-resource:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
+  for(const f of SHOWCASE_MANIFEST.chests)chests.push({x:f.x,y:f.y,hp:CHEST.maxHp,max:CHEST.maxHp,shake:0,footprint:CHEST.footprint,showcaseKey:"chest:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
   const addComplete=(type,x,y,label,section,key)=>{const b=createBuilding(type,x,y);b.complete=true;b.pulse=0;b.showcaseKey=key;b.showcaseLabel=label;b.showcaseSection=section;if(type==="tower"){const v=TOWER_VARIANTS.basic;b.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:v.maxHp,maxHp:v.maxHp};}if(type==="house")b.spawnTimer=WORKER_SPAWN_TIME;buildings.push(b);return b;};
   for(const f of SHOWCASE_MANIFEST.buildings)addComplete(f.id,f.x,f.y,f.label,f.section,"building:"+f.id);
   for(const f of SHOWCASE_MANIFEST.towers){const b=addComplete("tower",f.x,f.y,TOWER_VARIANTS[f.id].name,f.section,"tower:"+f.id),v=TOWER_VARIANTS[f.id];b.tower={variant:f.id,cooldown:0,flash:0,hitFlash:0,hp:v.maxHp,maxHp:v.maxHp};}
@@ -261,7 +303,7 @@ function buildShowcaseFixtures(){
     {key:"fixed:base",entity:BASE,label:"base",section:"units",height:88},
     {key:"fixed:king",entity:state.king,label:"king",section:"units",height:34}
   );
-  for(const items of [[...trees,...rocks,...diamonds],resourceDrops,buildings,state.workers,state.enemies,damageDummies,showcaseProps])
+  for(const items of [[...trees,...rocks,...diamonds],resourceDrops,chests,buildings,state.workers,state.enemies,damageDummies,showcaseProps])
     for(const entity of items)if(entity.showcaseLabel)showcaseLabelRecords.push({key:entity.showcaseKey,entity,label:entity.showcaseLabel,section:entity.showcaseSection,height:entity.type==="tower"?70:38});
   invariant(new Set(showcaseLabelRecords.map(record=>record.key)).size===showcaseLabelRecords.length,"duplicate showcase label key");
   showcaseRevision++;
@@ -269,7 +311,7 @@ function buildShowcaseFixtures(){
 }
 // First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
-function resetShowcaseEconomy(){state.xp=0;state.skillPoints=0;effects.phaseHudChanged();effects.skillTreeChanged();}
+function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},blueprints:new Set(),waivers:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
   if(initializedMode&&initializedMode!==mode)throw new Error("run mode already initialized as "+initializedMode);
@@ -283,8 +325,29 @@ export function validateSimulationInvariants(){
   invariant(RUN_MODES.has(state.runMode),"invalid run mode "+state.runMode);
   invariant(Number.isFinite(state.baseHp)&&state.baseHp>=0&&state.baseHp<=state.baseMax,"illegal base health");
   invariant(Number.isInteger(state.xp)&&state.xp>=0,"illegal xp");
+  invariant(Number.isInteger(state.level)&&state.level>=0,"illegal level");
+  invariant(Number.isFinite(state.levelXp)&&state.levelXp>=0&&state.levelXp<levelCost(state.level),"illegal level progress");
   invariant(Number.isInteger(state.skillPoints)&&state.skillPoints>=0,"illegal skill points");
-  const collections=[trees,rocks,diamonds,resourceDrops,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles];
+  const offer=state.draft.offer;
+  invariant(offer===null||(Array.isArray(offer)&&offer.length>0&&offer.length<=3&&new Set(offer).size===offer.length&&offer.every(id=>cardById[id]?.inPool)),"illegal draft offer");
+  invariant(offer===null?state.draft.offerKind===null:DRAFT_KINDS.includes(state.draft.offerKind),"draft offer kind disagrees with the pending offer");
+  invariant(state.draft.offerKind!=="dawn"||offer.every(id=>DAWN_CATEGORIES.includes(cardById[id].category)),"a dawn offer may only hold consumables and blueprints");
+  invariant(state.draftPaused===!!offer,"draft pause flag disagrees with the pending offer");
+  // The hand: one stack per id, every id authored, every count real, partial kits mid-spend only.
+  invariant(new Set(state.hand.map(entry=>entry.id)).size===state.hand.length,"the hand holds two stacks of one card");
+  for(const entry of state.hand){
+    invariant(cardById[entry.id],"unknown card in hand: "+entry.id);
+    invariant(["consumable","blueprint"].includes(cardById[entry.id].category),"only consumables and blueprints may be held");
+    invariant(Number.isInteger(entry.count)&&entry.count>=1,"illegal hand stack count for "+entry.id);
+    invariant(entry.charges===null||(Number.isInteger(entry.charges)&&entry.charges>0&&entry.charges<=(cardById[entry.id].charges??1)),"illegal remaining charges for "+entry.id);
+  }
+  const targeting=state.cardTargeting;
+  if(targeting){
+    invariant(state.buildMode===targeting.type,"card targeting lost its placement mode");
+    const entry=handEntry(targeting.id);
+    invariant(entry&&entry.charges>0,"card targeting outlived the card it is placing");
+  }
+  const collections=[trees,rocks,diamonds,resourceDrops,chests,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers];
   for(const collection of collections)for(const item of collection)invariant(Number.isFinite(item.x)&&Number.isFinite(item.y),"non-finite entity coordinates");
   for(const enemy of state.enemies){
     invariant(assertCombatKind(enemy)==="enemy","non-enemy in enemy collection");
@@ -292,6 +355,16 @@ export function validateSimulationInvariants(){
     invariant(enemy.hp>=0&&enemy.hp<=enemy.max,"illegal enemy health");
   }
   for(const dummy of damageDummies){invariant(assertCombatKind(dummy)==="damage-dummy","non-dummy in dummy collection");invariant(dummy.hp>=0&&dummy.hp<=dummy.max,"illegal dummy health");}
+  invariant(new Set(chests).size===chests.length,"duplicate chest ownership");
+  for(const chest of chests){
+    const cell=worldToCell(chest.x,chest.y),center=cellToWorld(cell.cx,cell.cy);
+    invariant(chest.x===center.x&&chest.y===center.y,"chest is not cell aligned");
+    invariant(Number.isInteger(chest.hp)&&chest.hp>0&&chest.hp<=chest.max&&chest.max===CHEST.maxHp,"illegal chest health");
+    invariant(chest.footprint===CHEST.footprint,"invalid chest footprint");
+    invariant(!("contents" in chest)&&!("outcome" in chest),"chest contents rolled before destruction");
+    invariant(canPlace(chest.x,chest.y,null,null,null,chest),"placed chest overlaps another occupant");
+  }
+  for(const number of damageNumbers){invariant(Number.isFinite(number.amount)&&number.amount>0,"illegal damage number amount");invariant(Number.isFinite(number.age)&&number.age>=0,"illegal damage number age");invariant(typeof number.critical==="boolean","illegal damage number crit tag");invariant(["dealt","received"].includes(number.tone),"illegal damage number tone");}
   for(const drop of resourceDrops){
     invariant(RESOURCE_KIND_SET.has(drop.kind),"unknown resource drop kind "+drop.kind);
     invariant(drop.target===null||drop.target==="hand","invalid resource drop target "+drop.target);
@@ -304,9 +377,12 @@ export function validateSimulationInvariants(){
   for(const building of buildings)if(building.tower)invariant(building.tower.hp>=0&&building.tower.hp<=building.tower.maxHp,"illegal tower health");
   for(const id of state.skillTree.selected)invariant(state.skillTree.revealed.has(id)&&SKILL_NODES_BY_ID[id],"selected skill is not revealed");
   for(const id of state.skillTree.revealed)invariant(SKILL_NODES_BY_ID[id],"unknown revealed skill "+id);
-  if(state.heldObject){const held=state.heldObject,kind=assertHeldKind(held);invariant(Number.isFinite(held.originX)&&Number.isFinite(held.originY),"invalid held origin");if(kind==="worker")invariant(!state.workers.includes(held.object),"held worker still installed");else if(kind==="building")invariant(!buildings.includes(held.object),"held building still installed");else invariant(showcaseProps.includes(held.object),"held prop lost ownership");}
+  if(state.heldObject){const held=state.heldObject,kind=assertHeldKind(held);invariant(Number.isFinite(held.originX)&&Number.isFinite(held.originY),"invalid held origin");if(kind==="worker")invariant(!state.workers.includes(held.object),"held worker still installed");else if(kind==="building")invariant(!buildings.includes(held.object),"held building still installed");else if(kind==="chest"){invariant(!chests.includes(held.object),"held chest still installed");invariant(Number.isFinite(held.object.x)&&Number.isFinite(held.object.y),"held chest has non-finite coordinates");invariant(Number.isInteger(held.object.hp)&&held.object.hp>0&&held.object.hp<=held.object.max&&held.object.max===CHEST.maxHp,"held dead chest");invariant(held.object.footprint===CHEST.footprint,"held chest has invalid footprint");}else invariant(showcaseProps.includes(held.object),"held prop lost ownership");}
   if(state.runMode==="normal")invariant(!damageDummies.length&&!showcaseProps.length&&!showcaseLabelRecords.length,"normal mode contains showcase entities");
-  else invariant(state.enemies.every(enemy=>enemy.displayUnit)&&state.workers.every(worker=>worker.displayUnit),"showcase display units are not inert");
+  else{
+    invariant(state.enemies.every(enemy=>enemy.displayUnit)&&state.workers.every(worker=>worker.displayUnit),"showcase display units are not inert");
+    for(const record of showcaseLabelRecords)if(record.key.startsWith("chest:"))invariant(chests.includes(record.entity),"stale showcase chest label");
+  }
   return true;
 }
 
@@ -321,9 +397,10 @@ function startPrimaryClick(){state.primaryClick.held=true;}
 function stopPrimaryClick(){state.primaryClick.held=false;resetChop();}
 function stopGameplayInput(cancelPlacement=false){
   stopPrimaryClick();state.collecting=false;state.camera.panning=false;state.keys.clear();
-  // Held props remain simulation-owned but cancellation must restore their authored coordinates.
-  if(heldProp())cancelHeldObject();
-  if(cancelPlacement){state.buildMode=null;setBuildDockCategory(null);effects.buildHudChanged();}
+  // Modal/pause teardown must not strand a chest outside placed ownership; showcase props keep their
+  // existing authored-coordinate cancellation contract.
+  if(heldChest()||heldProp())cancelHeldObject();
+  if(cancelPlacement){state.buildMode=null;state.cardTargeting=null;setBuildDockCategory(null);effects.buildHudChanged();}
 }
 function togglePause(){
   if(state.gameOver)return;
@@ -333,7 +410,11 @@ function togglePause(){
 }
 function cancelBuildMode(){
   if(!state.buildMode)return false;
-  state.buildMode=null;effects.buildHudChanged();toast("building placement cancelled");return true;
+  // A cancelled card keeps whatever charges it had not placed: the hand entry was never removed,
+  // so dropping the targeting record alone leaves a partial card the player can play again.
+  const card=state.cardTargeting&&handEntry(state.cardTargeting.id);
+  state.buildMode=null;state.cardTargeting=null;effects.buildHudChanged();
+  toast(card?cardById[card.id].text+" put away — "+card.charges+" charge"+(card.charges===1?"":"s")+" left":"building placement cancelled");return true;
 }
 
 function spawnEnemy(side=null,enemyType=null){
@@ -362,11 +443,12 @@ function killEnemy(enemy,announce=true){
   burst(enemy.x,enemy.y,"#4b3b50",12);if(announce||droppedDust)toast(droppedDust?"enemy defeated — dust dropped":"enemy defeated");sound(150,.12);
 }
 function hitCombatTarget(target,quiet=false){
-  const kind=assertCombatKind(target);
-  if(kind==="damage-dummy")damageDummy(target,TUNE.clickDamage);
-  else if(kind==="enemy"){target.hp-=TUNE.clickDamage;target.flash=.16;burst(target.x,target.y,"#d25b49",5);if(target.hp<=0)killEnemy(target);}
+  // One crit roll per COMPLETED swing, so a critical hit and its damage number can never disagree.
+  const kind=assertCombatKind(target),critical=critHit(),damage=clickDamage()*(critical?CARD_BUFFS.critMultiplier:1);
+  if(kind==="damage-dummy")damageDummy(target,damage,"#d25b49",5,{critical});
+  else if(kind==="enemy")damageEnemy(target,damage,"#d25b49",5,null,{announce:true,critical});
   else invariant(false,"unhandled combat kind "+kind);
-  if(!quiet)sound(610,.045);
+  if(!quiet)sound(critical?820:610,.045);
 }
 function blastButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-34&&y<=building.y+34;}
 function manualTowerButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-42&&y<=building.y+34;}
@@ -385,7 +467,11 @@ function pickUpMovableAt(x,y){
   }
   const building=buildings.find(item=>item.complete&&item.type==="tower"&&towerVariant(item).movable&&manualTowerButtonHit(item,x,y));
   if(building){state.heldObject={kind:"building",object:building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;toast(towerVariant(building).name+" picked up — release right to place");return true;}
-  // Explicit secondary-action priority: workers, movable Shock Towers, showcase props, then vacuum.
+  // Explicit secondary-action priority: workers, movable Shock Towers, unopened chests,
+  // showcase props, then loose-resource vacuuming.
+  let chest=null,chestDistance=30;
+  for(const candidate of chests){const d=distance(x,y,candidate.x,candidate.y);if(candidate.hp>0&&d<chestDistance){chest=candidate;chestDistance=d;}}
+  if(chest){stopPrimaryClick();state.heldObject={kind:"chest",object:chest,originX:chest.x,originY:chest.y};chests.splice(chests.indexOf(chest),1);state.collecting=false;toast("unopened chest picked up — release right to place");return true;}
   if(state.runMode==="showcase"){
     const prop=showcaseProps.find(item=>distance(x,y,item.x,item.y)<24);
     if(prop){state.heldObject={kind:"showcase-prop",object:prop,originX:prop.x,originY:prop.y};state.collecting=false;toast(prop.id+" picked up — release right to place");return true;}
@@ -394,6 +480,7 @@ function pickUpMovableAt(x,y){
 }
 function heldWorker(){return state.heldObject?.kind==="worker"?state.heldObject.object:null;}
 function heldBuilding(){return state.heldObject?.kind==="building"?state.heldObject.object:null;}
+function heldChest(){return state.heldObject?.kind==="chest"?state.heldObject.object:null;}
 function heldProp(){return state.heldObject?.kind==="showcase-prop"?state.heldObject.object:null;}
 // Canonical completed-building assignment. Construction inheritance, placement, and vacancy filling share it.
 function builtJobAssignment(building){
@@ -428,6 +515,7 @@ function installHeldAtOrigin(held){
   const kind=assertHeldKind(held);
   if(kind==="worker")state.workers.push(object);
   else if(kind==="building")buildings.push(object);
+  else if(kind==="chest")chests.push(object);
   else if(kind==="showcase-prop")invariant(showcaseProps.includes(object),"held prop left its owned collection");
   else invariant(false,"unhandled held kind "+kind);
 }
@@ -466,6 +554,12 @@ function dropHeldObject(){
     else{prop.x=held.originX;prop.y=held.originY;toast("invalid ground — "+prop.id+" returned");}
     invariant(showcaseProps.includes(prop),"placed prop left its owned collection");state.heldObject=null;sound(260,.06);return true;
   }
+  if(held.kind==="chest"){
+    const chest=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
+    if(anchor&&canPlace(anchor.x,anchor.y,null,null,null,chest)){chest.x=anchor.x;chest.y=anchor.y;toast("unopened chest placed");}
+    else{chest.x=held.originX;chest.y=held.originY;toast("invalid ground — chest returned");}
+    chests.push(chest);state.heldObject=null;sound(260,.06);return true;
+  }
   // Relocation validates the tower's own 3x3 footprint at the snapped anchor, excluding itself.
   // Only x/y are ever touched: cooldown, hp, variant and upgrade state ride along on the same object,
   // and an invalid drop restores the exact origin recorded at pickup.
@@ -479,17 +573,17 @@ function activateManualTower(building){
   const tower=building.tower,variant=towerVariant(building);if(!variant.manual)return;
   if(tower.cooldown>0){toast(variant.name+" recharging: "+tower.cooldown.toFixed(1)+"s");return;}
   if(state.runMode==="showcase"&&!damageDummies.some(dummy=>dummy.defeatedTimer<=0&&distance(building.x,building.y,dummy.x,dummy.y)<=variant.effectRadius))return;
-  tower.cooldown=variant.cooldown;tower.flash=.35;
+  tower.cooldown=towerCooldown(variant);tower.flash=.35;
+  const damage=towerDamage(variant);
   eachTowerCombatTarget(enemy=>{
-    if(distance(building.x,building.y,enemy.x,enemy.y)<=variant.effectRadius)damageCombatTarget(enemy,variant.damage,variant.accent,7,building);
+    if(distance(building.x,building.y,enemy.x,enemy.y)<=variant.effectRadius)damageCombatTarget(enemy,damage,variant.accent,7,building);
   });
   burst(building.x,building.y,variant.accent,24);toast("shock pulse fired");sound(variant.sound,.28);
 }
 function detonateBlast(building){
   for(const enemy of [...state.enemies]){
     const d=distance(building.x,building.y,enemy.x,enemy.y),radius=BUILDING_TYPES.blast.effectRadius;if(d>radius)continue;
-    enemy.hp-=d<radius*.5?5:3;enemy.flash=.2;
-    if(enemy.hp<=0)killEnemy(enemy,false);
+    damageEnemy(enemy,d<radius*.5?BUILDING_TYPES.blast.innerDamage:BUILDING_TYPES.blast.damage,"#e39a3f",0);
   }
   for(let i=0;i<42;i++)particles.push({x:building.x,y:building.y,vx:rand(-180,180),vy:rand(-190,40),life:rand(.35,.9),col:i%2?"#e39a3f":"#b84b38"});
   buildings.splice(buildings.indexOf(building),1);toast("blast charge detonated");sound(70,.3);
@@ -499,6 +593,11 @@ function createBuilding(type,x,y){
   return {type,x,y,cost,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
 }
 
+function chestAt(x,y){
+  let target=null,best=32;
+  for(const chest of chests){const d=distance(x,y,chest.x,chest.y);if(chest.hp>0&&d<best){target=chest;best=d;}}
+  return target;
+}
 function playerResourceAt(x,y){
   let target=null,kind=null,best=34;
   for(const tree of trees){if(tree.stump>0)continue;const d=distance(x,y,tree.x,tree.y-10);if(d<best){best=d;target=tree;kind="wood";}}
@@ -515,6 +614,7 @@ const PRIMARY_ACTIONS={
   wood:   {kind:"chop",   icon:"axe"},
   stone:  {kind:"mine",   icon:"pickaxe"},
   diamond:{kind:"mine",   icon:"pickaxe"},
+  chest:  {kind:"break-chest",icon:"axe"},
   enemy:  {kind:"attack", icon:"sword"}
 };
 /**
@@ -528,10 +628,10 @@ const PRIMARY_ACTIONS={
  * disagree, and a future icon preview needs no parallel selection logic.
  *
  * Pure: reads the world lists, mutates nothing, returns a fresh descriptor.
- * Priority is enemies before resources — a foe standing on a tree gets swung at.
- * Felled trees, depleted rocks/diamonds and dead-or-removed enemies never resolve.
+ * Priority is enemies, then unopened chests, then resources.
+ * Felled trees, depleted rocks/diamonds and dead-or-removed enemies/chests never resolve.
  *
- * @returns {null|{target:object,kind:"chop"|"mine"|"attack",resource:null|"wood"|"stone"|"diamond",icon:"axe"|"pickaxe"|"sword"}}
+ * @returns {null|{target:object,kind:"chop"|"mine"|"break-chest"|"attack",resource:null|"wood"|"stone"|"diamond",icon:"axe"|"pickaxe"|"sword"}}
  */
 function resolvePrimaryAction(x,y){
   const enemy=enemyAt(x,y);
@@ -539,6 +639,8 @@ function resolvePrimaryAction(x,y){
   // showcase. The membership guard rejects stale references after death/reset/rebuild.
   if(enemy&&enemy.hp>0&&(assertCombatKind(enemy)==="damage-dummy"?damageDummies.includes(enemy):state.enemies.includes(enemy)))
     return {target:enemy,kind:PRIMARY_ACTIONS.enemy.kind,resource:null,icon:PRIMARY_ACTIONS.enemy.icon};
+  const chest=chestAt(x,y);
+  if(chest)return {target:chest,kind:PRIMARY_ACTIONS.chest.kind,resource:null,icon:PRIMARY_ACTIONS.chest.icon};
   const node=playerResourceAt(x,y);   // already skips stumps and depleted nodes
   if(!node)return null;
   const action=PRIMARY_ACTIONS[node.kind];
@@ -560,23 +662,29 @@ function updatePrimaryClick(dt){
   const hit=resolvePrimaryAction(m.x,m.y);
   if(!hit){resetChop();return;}
   beginChop(hit);
-  chopState.t+=dt*(globalUpgradeEnabled("autoClick")?STEADY_HAND_RATE:1);
+  chopState.t+=dt*chopFillRate();
   if(chopState.t<TUNE.chopTime)return;
   chopState.t=0;
   const quiet=primary.audioCooldown>0;
   if(hit.kind==="attack")hitCombatTarget(hit.target,quiet);
+  else if(hit.kind==="break-chest")hitChest(hit.target,quiet);
   else hitResource(hit.target,hit.resource,false,quiet);
   if(!quiet)primary.audioCooldown=.25;
 }
 function leftClick(){
-  if(state.gameOver||state.paused)return;
+  if(state.gameOver||state.paused||heldChest())return;
   const m=state.mouse;
+  // A played card owns the click outright, ahead of even the swing: unlike build mode — which the
+  // player may leave armed while fighting — targeting was an explicit commitment made this second,
+  // and a fireball aimed INTO a crowd must not turn into a punch at whoever stands nearest the
+  // cursor. Right click still cancels it.
+  if(state.cardTargeting){placeCardCharge(snapToCellCenter(m.x,m.y));return;}
   // Same resolver the hover ring and the hold timer read, so the press arms
   // exactly what was previewed. Resolved once up front; it is pure, and every
   // branch between here and the harvest fall-through returns before using it.
   const action=resolvePrimaryAction(m.x,m.y);
-  // Attacking is timed too — the press only arms the bar.
-  if(action&&action.kind==="attack"){beginChop(action);return;}
+  // Attacking and chest breaking outrank placement; the press only arms their shared hold bar.
+  if(action&&(action.kind==="attack"||action.kind==="break-chest")){beginChop(action);return;}
   if(state.buildMode){
     // Commit uses the same snap the ghost preview drew with, so what you see is what lands.
     const type=state.buildMode,anchor=snapToCellCenter(m.x,m.y);
@@ -589,13 +697,18 @@ function leftClick(){
       // completion is unconditional a free-cost placement can never leave a stuck blueprint.
       const freed=DBG.freeCosts&&!placed.complete;
       if(freed)completeBuilding(placed);
+      // A banked blueprint waiver finishes this one build for nothing, through the same
+      // completeBuilding() a satisfied delivery reaches. The cost snapshot is left as authored and
+      // state.stored is never touched; the waiver is spent only when it actually pays for something.
+      const waived=!placed.complete&&spendWaiver("building:"+type);
+      if(waived){completeBuilding(placed);toast("blueprint spent — "+def.name+" raised free");}
       // unlimited charges (debug): the stack counter is simply never decremented, so the
       // authored starting counts and the "n left" HUD stay honest the moment it is off.
       if(def.stack){if(!DBG.unlimitedCharges)state.buildStacks[type]--;state.buildMode=DBG.unlimitedCharges||state.buildStacks[type]>0?type:null;}else state.buildMode=null;
       setBuildDockCategory(null);effects.buildHudChanged();
       sound(240,.06);
       // completeBuilding() already announced a freed blueprint's own ready message.
-      if(!freed)toast(def.stack?def.name+" placed — "+(DBG.unlimitedCharges?"unlimited":state.buildStacks[type]+" stacks remain"):def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
+      if(!freed&&!waived)toast(def.stack?def.name+" placed — "+(DBG.unlimitedCharges?"unlimited":state.buildStacks[type]+" stacks remain"):def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
     }else toast("needs clear ground away from the base");
     return;
   }
@@ -609,16 +722,59 @@ function leftClick(){
   if(tower){openUpgradeMenu(tower,"tower");return;}
   const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
   if(pile){unloadStockpile(pile,m.x);return;}
-  if(!action){toast("left click a tree, rock, or diamond deposit");return;}
-  // Harvesting no longer resolves on the press; updatePrimaryClick() fills the timer.
+  if(!action){toast("left click a chest, tree, rock, or diamond deposit");return;}
+  // Harvesting/chest breaking no longer resolves on the press; updatePrimaryClick() fills the timer.
   beginChop(action);
+}
+
+function rollChestResource(){
+  const total=RESOURCE_KINDS.reduce((sum,kind)=>sum+CHEST.weights[kind],0);
+  let roll=Math.random()*total;
+  for(const kind of RESOURCE_KINDS){roll-=CHEST.weights[kind];if(roll<0)return kind;}
+  return RESOURCE_KINDS.at(-1);
+}
+function scatterChestReward(kind,x,y,wide,index=0,count=1){
+  const angle=(index/count)*Math.PI*2+rand(-.28,.28),radius=wide?rand(52,126):rand(8,24);
+  spawnResource(kind,clamp(x+Math.cos(angle)*radius,35,W-35),clamp(y+Math.sin(angle)*radius,35,H-35),null);
+}
+function destroyChest(chest){
+  const at=chests.indexOf(chest);if(at<0)return false;
+  chests.splice(at,1);if(chopState.target===chest)resetChop();
+  if(chest.showcaseKey){
+    const labelAt=showcaseLabelRecords.findIndex(record=>record.entity===chest);
+    if(labelAt>=0){showcaseLabelRecords.splice(labelAt,1);showcaseRevision++;}
+  }
+  const outcome=forcedChestOutcome||(Math.random()<CHEST.outcomeOdds.cache?"cache":"pinata");forcedChestOutcome=null;
+  const pinata=outcome==="pinata",payout=pinata?CHEST.pinataPayout:CHEST.cachePayout;
+  const rewards=Array.from({length:payout},rollChestResource);
+  if(pinata){
+    rewards.forEach((kind,index)=>scatterChestReward(kind,chest.x,chest.y,true,index,rewards.length));
+    burst(chest.x,chest.y,"#e3b445",34);burst(chest.x,chest.y,"#b98a4e",22);
+    toast("loot piñata — "+payout+" resources burst free!");sound(880,.3);
+  }else{
+    rewards.forEach((kind,index)=>scatterChestReward(kind,chest.x,chest.y,false,index,rewards.length));
+    burst(chest.x,chest.y,"#d8c47c",18);
+    toast("chest cache — "+payout+" resources dropped nearby");sound(540,.22);
+  }
+  return true;
+}
+function hitChest(chest,quiet=false){
+  if(!chests.includes(chest)||chest.hp<=0)return false;
+  chest.hp--;chest.shake=1;addDamageNumber(chest,1);burst(chest.x,chest.y-8,"#8a7358",6);
+  if(!quiet)sound(290+chest.hp*35,.06);
+  if(chest.hp<=0)destroyChest(chest);
+  return true;
 }
 
 // Player and harvesting workers share this path: harvesting automation creates physical drops, never stored resources.
 function hitResource(target,kind,automatic,quiet=false){
+  // Only a player chop can crit; worker automation keeps its one authored drop per hit.
+  const critical=!automatic&&critHit(),drops=automatic?1:TUNE.chopYield*(critical?CARD_BUFFS.critMultiplier:1);
+  // Player and worker chops share this impact path, so every damaged resource gets combat text.
+  addDamageNumber(target,1,{critical});
   target.hp--;
   target.shake=1;
-  for(let i=0;i<(automatic?1:TUNE.chopYield);i++)
+  for(let i=0;i<drops;i++)
     spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
   burst(target.x,target.y-12,kind==="wood"?"#9fb351":kind==="diamond"?"#78d7e5":"#bbb7ae",5);
   if(!automatic&&!quiet)sound(kind==="wood"?350+target.hp*25:kind==="diamond"?760:170+target.hp*15,.045);
@@ -650,7 +806,7 @@ function collectDrop(silent=false){
   const carried=carriedTotal();
   if(carried+incoming>=state.capacity){if(!silent){toast("hands full — drop your resources");sound(110,.08);}return false;}
   const m=state.mouse;
-  let nearest=null,best=TUNE.vacuumRadius;
+  let nearest=null,best=vacuumRadius();
   for(const drop of resourceDrops){
     if(drop.target)continue;
     const d=distance(m.x,m.y,drop.x,drop.y);
@@ -750,23 +906,210 @@ function dropToUpgrade(building){
 function upgradeButtonHit(building,x,y){const top=building.type==="obelisk"?building.y-66:building.y-48;return x>=building.x-30&&x<=building.x+30&&y>=top&&y<=building.y+38;}
 
 // The sole state.xp writer. It consumes one caller-owned resource-count record atomically.
+// XP enters the run HERE and nowhere else, so levels — and therefore drafts — can only come
+// from feeding the thing.
 function feedBase(counts,particleFromX,particleFromY){
-  const previousTier=xpTier();let units=0,gained=0;
+  let units=0,gained=0;
   for(const kind of RESOURCE_KINDS){
     const amount=counts[kind];units+=amount;gained+=FEED_XP[kind]*amount;counts[kind]=0;
     handoffParticles(BASE.x,BASE.y,kind,amount,particleFromX,particleFromY);
   }
   if(gained<=0)return 0;
-  state.xp+=gained;state.basePulse=1;
+  state.xp+=gained;state.levelXp+=gained;state.basePulse=1;
   toast("fed "+units+" — "+gained+" xp");sound(520,.08);
-  const crossed=xpTier()-previousTier;
-  for(let i=0;i<crossed;i++){
-    state.skillPoints++;
-    if(state.runMode!=="showcase"){toast("the thing stirs — skill point earned");sound(180,.25);}
-  }
-  effects.phaseHudChanged();
+  // One feed may cross several levels; each crossing queues its own offer.
+  while(state.levelXp>=levelCost(state.level))gainLevel();
+  effects.levelChanged();effects.phaseHudChanged();
   return gained;
 }
+function gainLevel(){
+  state.levelXp-=levelCost(state.level);state.level++;
+  if(state.level%SKILL_POINT_LEVELS===0){state.skillPoints++;if(state.runMode!=="showcase"){toast("the thing stirs — skill point earned");sound(180,.25);}}
+  if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
+  toast("level "+state.level);sound(660,.16);
+  state.draft.queue++;refillDraft();
+}
+
+// ── the draft ───────────────────────────────────────────────────────────────
+// Two things deal offers now, and both use this one machinery: a LEVEL-UP deals three cards from the
+// whole eligible catalog, and DAWN — the moment a night rolls into a day — deals three from the
+// consumable/blueprint half of it. Each offer is three DISTINCT eligible cards drawn by rarity
+// weight. Exactly one offer is live at a time (whichever kind it is), the rest wait in their queues,
+// and the world is halted while one pends — via state.draftPaused, a flag of its own, so a player
+// pause can be on or off underneath it. The choice arrives through chooseDraft(); nothing else may
+// write state.draft. What a taken card DOES is routed by takeCard() below, not by the dealer.
+const DRAFT_KINDS=["level","dawn"];
+const DAWN_CATEGORIES=["consumable","blueprint"];
+function levelCost(level){return LEVEL_CURVE.base*LEVEL_CURVE.growth**level;}
+function buffStacks(id){return state.draft.buffs[id]||0;}
+// Consumables carry no `stacks`, so the same test lets them repeat forever and caps buffs. A
+// blueprint leaves the pool the moment it is taken, held in hand or already played.
+function draftEligible(categories=null){return CARDS.filter(card=>card.inPool&&(!categories||categories.includes(card.category))&&(card.category==="blueprint"?!state.draft.blueprints.has(card.id):buffStacks(card.id)<(card.stacks??Infinity)));}
+function drawDraftOffer(categories=null){
+  const pool=draftEligible(categories),picks=[];
+  while(picks.length<3&&pool.length){
+    let roll=Math.random()*pool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),index=0;
+    while(index<pool.length-1&&(roll-=RARITY_WEIGHTS[pool[index].rarity])>=0)index++;
+    picks.push(pool.splice(index,1)[0].id);   // splice keeps the three distinct
+  }
+  return picks.length?picks:null;
+}
+// An empty pool consumes its queued reward silently, so a run with nothing left to offer never
+// stalls. Level-ups are served before dawn rewards, so a dawn that lands on a pending level offer
+// queues behind it rather than jumping it.
+function refillDraft(){
+  const draft=state.draft;
+  while(!draft.offer&&(draft.queue>0||draft.dawnQueue>0)){
+    const kind=draft.queue>0?"level":"dawn";
+    if(kind==="level")draft.queue--;else draft.dawnQueue--;
+    draft.offer=drawDraftOffer(kind==="dawn"?DAWN_CATEGORIES:null);
+    draft.offerKind=draft.offer?kind:null;
+  }
+  state.draftPaused=!!draft.offer;
+  if(state.draftPaused){stopGameplayInput();closeUpgradeMenu();}
+  effects.draftChanged();
+}
+/** Dawn's own reward, queued by transitionPhase() when a night ends. */
+function queueDawnReward(){
+  if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
+  state.draft.dawnQueue++;refillDraft();
+}
+// THE one place a card becomes an effect — a buff the instant it is drafted, a consumable the
+// instant it is PLAYED out of the hand. Buff entries are deliberately empty: their whole effect is
+// the stack tally, layered over the authored numbers by the accessors below.
+const CARD_EFFECTS={
+  clickSpeed(){},critClicks(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},towerDamage(){},towerSpeed(){},clickDamage(){},
+  handCarry(){state.capacity+=CARD_BUFFS.handCarry;},
+  baseHp(){state.baseMax+=CARD_BUFFS.baseHp;state.baseHp+=CARD_BUFFS.baseHp;},
+  woodBundle(){state.stored.wood+=CARD_CONSUMABLES.woodBundle;state.basePulse=1;},
+  stoneBundle(){state.stored.stone+=CARD_CONSUMABLES.stoneBundle;state.basePulse=1;},
+  dustBundle(){state.stored.dust+=CARD_CONSUMABLES.dustBundle;state.basePulse=1;},
+  healBase(){state.baseHp=state.baseMax;state.basePulse=1;},
+  repairAll(){for(const building of [...buildings,heldBuilding()])if(building?.tower)building.tower.hp=building.tower.maxHp;},
+  longDay(){if(state.clock.phase==="day")state.clock.remaining+=CARD_CONSUMABLES.longDay;else state.draft.dayBonus+=CARD_CONSUMABLES.longDay;},
+  calmNight(){state.draft.calmNight=true;}
+};
+/** A drafted BUFF, applied on the spot: one more stack, and its (usually empty) effect. */
+function applyBuff(id){
+  const card=cardById[id],effect=CARD_EFFECTS[id];
+  if(!card||!effect)return false;
+  state.draft.buffs[id]=buffStacks(id)+1;
+  effect();toast("drafted: "+card.text);sound(700,.16);
+  return true;
+}
+/**
+ * THE routing rule for a taken card, shared by level and dawn offers. A buff lands immediately; a
+ * consumable or blueprint lands in the HAND and does nothing at all until it is played. A blueprint
+ * also leaves the pool here — one copy per run, whether it is still held or already spent.
+ */
+function takeCard(id){
+  const card=cardById[id];
+  if(!card)return false;
+  if(card.category==="buff")return applyBuff(id);
+  if(card.category==="blueprint")state.draft.blueprints.add(id);
+  addToHand(id);toast("drawn: "+card.text);sound(700,.16);
+  return true;
+}
+
+// ── the hand ────────────────────────────────────────────────────────────────
+// The held cards, and the ONLY writers of state.hand / state.cardTargeting. Everything here fires
+// handChanged() on its way out, so a UI never has to poll. Draw order is arrival order: a new id is
+// appended, a repeat thickens the stack it already has.
+function handEntry(id){return state.hand.find(entry=>entry.id===id)||null;}
+function addToHand(id){
+  const entry=handEntry(id);
+  if(entry)entry.count++;else state.hand.push({id,count:1,charges:null});
+  effects.handChanged();
+}
+/** Spend one whole copy: the stack thins, an emptied stack leaves, and the next copy starts fresh. */
+function consumeHandCopy(entry){
+  entry.count--;entry.charges=null;
+  if(entry.count<=0)state.hand.splice(state.hand.indexOf(entry),1);
+  effects.handChanged();
+}
+// Consumables that ask WHERE. Each names the authored building type whose ghost, footprint and
+// radius ring the existing placement flow already draws — so targeting needs no render work at all.
+// `cast` is the escape hatch for a spell: fireball borrows the blast charge's ghost (its radius IS
+// FIREBALL.radius) and detonates on placement instead of leaving anything behind.
+const TARGETED_CARDS={
+  blastCharge:{type:"blast"},
+  spikeKit:{type:"spikes"},
+  mineKit:{type:"landmine"},
+  tarKit:{type:"tar"},
+  fireball:{type:"blast",cast:castFireball}
+};
+function cardCharges(id){return cardById[id].charges??1;}
+/** The fireball's whole effect: one area hit at the anchor, no building, blast-style noise and dust. */
+function castFireball(x,y){
+  for(const enemy of [...state.enemies])if(distance(x,y,enemy.x,enemy.y)<=FIREBALL.radius)damageEnemy(enemy,FIREBALL.damage,"#ef7b3f",0);
+  for(let i=0;i<42;i++)particles.push({x,y,vx:rand(-180,180),vy:rand(-190,40),life:rand(.35,.9),col:i%2?"#ef7b3f":"#b84b38"});
+  toast("fireball");sound(70,.3);
+}
+/** Arm the placement flow for one held card. The card STAYS in hand while its charges are spent. */
+function beginCardTargeting(entry){
+  const spec=TARGETED_CARDS[entry.id];
+  entry.charges??=cardCharges(entry.id);
+  state.cardTargeting={id:entry.id,type:spec.type,cast:spec.cast||null};
+  state.buildMode=spec.type;setBuildDockCategory(null);effects.buildHudChanged();effects.handChanged();
+  toast(cardById[entry.id].text+" — click clear ground ("+entry.charges+" charge"+(entry.charges===1?"":"s")+")");sound(660,.08);
+  return "targeting";
+}
+/**
+ * One click of a targeted card. Placement validity is the same canPlace() the ghost colours itself
+ * with, so what the player sees is what lands — for the fireball too, which aims with the blast
+ * charge's footprint. A charge is spent only when something actually happened, and the card leaves
+ * the hand only on the charge that empties it.
+ */
+function placeCardCharge(anchor){
+  const targeting=state.cardTargeting,entry=handEntry(targeting.id);
+  if(!entry||!(entry.charges>0)){endCardTargeting();return false;}
+  if(!canPlace(anchor.x,anchor.y,targeting.type)){toast("needs clear ground away from the base");return false;}
+  if(targeting.cast)targeting.cast(anchor.x,anchor.y);
+  else{
+    // Free charges: these are the authored cost-0 instant buildings, and the card — never
+    // state.buildStacks — is what pays for them.
+    buildings.push(createBuilding(targeting.type,anchor.x,anchor.y));
+    toast(BUILDING_TYPES[targeting.type].name+" placed — "+(entry.charges-1)+" charge"+(entry.charges===1?"":"s")+" left");sound(240,.06);
+  }
+  entry.charges--;
+  if(entry.charges<=0){consumeHandCopy(entry);endCardTargeting();}
+  else effects.handChanged();
+  return true;
+}
+function endCardTargeting(){
+  state.cardTargeting=null;state.buildMode=null;setBuildDockCategory(null);effects.buildHudChanged();
+}
+// ── blueprint waivers ──
+// A played blueprint banks one free-cost token, keyed by the card's own authored ref
+// ("tower:sniper", "building:obelisk"). It is spent by the next purchase of exactly that thing —
+// once. Nothing here reads or writes an authored cost table; the purchase simply skips the delivery.
+function waiverAvailable(ref){return (state.draft.waivers[ref]||0)>0;}
+function spendWaiver(ref){
+  if(!waiverAvailable(ref))return false;
+  state.draft.waivers[ref]--;return true;
+}
+function bankBlueprintWaiver(entry){
+  const card=cardById[entry.id],[kind,id]=card.ref.split(":");
+  const name=kind==="tower"?TOWER_VARIANTS[id]?.name:kind==="building"?BUILDING_TYPES[id]?.name:null;
+  if(!name)return false;                    // a concept blueprint has nothing to waive
+  state.draft.waivers[card.ref]=(state.draft.waivers[card.ref]||0)+1;
+  consumeHandCopy(entry);
+  toast("blueprint drawn up — the next "+name+" costs nothing");sound(700,.16);
+  return "applied";
+}
+
+// ── card buffs, layered at READ time ────────────────────────────────────────
+// Every accessor reads the authored value (data.js constant or TUNE knob) and applies this run's
+// stacks on top. Nothing here writes an authored table, so turning the buffs off is just an empty
+// ledger. critHit() short-circuits at zero stacks so an unbuffed run consumes no randomness.
+function chopFillRate(){return (globalUpgradeEnabled("autoClick")?STEADY_HAND_RATE:1)*CARD_BUFFS.clickSpeed**buffStacks("clickSpeed");}
+function vacuumRadius(){return TUNE.vacuumRadius+CARD_BUFFS.vacuumRadius*buffStacks("vacuumRadius");}
+function clickDamage(){return TUNE.clickDamage+CARD_BUFFS.clickDamage*buffStacks("clickDamage");}
+function critHit(){const stacks=buffStacks("critClicks");return stacks>0&&Math.random()<CARD_BUFFS.critChance*stacks;}
+function workerSpeed(){return WORKER_SPEED*CARD_BUFFS.workerSpeed**buffStacks("workerSpeed");}
+function workerCarry(){return WORKER_CARRY+CARD_BUFFS.workerCarry*buffStacks("workerCarry");}
+function towerDamage(variant){return Math.ceil(variant.damage*CARD_BUFFS.towerDamage**buffStacks("towerDamage"));}
+function towerCooldown(variant){return variant.cooldown/CARD_BUFFS.towerSpeed**buffStacks("towerSpeed");}
 function dropToBase(){feedBase(state.carried,state.mouse.x,state.mouse.y);}
 
 function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
@@ -821,8 +1164,8 @@ function occupiedCellBounds(entity,footprint=entity.footprint||FOOTPRINT_1x1){
 // `ignoreBuilding` drops one existing instance from the occupancy scan: a relocating Shock Tower must
 // not collide with itself. (Pickup already splices it out of `buildings`; passing it keeps the rule
 // true regardless of that ordering.)
-function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null){
-  const footprint=ignoreProp?.footprint||buildingFootprint(type),c=worldToCell(x,y);
+function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null,ignoreChest=null){
+  const footprint=ignoreChest?.footprint||ignoreProp?.footprint||buildingFootprint(type),c=worldToCell(x,y);
   // Whole footprint, not just the anchor: a 3x3 one cell from the border overhangs the map.
   if(!footprintInWorldBounds(c.cx,c.cy,footprint))return false;
   const rect=footprintWorldRect(c.cx,c.cy,footprint);
@@ -841,6 +1184,10 @@ function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null){
   // Props reserve authored cells only while placed; this collection is empty in normal runs.
   for(const prop of showcaseProps)
     if(prop!==ignoreProp&&cellBoundsOverlap(bounds,occupiedCellBounds(prop,prop.footprint)))return false;
+  // Only placed unopened chests block. A relocating chest is outside this collection, and ignoreChest
+  // keeps the rule correct if call order changes.
+  for(const chest of chests)
+    if(chest!==ignoreChest&&cellBoundsOverlap(bounds,occupiedCellBounds(chest,chest.footprint)))return false;
   return true;
 }
 
@@ -944,7 +1291,7 @@ function nearestWorkerNode(worker,kind,centerX=worker.postX,centerY=worker.postY
 function moveWorker(worker,x,y,dt,stop=12){
   // Report arrival on the crossing frame; waiting for exact float equality can strand loaded workers at drop-off range.
   const d=distance(worker.x,worker.y,x,y);if(d<=stop+.01)return true;
-  const remaining=d-stop,amount=Math.min(remaining,WORKER_SPEED*dt),angle=Math.atan2(y-worker.y,x-worker.x);worker.x+=Math.cos(angle)*amount;worker.y+=Math.sin(angle)*amount;return amount>=remaining-.01;
+  const remaining=d-stop,amount=Math.min(remaining,workerSpeed()*dt),angle=Math.atan2(y-worker.y,x-worker.x);worker.x+=Math.cos(angle)*amount;worker.y+=Math.sin(angle)*amount;return amount>=remaining-.01;
 }
 function workerCoatColor(worker){return worker.job==="haul"?"#4d7892":worker.job==="build"?"#d29a39":worker.job==="guard"?"#856347":"#d4b079";}
 function killWorker(worker){
@@ -958,7 +1305,7 @@ function killWorker(worker){
 }
 function workerAttack(worker,enemy){
   worker.combatTarget=enemy;if(worker.attackCooldown>0)return;
-  worker.attackCooldown=WORKER_ATTACK_RATE;enemy.hp-=WORKER_DAMAGE;enemy.flash=.18;burst(enemy.x,enemy.y,"#f0cc72",6);sound(310,.05);if(enemy.hp<=0){killEnemy(enemy,false);worker.returnAfterCombat=true;}
+  worker.attackCooldown=WORKER_ATTACK_RATE;const alive=damageEnemy(enemy,WORKER_DAMAGE,"#f0cc72",6);sound(310,.05);if(!alive)worker.returnAfterCombat=true;
 }
 function depositWorkerLoad(worker){
   // Hauling moves already-physical drops; harvesting itself can only call hitResource() and never reaches storage.
@@ -1064,7 +1411,7 @@ function updateBuilder(worker,dt){
   if(!source.covered){if(updateBuilderSelfSupply(worker,building,dt))return;worker.starved=["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);return;}
   if(storage){
     worker.starved=false;if(!moveWorker(worker,storage.x,storage.y,dt,storage===BASE?BASE.r-4:18))return;
-    const stock=storageStock(storage);let room=WORKER_CARRY;for(const kind of ["wood","stone"]){const amount=Math.min(room,stock[kind],buildNeed(building,kind,worker));stock[kind]-=amount;worker.carried[kind]+=amount;room-=amount;}if(storage!==BASE)storage.pulse=1;return;
+    const stock=storageStock(storage);let room=workerCarry();for(const kind of ["wood","stone"]){const amount=Math.min(room,stock[kind],buildNeed(building,kind,worker));stock[kind]-=amount;worker.carried[kind]+=amount;room-=amount;}if(storage!==BASE)storage.pulse=1;return;
   }
   if(claimBuildDrop(worker,nearestBuildDrop(building,worker)))return;
   if(updateBuilderSelfSupply(worker,building,dt))return;
@@ -1080,8 +1427,7 @@ function updateKing(dt){
   }
   if(!target)return;
   king.cooldown=KING.rate;king.swing=.18;king.targetX=target.x;king.targetY=target.y;
-  target.hp-=KING.damage;target.flash=.15;burst(target.x,target.y,"#efe0a0",5);sound(260,.05);
-  if(target.hp<=0)killEnemy(target,false);
+  damageEnemy(target,KING.damage,"#efe0a0",5);sound(260,.05);
 }
 function updateHazard(building,dt){
   const hazard=building.hazard;hazard.cooldown-=dt;hazard.flash=Math.max(0,hazard.flash-dt);
@@ -1089,27 +1435,35 @@ function updateHazard(building,dt){
   const enemy=state.enemies.find(item=>distance(building.x,building.y,item.x,item.y)<20);
   if(!enemy)return;
   if(building.type==="tar"){
-    const def=BUILDING_TYPES.tar;hazard.cooldown=.25;hazard.flash=.12;applySlow(enemy,def.slowDuration,def.slowMultiplier);
+    const def=BUILDING_TYPES.tar;hazard.cooldown=def.cooldown;hazard.flash=.12;applySlow(enemy,def.slowDuration,def.slowMultiplier);
   }else if(building.type==="landmine"){
-    for(const target of [...state.enemies]){if(distance(building.x,building.y,target.x,target.y)>BUILDING_TYPES.landmine.effectRadius)continue;target.hp-=8;target.flash=.2;burst(target.x,target.y,"#e09b43",7);if(target.hp<=0)killEnemy(target,false);}
+    for(const target of [...state.enemies]){if(distance(building.x,building.y,target.x,target.y)>BUILDING_TYPES.landmine.effectRadius)continue;damageEnemy(target,BUILDING_TYPES.landmine.damage,"#e09b43",7);}
     for(let i=0;i<28;i++)particles.push({x:building.x,y:building.y,vx:rand(-140,140),vy:rand(-160,20),life:rand(.3,.7),col:i%2?"#d9893d":"#6e5540"});
     building.remove=true;sound(75,.25);
   }else{
-    hazard.cooldown=.55;hazard.flash=.18;enemy.hp-=2;enemy.flash=.14;burst(enemy.x,enemy.y,"#c9c2b5",4);if(enemy.hp<=0)killEnemy(enemy,false);
+    const def=BUILDING_TYPES.spikes;hazard.cooldown=def.cooldown;hazard.flash=.18;damageEnemy(enemy,def.damage,"#c9c2b5",4);
   }
 }
-function damageDummy(dummy,damage,color="#d25b49",count=5){
+function addDamageNumber(target,amount,{critical=false,tone="dealt"}={}){
+  if(!(amount>0)||!Number.isFinite(amount))return;
+  const sequence=damageNumberSequence++;
+  damageNumbers.push({x:target.x,y:target.y,amount,critical:!!critical,tone,age:0,
+    // Stable alternating lanes prevent rapid hits from painting an unreadable single glyph.
+    lane:(sequence%5)-2,seed:(sequence*0.61803398875)%1});
+}
+function damageDummy(dummy,damage,color="#d25b49",count=5,hit={}){
   if(!damageDummies.includes(dummy)||dummy.defeatedTimer>0)return false;
-  dummy.hp=Math.max(0,dummy.hp-damage);dummy.flash=.16;dummy.recentDamage=damage;dummy.recentTimer=2;dummy.hitCount++;state.showcaseFocus=dummy;burst(dummy.x,dummy.y,color,count);
+  dummy.hp=Math.max(0,dummy.hp-damage);addDamageNumber(dummy,damage,hit);dummy.flash=.16;dummy.recentDamage=damage;dummy.recentTimer=2;dummy.hitCount++;state.showcaseFocus=dummy;burst(dummy.x,dummy.y,color,count);
   if(dummy.hp<=0){dummy.defeatedTimer=1;dummy.status={burn:null,slow:null};return false;}return true;
 }
-function damageEnemy(enemy,damage,color,count=5,source=null){
-  if(!state.enemies.includes(enemy)||enemy.displayUnit)return false;if(source?.tower&&buildings.includes(source))enemy.retaliationTower=source;enemy.hp-=damage;enemy.flash=.16;burst(enemy.x,enemy.y,color,count);if(enemy.hp<=0){killEnemy(enemy,false);return false;}return true;
+/** All enemy damage converges here. Future crit rolls pass {critical:true}; rendering already supports it. */
+function damageEnemy(enemy,damage,color,count=5,source=null,hit={}){
+  if(!state.enemies.includes(enemy)||enemy.displayUnit)return false;if(source?.tower&&buildings.includes(source))enemy.retaliationTower=source;enemy.hp=Math.max(0,enemy.hp-damage);addDamageNumber(enemy,damage,hit);enemy.flash=.16;if(count>0)burst(enemy.x,enemy.y,color,count);if(enemy.hp<=0){killEnemy(enemy,hit.announce??false);return false;}return true;
 }
-function damageCombatTarget(target,damage,color,count=5,source=null){
+function damageCombatTarget(target,damage,color,count=5,source=null,hit={}){
   const kind=assertCombatKind(target);
-  if(kind==="damage-dummy")return damageDummy(target,damage,color,count);
-  if(kind==="enemy")return damageEnemy(target,damage,color,count,source);
+  if(kind==="damage-dummy")return damageDummy(target,damage,color,count,hit);
+  if(kind==="enemy")return damageEnemy(target,damage,color,count,source,hit);
   invariant(false,"unhandled combat kind "+kind);
 }
 function visitStableTargets(targets,visit){
@@ -1141,14 +1495,14 @@ function lineIntersectsEnemy(x1,y1,x2,y2,enemy,width){
   return distance(enemy.x,enemy.y,closestX,closestY)<=width/2+enemyRadius;
 }
 function fireTowerAttack(building,variant,target){
-  const tower=building.tower,color=variant.impactColor||variant.accent;tower.targetX=target.x;tower.targetY=target.y;tower.flash=.2;
+  const tower=building.tower,color=variant.impactColor||variant.accent,damage=towerDamage(variant);tower.targetX=target.x;tower.targetY=target.y;tower.flash=.2;
   if(variant.attackMode==="splash"){
-    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;eachTowerCombatTarget(enemy=>{if(distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageCombatTarget(enemy,variant.damage,color,8,building);});burst(impactX,impactY,color,18);
+    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;eachTowerCombatTarget(enemy=>{if(distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageCombatTarget(enemy,damage,color,8,building);});burst(impactX,impactY,color,18);
   }else if(variant.attackMode==="line"){
     const angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*variant.range,endY=building.y+Math.sin(angle)*variant.range;tower.targetX=endX;tower.targetY=endY;
-    eachTowerCombatTarget(enemy=>{if(lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageCombatTarget(enemy,variant.damage,color,7,building);});
+    eachTowerCombatTarget(enemy=>{if(lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageCombatTarget(enemy,damage,color,7,building);});
   }else{
-    const alive=damageCombatTarget(target,variant.damage,color,["burn","slow","push"].includes(variant.attackMode)?8:5,building);
+    const alive=damageCombatTarget(target,damage,color,["burn","slow","push"].includes(variant.attackMode)?8:5,building);
     if(alive&&variant.attackMode==="burn")applyBurn(target,building,variant);
     else if(alive&&variant.attackMode==="slow")applySlow(target,variant.slowDuration,variant.slowMultiplier);
     else if(alive&&variant.attackMode==="push"){pushEnemyToSpawn(target,variant.pushDistance);burst(target.x,target.y,color,10);}
@@ -1160,10 +1514,10 @@ function updateTower(building,dt){
   const tower=building.tower,variant=towerVariant(building);tower.cooldown=Math.max(0,tower.cooldown-dt);tower.flash=Math.max(0,tower.flash-dt);tower.hitFlash=Math.max(0,(tower.hitFlash||0)-dt);
   if(variant.manual||tower.cooldown>0)return;
   if(variant.attackMode==="periodic area"){
-    let attacked=false;eachTowerCombatTarget(enemy=>{if(distance(building.x,building.y,enemy.x,enemy.y)>variant.effectRadius)return;if(!attacked){tower.cooldown=variant.cooldown;tower.flash=.4;attacked=true;}damageCombatTarget(enemy,variant.damage,variant.accent,5,building);});
+    let attacked=false;eachTowerCombatTarget(enemy=>{if(distance(building.x,building.y,enemy.x,enemy.y)>variant.effectRadius)return;if(!attacked){tower.cooldown=towerCooldown(variant);tower.flash=.4;attacked=true;}damageCombatTarget(enemy,towerDamage(variant),variant.accent,5,building);});
     if(attacked)sound(variant.sound,.22);return;
   }
-  const target=nearestTowerTarget(building,variant.range);if(!target)return;tower.cooldown=variant.cooldown;fireTowerAttack(building,variant,target);
+  const target=nearestTowerTarget(building,variant.range);if(!target)return;tower.cooldown=towerCooldown(variant);fireTowerAttack(building,variant,target);
 }
 
 function updateGuard(worker,dt){
@@ -1206,7 +1560,7 @@ function updateWorkerFlee(worker,dt){
 function updateHauler(worker,dt){
   const storage=worker.jobTarget,task=worker.taskTarget;
   if(task&&(!resourceDrops.includes(task)||task.target||task.claimedBy!==worker))clearWorkerTask(worker);
-  if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;
+  if(workerLoad(worker)>=workerCarry())worker.returning=true;
   if(!worker.returning&&!worker.taskTarget){
     let nearest=null,best=Infinity;
     for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||distance(storage.x,storage.y,resource.x,resource.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
@@ -1214,7 +1568,7 @@ function updateHauler(worker,dt){
   }
   if(worker.returning){if(moveWorker(worker,worker.postX,worker.postY,dt,13))depositWorkerLoad(worker);return;}
   if(worker.taskTarget){
-    const target=worker.taskTarget;if(moveWorker(worker,target.x,target.y,dt,10)){const at=resourceDrops.indexOf(target);if(at>=0){worker.carried[target.kind]++;resourceDrops.splice(at,1);}delete target.claimedBy;worker.taskTarget=null;if(workerLoad(worker)>=WORKER_CARRY)worker.returning=true;}return;
+    const target=worker.taskTarget;if(moveWorker(worker,target.x,target.y,dt,10)){const at=resourceDrops.indexOf(target);if(at>=0){worker.carried[target.kind]++;resourceDrops.splice(at,1);}delete target.claimedBy;worker.taskTarget=null;if(workerLoad(worker)>=workerCarry())worker.returning=true;}return;
   }
   moveWorker(worker,worker.postX,worker.postY,dt);
 }
@@ -1270,14 +1624,18 @@ function transitionPhase(){
   if(clock.phase==="day"){
     const wave=state.nightWave;
     clock.phase="night";clock.remaining=NIGHT_DURATION;
-    // Tier is snapshotted at night setup: feeding mid-wave changes the next telegraphed night only.
-    const totalSpawns=NIGHT_WAVE_SPAWNS+xpTier()*NIGHT_TIER_BONUS_SPAWNS;
+    // Tier is snapshotted at night setup: leveling mid-wave changes the next telegraphed night only.
+    const totalSpawns=nightSpawnTotal();state.draft.calmNight=false;
     wave.activeSide=wave.upcomingSide;wave.activeRecipe=wave.upcomingRecipe;wave.secondarySide=wave.activeRecipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;wave.lastSides=wave.secondarySide?[wave.activeSide,wave.secondarySide]:[wave.activeSide];wave.totalSpawns=totalSpawns;wave.remainingSpawns=totalSpawns;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/totalSpawns;wave.nightNumber++;
   }else{
-    clock.phase="day";clock.remaining=DAY_DURATION;clock.completedNights++;
+    // A long day drafted at night is banked here, so the card is never silently wasted.
+    clock.phase="day";clock.remaining=DAY_DURATION+state.draft.dayBonus;state.draft.dayBonus=0;clock.completedNights++;
     state.nightWave.activeSide=null;state.nightWave.secondarySide=null;state.nightWave.activeRecipe=null;state.nightWave.remainingSpawns=0;
     // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
     chooseUpcomingNight();
+    // Surviving the night IS the reward: one pick of three consumables or blueprints, straight into
+    // the hand. It queues behind a level offer that is somehow already live rather than replacing it.
+    queueDawnReward();
   }
 }
 function updateClock(dt){
@@ -1330,7 +1688,7 @@ function destroyTower(building){
   for(const worker of state.workers)if(worker.jobTarget===building)releaseWorkerHome(worker);
   if(state.upgradeMenu.building===building)closeUpgradeMenu();burst(building.x,building.y,"#8f5141",22);toast(towerVariant(building).name+" destroyed");sound(70,.35);
 }
-function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
+function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;addDamageNumber(building,damage,{tone:"received"});tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
 function updateCamera(dt){
   const keys=state.keys,camera=state.camera;
   let panX=(keys.has("KeyD")||keys.has("ArrowRight"))-(keys.has("KeyA")||keys.has("ArrowLeft"));
@@ -1346,6 +1704,8 @@ function updateResourceNodes(dt){
   for(const tree of trees)tree.shake=Math.max(0,tree.shake-dt*7);
   for(const rock of rocks)rock.shake=Math.max(0,rock.shake-dt*7);
   for(const diamond of diamonds)diamond.shake=Math.max(0,diamond.shake-dt*7);
+  for(const chest of chests)chest.shake=Math.max(0,chest.shake-dt*7);
+  const held=heldChest();if(held)held.shake=Math.max(0,held.shake-dt*7);
 }
 function updateLooseResources(dt,expire){
   for(let i=resourceDrops.length-1;i>=0;i--){
@@ -1365,8 +1725,13 @@ function updateBuildings(dt,includeHazards){
 function updateParticles(dt){
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
 }
+function updateDamageNumbers(dt){
+  // Renderer owns configurable lifetime; retain past its maximum slider range, then it can decide opacity.
+  for(let i=damageNumbers.length-1;i>=0;i--){damageNumbers[i].age+=dt;if(damageNumbers[i].age>5)damageNumbers.splice(i,1);}
+}
 function updateNormal(dt){
-  if(state.gameOver||state.paused){stopPrimaryClick();return;}
+  // A pending draft freezes the world on its own flag: the player's pause may be on or off under it.
+  if(state.gameOver||state.paused||state.draftPaused){stopPrimaryClick();return;}
   updatePrimaryClick(dt);updateClock(dt);updateNightEnemyWave(dt);updateCamera(dt);
   state.coinTimer-=dt;if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(14,22);}
   for(const enemy of [...state.enemies]){
@@ -1384,11 +1749,11 @@ function updateNormal(dt){
     else if(def.damage&&enemy.attackCooldown<=0){
       enemy.attackCooldown=def.rate;enemy.shotFlash=.14;enemy.shotX=target.x;enemy.shotY=target.y;
       let workerDied=false;
-      if(target.kind==="worker"){const worker=target.object;worker.retaliationTarget=enemy;worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)workerDied=killWorker(worker);}
+      if(target.kind==="worker"){const worker=target.object;worker.retaliationTarget=enemy;addDamageNumber(worker,def.damage,{tone:"received"});worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)workerDied=killWorker(worker);}
       else if(target.kind==="tower")damageTower(target.object,def.damage);
       // invulnerable base (debug) is checked at the damage site: the hit still lands,
       // flashes and toasts, it just subtracts nothing. baseHp/baseMax are never inflated.
-      else{if(!DBG.invulnBase)state.baseHp=Math.max(0,state.baseHp-def.damage);state.basePulse=1;if(state.baseHp<=0){endGame();break;}}
+      else{if(!DBG.invulnBase){addDamageNumber(BASE,def.damage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-def.damage);}state.basePulse=1;if(state.baseHp<=0){endGame();break;}}
       toast(workerDied?"worker died — replacement in "+WORKER_SPAWN_TIME+"s":def.name+" hit "+(target.kind==="worker"?"a worker":target.kind==="tower"?towerVariant(target.object).name:"the base"));sound(def.range>60?180:95,.09);
     }
   }
@@ -1397,7 +1762,7 @@ function updateNormal(dt){
   updateWorkerSpawns(dt);updateBuildings(dt,true);recruitWorkers();
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
-  updateParticles(dt);effects.afterUpdate();
+  updateParticles(dt);updateDamageNumbers(dt);effects.afterUpdate();
 }
 
 // Dedicated showcase policy: deliberately lists the sandbox stages instead of branching inside the
@@ -1410,7 +1775,7 @@ function updateShowcase(dt){
     if(dummy.defeatedTimer>0){dummy.defeatedTimer-=dt;if(dummy.defeatedTimer<=0){dummy.x=dummy.homeX;dummy.y=dummy.homeY;dummy.hp=dummy.max;dummy.status={burn:null,slow:null};}continue;}
     updateEnemyStatuses(dummy,dt);
   }
-  updateBuildings(dt,false);updateParticles(dt);effects.afterUpdate();
+  updateBuildings(dt,false);updateParticles(dt);updateDamageNumbers(dt);effects.afterUpdate();
 }
 
 // main.js supplies dt; the explicit mode dispatch keeps both pipelines auditable.
@@ -1449,7 +1814,7 @@ function badgeAction(){
   if(!action) return null;
   // Placement mode swallows the press for harvesting but not for a swing:
   // leftClick() resolves an attack before it ever looks at state.buildMode.
-  if(state.buildMode && action.kind !== "attack") return null;
+  if(state.buildMode && !["attack","break-chest"].includes(action.kind)) return null;
   return action;
 }
 
@@ -1536,6 +1901,15 @@ function debugGrantXp(amount){
   if(!Number.isSafeInteger(amount)||amount<=0||!Number.isSafeInteger(state.xp+amount))return false;
   const counts=resourceCounts();counts.wood=amount/FEED_XP.wood;feedBase(counts,BASE.x,BASE.y);return true;
 }
+/** Deal one card straight into the hand, skipping the offer entirely. Run state only: the catalog,
+ *  its pool flags and every authored table are untouched, and the dealt card behaves exactly like a
+ *  drafted one — a blueprint still leaves the pool, a kit still carries its authored charges. */
+function debugDealCard(id){
+  const card=cardById[id];
+  if(!card||!["consumable","blueprint"].includes(card.category))return false;
+  if(card.category==="blueprint")state.draft.blueprints.add(id);
+  addToHand(id);return true;
+}
 /** Sweep anything already pending when free costs is switched on, so no blueprint or
  *  accepted upgrade can sit half-delivered under a toggle that says costs are free. */
 function debugSweepFreeCosts(){
@@ -1555,12 +1929,14 @@ function debugAdvancePhase(){ transitionPhase(); effects.phaseHudChanged(); }
  *  its first spawn already due. The recipe object itself is never modified. */
 function debugStartWave(id){
   const recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===id); if(!recipe) return;
-  if(state.clock.phase!=="night") transitionPhase();
+  // A real transition already sized (and spent) the night; only a re-roll inside an ongoing night
+  // has to size one itself, so a calm night is neither double-counted nor thrown away here.
+  const transitioned=state.clock.phase!=="night"; if(transitioned) transitionPhase();
   const wave=state.nightWave;
   wave.activeRecipe=recipe;
   wave.activeSide??=MAP_SIDES[(Math.random()*MAP_SIDES.length)|0];
   wave.secondarySide=recipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;
-  wave.totalSpawns=NIGHT_WAVE_SPAWNS+xpTier()*NIGHT_TIER_BONUS_SPAWNS;
+  wave.totalSpawns=transitioned?wave.totalSpawns:nightSpawnTotal();
   wave.remainingSpawns=wave.totalSpawns; wave.elapsed=0; wave.nextSpawnAt=0;
   effects.phaseHudChanged(); toast("debug wave: "+recipe.id);
 }
@@ -1596,7 +1972,7 @@ export function setPointerOutside(){ state.mouse.inside=false; }
 // Press arms the held bar through leftClick()'s full priority chain; the modal
 // re-check between the two halves is the original ordering (leftClick may open
 // the upgrade panel, and a press that did so must not also start a swing).
-export function primaryPress(){const action=resolvePrimaryAction(state.mouse.x,state.mouse.y);if(action?.target?.combatKind==="damage-dummy")state.showcaseFocus=action.target;leftClick();if(!effects.isModalOpen())startPrimaryClick();}
+export function primaryPress(){if(heldChest())return;const action=resolvePrimaryAction(state.mouse.x,state.mouse.y);if(action?.target?.combatKind==="damage-dummy")state.showcaseFocus=action.target;leftClick();if(!effects.isModalOpen())startPrimaryClick();}
 export function primaryRelease(){ stopPrimaryClick(); }
 
 // ── the secondary (right) action ──
@@ -1635,8 +2011,10 @@ export function offsetCamera(dx,dy){ state.camera.x+=dx; state.camera.y+=dy; }
 
 // ── build mode / dock ──
 export function toggleBuildMode(kind){
-  if(state.gameOver||state.paused)return;
+  if(state.gameOver||state.paused||heldChest())return;
   if(BUILDING_TYPES[kind].stack&&!DBG.unlimitedCharges&&state.buildStacks[kind]<=0){toast("no "+BUILDING_TYPES[kind].name+" stacks remaining");return;}
+  // Reaching for the dock puts a targeted card away with its unplaced charges intact.
+  if(state.cardTargeting){state.cardTargeting=null;state.buildMode=null;}
   state.buildMode=state.buildMode===kind?null:kind;
   effects.buildHudChanged();
   toast(state.buildMode?"click explored, clear ground to place the blueprint":"build cancelled");
@@ -1671,14 +2049,19 @@ export function closeUpgradeMenu(){
 }
 export function selectUpgrade(id){ state.upgradeMenu.selected=id; }
 export function acceptUpgrade(){
-  const menu=state.upgradeMenu,building=menu.building,upgrade=upgradeList(menu.kind).find(item=>item.id===menu.selected);
+  const menu=state.upgradeMenu,building=menu.building,kind=menu.kind,upgrade=upgradeList(kind).find(item=>item.id===menu.selected);
   if(!building||!upgrade)return false;
-  building.activeUpgrade={id:upgrade.id,kind:menu.kind,delivered:resourceCounts()};
-  const destination=menu.kind;closeUpgradeMenu();
+  building.activeUpgrade={id:upgrade.id,kind,delivered:resourceCounts()};
+  closeUpgradeMenu();
   // free costs (debug): the job is accepted normally, then satisfied through the same
   // applyFinishedUpgrade() a full delivery reaches. Nothing is deducted or granted.
   if(DBG.freeCosts&&applyFinishedUpgrade(building))return true;
-  toast("accepted "+upgrade.name+" — deposit resources at the "+destination);sound(590,.1);
+  // A played blueprint pays for this one variant, once, down the very same path — and the token is
+  // only spent if the upgrade really finished.
+  if(kind==="tower"&&waiverAvailable("tower:"+upgrade.id)&&applyFinishedUpgrade(building)){
+    spendWaiver("tower:"+upgrade.id);toast("blueprint spent — "+upgrade.name+" built free");return true;
+  }
+  toast("accepted "+upgrade.name+" — deposit resources at the "+kind);sound(590,.1);
   return true;
 }
 
@@ -1725,6 +2108,10 @@ export function closeSkillTree(){
 
 // ── debug-owned writes into ordinary state (view panel > gameplay) ──
 export function setCapacity(value){ state.capacity=value; }
+function debugForceNextChestOutcome(outcome=null){
+  invariant(outcome===null||outcome==="cache"||outcome==="pinata","invalid forced chest outcome "+outcome);
+  forcedChestOutcome=outcome;return true;
+}
 export function resetDamageDummies(){if(state.runMode!=="showcase")return false;for(const d of damageDummies){d.x=d.homeX;d.y=d.homeY;d.hp=d.max;d.flash=0;d.defeatedTimer=0;d.status={burn:null,slow:null};d.recentDamage=0;d.recentTimer=0;d.hitCount=0;}state.showcaseFocus=damageDummies[0]||null;validateSimulationInvariants();return true;}
 export function resetShowcaseProps(){if(state.runMode!=="showcase")return false;if(heldProp())cancelHeldObject();for(const p of showcaseProps){p.x=p.homeX;p.y=p.homeY;}validateSimulationInvariants();return true;}
 export function showcaseSections(){return SHOWCASE_MANIFEST.sections;}
@@ -1740,7 +2127,49 @@ export function showcaseLabels(){return state.runMode==="showcase"?{revision:sho
 /** XP economy read-only peeks; state mutations remain inside feeding and skill commands. */
 function xp(){return state.xp;}
 function skillPoints(){return state.skillPoints;}
-function nextXpThreshold(){return XP_TIERS[xpTier()]??null;}
+/** The level bar: xp is progress INTO the current level, next is what the following one costs. */
+export function levelState(){return {level:state.level,xp:state.levelXp,next:levelCost(state.level)};}
+/** The live offer as three card ids, or null when no draft is pending. Never mutate the array. */
+export function draftPending(){return state.draft.offer;}
+/** Why the pending offer exists — "level" or "dawn" — or null when none is. Same offer, same pick. */
+export function draftKind(){return state.draft.offer?state.draft.offerKind:null;}
+/**
+ * Take card `index` (0-2) of the pending offer. Routes the card through takeCard() — a buff applies,
+ * a consumable or blueprint goes to the hand — consumes the offer and, if more rewards are queued,
+ * deals the next one immediately, so the world stays frozen until the queue drains. Refusals are
+ * silent, so a UI may call this on any click without pre-checking.
+ */
+export function chooseDraft(index){
+  const offer=state.draft.offer;
+  if(!offer||!Number.isInteger(index)||index<0||index>=offer.length)return false;
+  const id=offer[index];state.draft.offer=null;state.draft.offerKind=null;takeCard(id);refillDraft();
+  return true;
+}
+/**
+ * The held cards, oldest first: {id, count, charges}. `count` is how many COPIES of that card are
+ * held; `charges` is the remaining placements of a part-spent kit (null while the top copy is
+ * whole), so a UI can show "2 of 3 spikes left" without knowing what a spike kit is. Fresh records
+ * every call — read them, never write them; playCard() is the only way in.
+ */
+export function hand(){return state.hand.map(entry=>({id:entry.id,count:entry.count,charges:entry.charges}));}
+/**
+ * Play held card `index`. Returns false when the index names nothing, the world is frozen (a pending
+ * offer, a pause, a lost run) or a placement is already armed; "applied" when the effect fired and
+ * the card left the hand; "targeting" when the placement flow now owns the next click — the card
+ * stays in hand, one charge lighter per placement, until its last charge lands.
+ */
+export function playCard(index){
+  if(!Number.isInteger(index)||index<0||index>=state.hand.length)return false;
+  if(state.gameOver||state.paused||state.draftPaused||state.buildMode||state.cardTargeting)return false;
+  const entry=state.hand[index],card=cardById[entry.id];
+  if(!card)return false;
+  if(card.category==="blueprint")return bankBlueprintWaiver(entry);
+  if(TARGETED_CARDS[entry.id])return beginCardTargeting(entry);
+  const effect=CARD_EFFECTS[entry.id];
+  if(!effect)return false;                  // a held card with no effect is a catalog bug, not a click
+  effect();toast("played: "+card.text);sound(700,.16);consumeHandCopy(entry);
+  return "applied";
+}
 /** What the held-action timer is currently filling, or null. Read-only peek. */
 export function heldChopTarget(){ return chopState.target; }
 /** Whether temporary blueprint recruitment has saved an assignment for this worker. */
@@ -1764,7 +2193,7 @@ function skillTreeEdges(){
 
 export {
   // live collections — iterate, never mutate
-  state, trees, rocks, diamonds, resourceDrops, buildings, damageDummies, showcaseProps, workerCorpses, particles,
+  state, trees, rocks, diamonds, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers,
   // debug flags (the gameplay pane's own bindings are the only writers)
   DBG,
   // the step
@@ -1779,11 +2208,13 @@ export {
   // costs and progress
   buildingCost, costText, upgradeList, towerUpgradeList, nextHouseCost,
   // world lookups the render layer projects
-  storageServiceRadius, workerAssignmentAt, heldWorker, heldBuilding, heldProp,
+  storageServiceRadius, workerAssignmentAt, heldWorker, heldBuilding, heldChest, heldProp,
   workerOccupancyStatus, workerOccupancyAt, durablePostStatus, vacantDurablePosts,
   workerIsLoaned, workerCoatColor, workerLoad, carriedTotal, resourceIsActive, oppositeMapSide,
   // skill tree — read-only projections of the authored graph over this run's two id sets
-  skillTreeNodes, skillTreeEdges, xp, skillPoints, xpTier, nextXpThreshold,
+  skillTreeNodes, skillTreeEdges, xp, skillPoints, waveTier, levelCost, buffStacks,
+  // the effective vacuum reach, buffs included — the drawn ring should read this, not TUNE alone
+  vacuumRadius,
   // shared numeric helpers (defined here, so nothing restates them)
   clamp, distance, rand,
   // commands that are plain gameplay functions rather than input adapters
@@ -1791,5 +2222,7 @@ export {
   spawnEnemy, transitionPhase,
   // debug commands (view panel > gameplay)
   debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
-  debugStartWave, debugClearEnemies, debugHealAll,
+  debugStartWave, debugClearEnemies, debugHealAll, debugForceNextChestOutcome, debugDealCard,
+  // banked blueprint waivers — read-only peek for tooling; only playing a blueprint banks one
+  waiverAvailable,
 };
