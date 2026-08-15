@@ -220,6 +220,29 @@ These are not exclusive; merging is about density, clustering is about placement
 
 - Add towers.
 
+### Resource-Fed Towers
+
+**Tags:** `Core Gameplay`, `Immersion`
+
+Add towers that consume physically delivered resources as ammunition or fuel. Loading them should reuse the existing resource-delivery interaction instead of subtracting directly from abstract storage.
+
+- Stone cannon: load rocks into a small magazine; each slow shot consumes one stone and deals heavy splash damage.
+- Wood furnace: burn delivered wood to sustain a flame or apply burn damage.
+- Show remaining ammunition on the tower and make the empty state visibly idle.
+- Start with manual loading. Worker hauling, capacity upgrades, and ammo-efficiency upgrades can follow later.
+- Resource choice should create a real economy-versus-defense decision rather than a mandatory upkeep tax.
+
+### Walls and Barricades
+
+**Tags:** `Core Gameplay`, `Immersion`
+
+Add placeable, destructible wall segments. Start with grid-aligned pieces that enemies attack when they obstruct a route; gates and full enemy pathfinding can follow after the basic blocker behavior proves useful.
+
+- Progression candidate: wood palisade → stone wall → reinforced wall.
+- Use neighboring wall connections to choose end, straight, corner, T, and cross visuals automatically.
+- Prefer a simple neighbor-mask/autotile system first. Wave Function Collapse may be useful later for visual variation or generated ruins, but should not own gameplay connectivity.
+- Define whether walls redirect enemies or merely become the first intersecting attack target before implementation.
+
 ## Clicking
 
 Manual clicks and steady-hand holding share one player-work cooldown, tuned by `PLAYER_CLICK_CPS`. The rate applies only to direct enemy attacks and tree, rock, or diamond gathering; other interactions remain immediate.
