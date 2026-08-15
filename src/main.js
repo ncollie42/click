@@ -2,7 +2,7 @@
 // Pipeline: URL mode → adapters → simulation initialization → frame update → scene sync/visibility →
 // Three.js render → 2D overlay → showcase UI projection → deferred debugger scans.
 // simulation.js owns mutable gameplay; render and UI adapters consume queries and injected effects.
-import {connect as connectSimulation, initializeRunMode, TUNE, update, toast, setBuildDockCategory} from "./game/simulation.js";
+import {connect as connectSimulation, initializeRunMode, TUNE, update, toast} from "./game/simulation.js";
 // Namespace as well as named bindings: the ?draftDemo console helpers below reach for a handful of
 // debug commands that nothing else in the composition names.
 import * as SIMULATION from "./game/simulation.js";
@@ -10,7 +10,7 @@ import {connect as connectScene, resizeRenderer, drawScene, renderScene} from ".
 import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
 import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
-import {initHand, renderHand, syncHandTargeting, debugHoldFlights} from "./ui/hand.js";
+import {initHand, renderHand, syncHandTargeting, syncHandPeek, debugHoldFlights} from "./ui/hand.js";
 import {DRAFT_EFFECTS, initDraft, syncLevelHud} from "./ui/draft.js";
 import {initInput} from "./input.js";
 import {initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, drainScans} from "./debug/view-debugger.js";
@@ -42,7 +42,7 @@ connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...DRAFT_EFFECTS,
   phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();},
   // Arming and cancelling a card's placement is a BUILD-hud move in the simulation's eyes: only
   // which card owns the cursor changed, not the hand itself. The fan listens too, so the lifted,
-  // violet-lit card settles back the instant a right-click stows a part-spent kit.
+  // rarity-lit card settles back the instant a right-click stows a part-spent kit.
   buildHudChanged(){SIM_EFFECTS.buildHudChanged();syncHandTargeting();}
 });
 // ── Mode-selection data flow ──
@@ -74,13 +74,17 @@ function draw(){
   tickVisibility();
   renderScene();
   drawOverlay();
+  // The fan's peek/collapse state is the one card thing no simulation effect can raise: it depends
+  // on the clock phase AND on enemies being alive, which move inside update() without any card
+  // changing. One cheap read per frame; the call only touches the DOM when the answer changes.
+  syncHandPeek();
   updateShowcaseUi();
   drainScans();
 }
 
 // ── boot ──────────────────────────────────────────────────────────────
 resizeView();
-syncBuildHud();syncPhaseHud();syncLevelHud();setBuildDockCategory(null);
+syncBuildHud();syncPhaseHud();syncLevelHud();
 let previous=performance.now();
 function frame(now){
   const dt=Math.min(.033,(now-previous)/1000);previous=now;

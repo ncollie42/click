@@ -1,5 +1,6 @@
-// Owns: the DOM heads-up display — the build dock, the phase panel, the hover prompt, the toast,
-// the upgrade modal, the pause badge and the game-over card. Owns no gameplay state and no meshes.
+// Owns: the DOM heads-up display — the phase panel, the hover prompt, the toast, the upgrade modal,
+// the pause badge, the placement cursor and the game-over card. Owns no gameplay state and no
+// meshes. The build dock is GONE: building is card-driven and lives in src/ui/hand.js.
 // ═══════════════════════════════════════════════════════════════════════════
 // HUD ADAPTER
 // The consumer end of the simulation's effect contract. The simulation raises player-facing
@@ -12,9 +13,8 @@
 //             READ-ONLY here by contract: this file may project them, never splice, push or assign
 //             into them, and never assign into `state`.
 //   Writes:   the DOM only — element text, classes and children under #game. Every gameplay change
-//             this file causes goes through a simulation COMMAND (toggleBuildMode,
-//             setBuildDockCategory, closeUpgradeMenu, selectUpgrade, acceptUpgrade); there is no
-//             other way out of this file into the world.
+//             this file causes goes through a simulation COMMAND (closeUpgradeMenu, selectUpgrade,
+//             acceptUpgrade, openSkillTree); there is no other way out of this file into the world.
 //   Supplies: SIM_EFFECTS  — the effect implementations the simulation calls back into. Invariant
 //                            (consumer end): every hook is a pure sink. It may read simulation
 //                            state, it must never write it, and it must not call back into a
@@ -24,10 +24,11 @@
 //                            answers for either modal (see the block below); nothing keeps a copy.
 //             syncModalUi() — repaint that predicate onto #game, for the other modal's adapter.
 //             syncBuildHud() / syncPhaseHud() — the two sync passes other adapters and boot re-run.
+//             syncBuildHud() is now a single line: with the dock gone the only thing placement
+//             still paints outside the fan is the crosshair on the pointer surface.
 //
-// Imported by: src/main.js (composition), src/input.js (modalOpen, for the pointer-down guard),
-// src/ui/skill-tree.js (syncModalUi, when its panel opens or closes) and
-// src/debug/view-debugger.js (syncBuildHud, after it flips DBG.unlimitedCharges). Nothing is
+// Imported by: src/main.js (composition), src/input.js (modalOpen, for the pointer-down guard) and
+// src/ui/skill-tree.js (syncModalUi, when its panel opens or closes). Nothing is
 // imported back from any of them — the HUD is the lowest browser adapter, so the
 // pointer surface it needs for the build cursor is HANDED IN by main.js rather than looked up here.
 // That keeps <canvas id="overlay"> at its documented three owners: main.js (listeners, classes and focus),
@@ -38,12 +39,11 @@ import {
   DAY_DURATION,NIGHT_DURATION
 } from "../game/data.js";
 import {
-  DBG, state,
+  state,
   // commands — the only writes this file can make into the world
-  toggleBuildMode, setBuildDockCategory,
   closeUpgradeMenu, selectUpgrade, acceptUpgrade, openSkillTree,
   // queries — pure reads
-  hoverTarget, costText, upgradeList, nextHouseCost,
+  hoverTarget, costText, upgradeList,
   xp, skillPoints, oppositeMapSide, clamp
 } from "../game/simulation.js";
 
@@ -80,11 +80,6 @@ export const SIM_EFFECTS = {
   gameOver(){document.getElementById("gameOver").classList.remove("off");},
   pauseChanged(paused){document.getElementById("pauseBadge").classList.toggle("off",!paused);},
   buildHudChanged(){syncBuildHud();},
-  buildDockChanged(category){
-    document.getElementById("buildCards").classList.toggle("open",!!category);
-    document.querySelectorAll(".build-category").forEach(panel=>panel.classList.toggle("open",panel.dataset.category===category));
-    document.querySelectorAll(".dock-tab").forEach(tab=>{const active=tab.dataset.category===category;tab.classList.toggle("on",active);tab.setAttribute("aria-expanded",active);});
-  },
   upgradeMenuOpened(){renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");syncModalUi();},
   upgradeMenuClosed(){document.getElementById("upgradePanel").classList.add("off");syncModalUi();},
   phaseHudChanged(){syncPhaseHud();},
@@ -141,17 +136,13 @@ export function syncPhaseHud(){
   }
 }
 
-// ── the build dock ──────────────────────────────────────────────────────────
-// Charge counts and affordability are read fresh from the simulation every pass; the only thing
-// written outside this panel is the crosshair cursor on the pointer surface main.js handed in.
+// ── the placement cursor ────────────────────────────────────────────────────
+// All that is left of the old build HUD. The dock that printed charge counts and the escalating
+// house price is gone — cards carry both now (the pips on the face, the toast on placement) — so the
+// one thing an armed placement still paints outside the fan is the crosshair on the pointer surface
+// main.js handed in. Kept as its own named pass because boot and every buildHudChanged() re-run it.
 export function syncBuildHud(){
-  document.querySelectorAll("button.build").forEach(button=>button.classList.toggle("on",button.dataset.kind===state.buildMode));
-  for(const [kind,label] of [["spikes","spikeStack"],["landmine","landmineStack"],["tar","tarStack"]]){
-    const unavailable=!DBG.unlimitedCharges&&state.buildStacks[kind]<=0,button=document.querySelector('button.build[data-kind="'+kind+'"]');
-    document.getElementById(label).textContent="free · "+(DBG.unlimitedCharges?"∞":state.buildStacks[kind]+" left");button.disabled=unavailable;
-  }
-  const houseCost=nextHouseCost();document.getElementById("houseCost").textContent=houseCost.wood+"w · "+houseCost.stone+"s";
-  surface.classList.toggle("building",state.buildMode);
+  surface.classList.toggle("building",!!state.buildMode);
 }
 
 // ── the hover prompt ────────────────────────────────────────────────────────
@@ -170,22 +161,15 @@ function sound(freq,duration){
 }
 
 // ── registration ────────────────────────────────────────────────────────────
-// Every listener and observer this adapter owns, in one auditable list. Called once, by main.js,
-// before src/input.js and src/debug/view-debugger.js — the debugger's `unlimited charges` binding
-// runs syncBuildHud() the moment it is bound, and that needs `surface` already set.
+// Every listener this adapter owns, in one auditable list. Called once, by main.js, before
+// src/input.js and src/debug/view-debugger.js; `surface` must be set before anything can call
+// syncBuildHud().
 export function initHud(pointerSurface){
   surface = pointerSurface;
 
   // upgrade modal
   document.getElementById("upgradeDecline").addEventListener("click", closeUpgradeMenu);
   document.getElementById("upgradeAccept").addEventListener("click", ()=>{acceptUpgrade();});
-
-  // build dock — tabs, cards, and the clearance the toast lane reserves above the dock
-  document.querySelectorAll(".dock-tab").forEach(tab=>tab.addEventListener("click",()=>setBuildDockCategory(state.buildDockCategory===tab.dataset.category?null:tab.dataset.category)));
-  // Toasts occupy the notification lane immediately above the dock in both collapsed and expanded states.
-  const buildDock=document.getElementById("buildDock"),stage=document.getElementById("stage");
-  new ResizeObserver(()=>stage.style.setProperty("--build-dock-clearance",buildDock.offsetHeight+"px")).observe(buildDock);
-  document.querySelectorAll("button.build").forEach(button=>button.addEventListener("click",()=>toggleBuildMode(button.dataset.kind)));
 
   // production skill-tree entry; command owns modal/input semantics.
   document.getElementById("skillPointBadge").addEventListener("click",openSkillTree);

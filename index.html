@@ -9,31 +9,9 @@
 </head>
 <body>
 <div id="game">
-  <section id="buildDock" aria-label="build dock">
-    <div id="buildCards">
-      <section class="build-category" data-category="economy">
-        <button class="build" data-kind="lumber" title="staff to gather nearby wood"><b>lumber camp</b><span class="cost">8w · 2s</span><span class="purpose">gathers wood</span></button>
-        <button class="build" data-kind="quarry" title="staff to gather nearby stone"><b>quarry</b><span class="cost">4w · 8s</span><span class="purpose">gathers stone</span></button>
-        <button class="build" data-kind="stockpile" title="stores loose resources for haulers"><b>stockpile</b><span class="cost">2w · 0s</span><span class="purpose">local storage</span></button>
-        <button class="build" data-kind="house" title="produces up to two workers"><b>house</b><span class="cost" id="houseCost">8w · 6s</span><span class="purpose">produces workers</span></button>
-        <button class="build" data-kind="obelisk" title="accepts permanent building upgrades"><b>obelisk</b><span class="cost">5w · 12s</span><span class="purpose">upgrades</span></button>
-      </section>
-      <section class="build-category" data-category="defense">
-        <button class="build" data-kind="tower" title="fires nearby and accepts one permanent variant"><b>basic tower</b><span class="cost">6w · 10s</span><span class="purpose">upgradeable chassis</span></button>
-      </section>
-      <section class="build-category" data-category="deployables">
-        <button class="build" data-kind="blast" title="click its hover control to detonate"><b>blast charge</b><span class="cost">free · unlimited</span><span class="purpose">manual blast</span></button>
-        <button class="build" data-kind="spikes" title="repeatedly damages enemies crossing it"><b>spike trap</b><span class="cost" id="spikeStack">free · 5 left</span><span class="purpose">contact damage</span></button>
-        <button class="build" data-kind="landmine" title="single-use area explosion"><b>land mine</b><span class="cost" id="landmineStack">free · 3 left</span><span class="purpose">area blast</span></button>
-        <button class="build" data-kind="tar" title="slows enemies crossing it"><b>tar</b><span class="cost" id="tarStack">free · 3 left</span><span class="purpose">slows enemies</span></button>
-      </section>
-    </div>
-    <nav id="buildTabs" aria-label="build categories">
-      <button class="dock-tab" data-category="economy">economy</button>
-      <button class="dock-tab" data-category="defense">defense</button>
-      <button class="dock-tab" data-category="deployables">deployables</button>
-    </nav>
-  </section>
+  <!-- No build dock. Building is 100% card-driven: every construction site on the map comes out of
+       the fanned hand at the bottom of the stage (src/ui/hand.js), and the simulation's placement
+       machinery has exactly one entry point, placeCardCharge(). -->
   <main id="stage">
     <canvas id="scene"></canvas>
     <!-- tabindex=-1: never a tab stop, but a real focus target, so a modal closing over a
@@ -52,12 +30,13 @@
              selectors  — ground marks under the hovered/selected thing, plus
                           the render-only sample preview for tuning them.
              gameplay   — the one pane that drives the SIM rather than the view:
-                          economy shortcuts, phase/clock, spawns, population.
+                          economy shortcuts, phase/clock, spawns, population,
+                          and the card dealer.
                           Its flags live in DBG and its buttons call the same
                           entry points play does; it authors nothing itself.
              Contextual subgroup order: visibility scan/readability; input
              hand/click/projectiles; overlays damage/bars/badge; gameplay
-             economy/builders/time/combat/population. Camera and selectors
+             economy/builders/time/combat/population/cards. Camera and selectors
              intentionally have no subgroups.
              Ownership is one-way and exclusive: the five view panes write only
              their own presentation bag (selectors -> IND / SEL_PREVIEW,
@@ -219,7 +198,6 @@
         <section class="pane" data-tab="gameplay">
           <div class="vSubpane" data-subtab="economy">
           <label class="chk"><input autocomplete="off" type="checkbox" id="vFreeCosts"><span>free costs</span></label>
-          <label class="chk"><input autocomplete="off" type="checkbox" id="vUnlimitedCharges"><span>unlimited charges</span></label>
           <div class="row"><span>feeding</span><span id="vXpReadout">xp 0 · tier 0 · 0 points</span></div>
           <div class="btnrow">
             <button id="vGrantXp" type="button">+25 xp</button>
@@ -273,6 +251,16 @@
             <button id="vOpenSkillTree" type="button">open skill tree</button>
           </div>
           </div>
+          <!-- The card dealer. Empty root: src/debug/view-debugger.js builds one chip per registry
+               card from src/game/cards.js, so a card added tomorrow appears here the same day and
+               nothing in this markup names one. Buff and aura chips are drawn but disabled — only
+               consumables and blueprints can be HELD, which is what debugDealCard() deals. -->
+          <div class="vSubpane" data-subtab="cards">
+          <div class="btnrow">
+            <button id="vClearHand" type="button">clear hand</button>
+          </div>
+          <div id="vCardDealer"></div>
+          </div>
         </section>
 
       </div>
@@ -309,7 +297,15 @@
          #handDock is pointer-transparent and only its cards take the pointer, so the strip
          never eats a click meant for the ground behind the gaps in the fan. -->
     <section id="handDock" aria-label="card hand"><div id="handCards"></div></section>
-    <p id="handHint"><kbd>1</kbd>–<kbd>9</kbd> play a card<br><kbd>q</kbd> <kbd>e</kbd> browse · <kbd>enter</kbd> plays<br>right-click stows an open kit</p>
+    <!-- The key legend. One ROW per line — a flex column with a gap, so no chip can ever land on
+         top of the line above it however the frame is sized. It takes the bottom-LEFT corner the
+         build dock used to own, and src/ui/hand.js fades it once the player has played their first
+         card (a plain runtime flag; nothing is stored). -->
+    <div id="handHint">
+      <p><kbd>1</kbd>–<kbd>9</kbd> play a card</p>
+      <p><kbd>q</kbd><kbd>e</kbd> browse · <kbd>enter</kbd> plays</p>
+      <p><kbd>h</kbd> peek · right-click stows a kit</p>
+    </div>
     <!-- Pick-3 overlay, shared by the level draft and the dawn payout; src/ui/draft.js builds
          #draftPicks from the simulation's draftPending(). `hidden` is the closed state
          (display:none), which keeps the screen out of layout, out of the focus order and out of

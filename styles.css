@@ -3,13 +3,18 @@
     --ink:#292119; --paper:#f1dfb7; --red:#a94634; --gold:#d29a39;
     --shadow:3px 3px 0 #17120d99;
     --mono:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
-    /* Cards. Violet is the card system's own colour — it marks the epic rarity, the lift of
-       a card that is mid-placement and the draft overlay's furniture, and it appears nowhere
-       else in the game, so anything violet on screen is a card doing something.
+    /* Cards. PALETTE CANON: violet belongs to THE THING IN THE GROUND — the level bar it fills,
+       the draft/dawn vignette the offer comes out of, and nothing else. It is no longer a rarity
+       and no longer the colour of a card mid-placement; a card that is doing something lights up
+       in its OWN rarity accent instead, so the only violet on screen is the thing offering.
+       Epic therefore moved to the aqua family, the same teal the showcase panel and the upgrade
+       highlight already use (#70d8d1 / #78d7d4); --aqua is the darker sibling that can carry the
+       eyebrow band's white text on the card's warm paper.
        The four swatches are src/game/cards.js's four RARITIES and nothing else; a rarity the
        registry does not author has no rule here and falls through to the common tan. */
     --violet:#8a5cc8; --violet-lit:#b48ae8;
-    --r-common:#9c8a63; --r-rare:#4a72a8; --r-epic:var(--violet); --r-legendary:#bf8a2e;
+    --aqua:#2c8b88; --aqua-lit:#70d8d1;
+    --r-common:#9c8a63; --r-rare:#4a72a8; --r-epic:var(--aqua); --r-legendary:#bf8a2e;
     --card-w:104px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
@@ -22,7 +27,7 @@
      of this file would silently do nothing from up here. The raised variant lives with the
      card rules, also on #stage, so the two overrides stay comparable. */
   #stage{position:absolute;inset:0;--toast-lane:240px}
-  /* Frame-local stack: HUD 3, dock 4, prompt/pause 5, upgrade 6, toast 8, viewPanel 9,
+  /* Frame-local stack: HUD 3, hand 5, prompt/pause 5, upgrade 6, toast 8, viewPanel 9,
      skill tree 10, draft 10, game-over 11. Both full-stage overlays cover every panel above; only
      the end card, which ends the run outright, may cover them. The two are mutually exclusive, so
      they share a layer and the draft's later position in this file settles the tie. */
@@ -53,42 +58,19 @@
   #forecastSides{font-weight:bold;margin-bottom:4px}
   #forecastRemaining{font-size:9px;color:#d98b75;margin-bottom:3px}
   #recipeSummary{display:flex;flex-wrap:wrap;gap:2px 9px;list-style:none;font-size:10px}
-  /* ── build dock ──
-     Moved out of the centre. The fanned hand (see the cards section at the foot of this file)
-     is the widest object on the stage and its cards rise on hover, so bottom-centre is now the
-     hand's column and the dock takes the bottom-LEFT corner as a fixed 244px rail whose
-     category panel opens UPWARD off the tab row. Everything below this comment is the same
-     dock with a column count instead of a scrolling row; no button lost a behaviour.
-     The two widths are set against each other: the dock's right edge lands 386px left of
-     centre, and src/ui/hand.js caps the fan at 470px of centred span, so the furthest a
-     hovered card can reach is 318px from centre — a clear lane between them at every hand
-     size the strip supports. The keyboard hint takes the matching corner on the right and
-     is width-capped for the same reason. */
-  #buildDock{position:absolute;z-index:4;left:10px;bottom:10px;width:244px;pointer-events:none}
-  #buildCards{display:none;margin-bottom:5px;padding:5px;background:#f1dfb7f2;border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
-  #buildCards.open{display:block}
-  /* Two equal columns rather than a horizontal scroller: at 244px a scrolling row would show
-     one and a half buttons and hide the rest behind a drag. Five economy buttons fall 2+2+1. */
-  .build-category{display:none;grid-template-columns:1fr 1fr;gap:4px}
-  .build-category.open{display:grid}
-  /* One equal column per tab, counted from the markup rather than hardcoded — a fixed count left a
-     dead slot behind when the debug button moved into the view debugger. */
-  #buildTabs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:100%;margin:0;padding:3px;background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);pointer-events:auto}
+  /* ── buttons ──
+     THE build dock is gone. Building is card-driven, so the bottom-left corner it owned is free
+     and the fan below has the whole bottom band to itself; the only thing left in that corner is
+     the keyboard legend, which fades out once the player has played a card. These are the generic
+     button rules the panels and modals inherit. */
   button{width:100%;font:inherit;text-transform:lowercase;text-align:left;color:var(--ink);cursor:pointer;background:#e6d09f;border:2px solid #b99f6c;padding:7px;margin:2px 0}
   button:hover{border-color:var(--ink);background:#f7e8c5}
-  button.on,.dock-tab.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
   button:disabled{cursor:not-allowed;opacity:.42;filter:saturate(.4)}
   button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
-  .dock-tab{text-align:center;margin:0;padding:6px}
-  .build-category .build{position:relative;min-height:58px;margin:0;padding:5px;font-size:10px}
-  .build-category .build:hover{transform:translateY(-1px)}
-  .build-category .build.on{box-shadow:inset 0 0 0 1px var(--gold)}
-  .cost,.purpose{display:block;font-size:9px;margin-top:2px}
-  .cost{color:#765f42}.purpose{opacity:.72}
   kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
-  /* The notification lane used to sit just above the build dock. The dock is in the corner now
-     and the centre column belongs to the hand, so the lane rides above the FAN instead — high
-     enough to clear a card at full hover lift and scale. */
+  /* The notification lane rides above the FAN — high enough to clear a card at full hover lift
+     and scale. */
   #toast{position:absolute;z-index:8;left:50%;bottom:var(--toast-lane,240px);transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity .15s,bottom .15s;pointer-events:none;white-space:nowrap}
   #toast.on{opacity:1}#game.modal-open #toast{opacity:0}
   #prompt{position:absolute;z-index:5;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
@@ -123,15 +105,12 @@
     #phaseHud{right:6px;top:6px;width:50%;padding:5px 6px;font-size:10px}
     #phaseHeader{font-size:11px}#phaseProgress{margin:4px 0}
     #runTimeRow,#forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
-    #buildDock{left:6px;bottom:6px;width:236px}#buildCards{padding:3px;margin-bottom:3px}
-    .build-category{gap:3px}.build-category .build{min-height:52px;padding:4px;font-size:9px}
-    .cost,.purpose{font-size:8px}#buildTabs{padding:2px}.dock-tab{padding:4px;font-size:9px}
     #upgradePanel{max-height:calc(100% - 12px)}
   }
 
   /* ── showcase-only DOM ────────────────────────────────────────────── */
   #showcasePanel{position:absolute;z-index:7;right:8px;top:8px;width:220px;padding:7px;background:#162c30ed;color:#e9dfbd;border:2px solid #70d8d1;box-shadow:var(--shadow)}
-  #showcasePanel[hidden],#showcaseLabels[hidden],#phaseHud[hidden],#buildDock[hidden]{display:none}
+  #showcasePanel[hidden],#showcaseLabels[hidden],#phaseHud[hidden]{display:none}
   #showcasePanel h2{font-size:13px;margin-bottom:5px;color:#9ee9df}
   #showcasePanel nav{display:grid;grid-template-columns:1fr 1fr;gap:3px}
   #showcasePanel button{margin:0;padding:4px;font-size:10px;text-align:center;background:#29474a;color:#f1dfb7;border-color:#598987}
@@ -193,6 +172,21 @@
   #viewPanel .btnrow button{flex:1 1 calc(50% - 2px);width:auto;margin:0;padding:4px 3px;font-size:10px;
     text-align:center;white-space:nowrap;background:#4a5533;color:#f1dfb7;border:1px solid #8f9760}
   #viewPanel .btnrow button:hover{background:#5a6740}
+  /* card dealer (gameplay > cards). A dense wrap of id chips, one per registry row, tinted by
+     rarity off the SAME four --r-* tokens the card faces use — so epic reads aqua here too and the
+     panel can never disagree with the frame it deals. Disabled chips are the categories that
+     cannot be held. */
+  #vCardDealer .vCardGrid{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 6px}
+  #vCardDealer .vCardChip{flex:0 1 auto;width:auto;margin:0;padding:2px 5px;font-size:9px;
+    line-height:1.5;text-align:center;white-space:nowrap;background:#354027;color:#f1dfb7;
+    border:1px solid var(--rarity,#69754b);border-left-width:3px}
+  #vCardDealer .vCardChip.r-common{--rarity:var(--r-common)}
+  #vCardDealer .vCardChip.r-rare{--rarity:var(--r-rare)}
+  #vCardDealer .vCardChip.r-epic{--rarity:var(--r-epic)}
+  #vCardDealer .vCardChip.r-legendary{--rarity:var(--r-legendary)}
+  #vCardDealer .vCardChip:hover:not(:disabled){background:#4a5533;color:#fff1c7}
+  #vCardDealer .vCardChip.off-pool{opacity:.62;font-style:italic}
+  #vCardDealer .vCardChip:disabled{opacity:.38}
   #vScan{width:100%;height:70px;display:block;margin-bottom:4px;background:#1b2013;border:1px solid #69754b}
   #vRescan{margin:0;padding:4px;text-align:center;background:#4a5533;color:#f1dfb7;border-color:#8f9760}
   #vReadout{margin-top:6px;padding:4px 5px;background:#1b2013;font-size:10px;line-height:1.5;
@@ -219,7 +213,7 @@
      Three bands down the stage: title, graph viewport, action bar. `hidden` is
      display:none on purpose: no layout, no tab stop, no a11y node.
      Every selector in this section names an element inside #skillTreePanel, so
-     none of it reaches a generic button, the build dock or the view debugger.
+     none of it reaches a generic button, the hand or the view debugger.
      The backdrop is opaque enough (fa) that the two scenes behind it — bright
      day and blue night — arrive at the same dark sepia. */
   #skillTreePanel{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
@@ -324,10 +318,10 @@
      card's OWN font-size, and that font-size is a twelfth of --cw, so a 104px card in
      the fan and a 196px card in the draft are the same drawing scaled — never two
      drawings that have to be kept in step. --cw is the only number a caller sets.
-     Rarity enters through one variable, --rarity, and comes out in three places: the
-     eyebrow band, the inner ring and the lit charge pips. Violet (--violet) belongs to
-     the card system itself: the epic rarity, the glow on a card that is mid-placement
-     and the draft overlay's furniture, and nothing else in the game uses it.
+     Rarity enters through one variable, --rarity, and comes out in FOUR places now: the
+     eyebrow band, the inner ring, the lit charge pips, and the glow on a card that is
+     mid-placement — that last one used to be violet, and violet is the ground's colour,
+     not a card's (see the palette note at the top of this file).
      The four classes below are src/game/cards.js's four RARITIES. The default sits on
      .card itself, so a card whose rarity has no rule still draws a frame rather than a
      hole where one should be. */
@@ -395,34 +389,56 @@
     font:bold .78em/1.3 var(--mono);box-shadow:.1em .12em 0 #17120d66}
 
   /* ── the fanned hand ──
-     Bottom-centre, which is why the build dock moved to the corner (see the dock section
-     up top). The strip itself takes no pointer events — only the cards do — so the gaps
-     between the fanned cards stay clickable ground. Every card sits on ONE origin point
-     and is placed entirely by four variables src/ui/hand.js writes; the transform order is
-     centre, then fan offset, then tilt and lift about the card's own bottom edge, which is
-     what keeps the bottoms on a shallow curve instead of swinging them off it. */
-  /* The 520px this subtracts is the two bottom corners the fan must never reach into: the build
-     dock's rail on the left and the keyboard hint on the right, plus a lane either side.
-     src/ui/hand.js measures THIS box and fits the fan inside it, so the two stay in step
-     without either side hard-coding the other's width. */
+     Bottom-centre, and with the build dock gone it has the whole bottom band. The strip itself
+     takes no pointer events — only the cards do — so the gaps between the fanned cards stay
+     clickable ground. Every card sits on ONE origin point and is placed entirely by four
+     variables src/ui/hand.js writes; the transform order is centre, then fan offset, then tilt
+     and lift about the card's own bottom edge, which is what keeps the bottoms on a shallow
+     curve instead of swinging them off it.
+     WIDTH BUDGET: the dock used to eat the left corner and the legend the right, so this box
+     subtracted 520px of frame. The dock is gone and the legend moved into the corner it left
+     and fades after the first play, so the fan now only reserves a 120px lane either side and
+     may run 860px wide — which is what lets six or seven cards stop overlapping their own
+     effect text. src/ui/hand.js measures THIS box and fits the fan inside it, so the two stay
+     in step without either side hard-coding the other's width.
+     BASELINE: #handCards' `bottom` is written by src/ui/hand.js per repaint, not here — the
+     deepest point of the fan is a function of the tilt and the card width at the current hand
+     size, so the clearance is computed against those rather than guessed once. The declaration
+     below is only the pre-script default. */
   #handDock{position:absolute;z-index:5;left:50%;bottom:0;transform:translateX(-50%);
-    width:min(600px,max(180px,100% - 520px));height:236px;pointer-events:none}
-  #handCards{position:absolute;left:50%;bottom:32px;width:0;height:0;--cw:var(--card-w)}
+    width:min(860px,max(220px,100% - 240px));height:248px;pointer-events:none}
+  #handCards{position:absolute;left:50%;bottom:34px;width:0;height:0;--cw:var(--card-w);
+    transition:transform .26s cubic-bezier(.2,.85,.3,1)}
+  /* PEEK. During a live night wave (or on the h key) the fan drops to a sliver so the bottom of
+     the battlefield is readable, and rises the moment the pointer touches it. #handDock is
+     pointer-events:none, but :hover still propagates up from a card that IS a hit target, so
+     hovering the visible top edge of the sliver is what brings the hand back. */
+  #handDock.peek #handCards{transform:translateY(118px)}
+  #handDock.peek:hover #handCards{transform:translateY(0)}
   #handCards .card{position:absolute;left:0;bottom:0;pointer-events:auto;cursor:pointer;
     transform-origin:50% 100%;
     transform:translateX(-50%) translate(var(--x,0),var(--y,0)) rotate(var(--rot,0deg)) scale(var(--scale,1));
     transition:transform .19s cubic-bezier(.2,.85,.3,1),box-shadow .19s ease-out,filter .19s ease-out}
-  #handCards .card:focus-visible{outline:2px solid var(--violet-lit);outline-offset:3px}
+  #handCards .card:focus-visible{outline:2px solid var(--rarity);outline-offset:3px}
+  /* DENSE. Past the threshold in src/ui/hand.js's FAN table the fan is tight enough that a card's
+     right-hand neighbour covers its effect text, and a half-covered sentence reads as noise. So
+     past that density the body text is suppressed on every card that is not raised: the eyebrow,
+     the glyph, the NAME and the charge pips all stay — which is the whole identity of the card —
+     and the text comes back in full the instant it is hovered or browsed to. visibility rather
+     than display, so nothing reflows as a card rises. */
+  #handCards.dense .card:not(.raised) .card-text,
+  #handCards.dense .card:not(.raised) .card-note{visibility:hidden}
   /* Raised — hovered, or sitting under the q/e browse cursor. It straightens, grows and is
      the only card carrying a warm rim, so which card the next key press acts on is never
      ambiguous even with the whole fan overlapping. */
   #handCards .card.raised{box-shadow:inset 0 0 0 .17em var(--rarity),inset 0 .05em .9em #fffbe8b0,
     inset 0 -1.1em 1.5em #97724026,0 .5em 1.4em #000000a8,0 0 0 .13em #f0d9a5}
-  /* Active — the simulation is running this card's placement flow. It holds itself up out of
-     the fan and wears the card system's violet until the last charge lands or the kit is
-     stowed, so the ghost on the map always has a visible owner down here. */
-  #handCards .card.active{box-shadow:inset 0 0 0 .17em var(--violet),inset 0 .05em .9em #fffbe8b0,
-    inset 0 -1.1em 1.5em #97724026,0 .4em 1.1em #000000a0,0 0 .9em .1em var(--violet);
+  /* Active — the simulation is running this card's placement flow. It holds itself up out of the
+     fan and glows in its OWN rarity accent until the last charge lands or the kit is stowed, so
+     the ghost on the map always has a visible owner down here. (It used to glow violet; violet is
+     the ground's colour, and a card mid-placement is not an offer.) */
+  #handCards .card.active{box-shadow:inset 0 0 0 .17em var(--rarity),inset 0 .05em .9em #fffbe8b0,
+    inset 0 -1.1em 1.5em #97724026,0 .4em 1.1em #000000a0,0 0 .9em .1em var(--rarity);
     animation:cardActive 1.5s ease-in-out infinite}
   @keyframes cardActive{50%{filter:brightness(1.1) saturate(1.15)}}
   #handCards .card.arriving{opacity:0}
@@ -434,15 +450,23 @@
      nothing. Empty whenever nothing is in the air. */
   #cardFlights{position:fixed;inset:0;z-index:999;pointer-events:none;overflow:hidden;--cw:var(--card-w)}
   .card-flight{position:fixed;pointer-events:none;will-change:transform,opacity}
-  /* Keyboard scheme, printed where it costs nothing: the empty bottom-right corner. The card
-     numbers themselves are on the cards, so this line only has to name the verbs. */
-  /* Two short lines rather than one long one: the corner has to stay narrow enough that a
-     hovered card at the right end of the fan never reaches it. */
-  #handHint{position:absolute;z-index:5;right:10px;bottom:9px;width:200px;text-align:right;
-    font-size:9px;line-height:1.72;color:#f1dfb7;opacity:.55;
-    text-shadow:1px 1px 2px #000c,0 0 6px #000;pointer-events:none}
+  /* Keyboard scheme, printed where it costs nothing: the bottom-LEFT corner the build dock used
+     to fill. The card numbers themselves are on the cards, so these lines only name the verbs.
+     A flex COLUMN with a gap, one <p> per line: the old version was three <br>-separated runs in
+     one line box, and the kbd chips — which are inline boxes taller than the 9px line — stacked
+     on top of each other whenever a line wrapped. Rows cannot overlap. */
+  #handHint{position:absolute;z-index:5;left:10px;bottom:9px;max-width:230px;
+    display:flex;flex-direction:column;align-items:flex-start;gap:3px;
+    font-size:9px;line-height:1.4;color:#f1dfb7;opacity:.55;
+    text-shadow:1px 1px 2px #000c,0 0 6px #000;pointer-events:none;
+    transition:opacity .5s ease-out}
+  /* Faded after the first card is played: src/ui/hand.js sets this once per page (a plain runtime
+     flag, nothing stored), because by then the legend has done its whole job. */
+  #handHint.faded{opacity:0}
   #handHint[hidden]{display:none}
-  #handHint kbd{padding:0 3px;margin:0 1px;font-size:9px;background:#f1dfb7cc;color:#17120d}
+  #handHint p{white-space:nowrap}
+  #handHint kbd{display:inline-block;padding:0 3px;margin:0 1px;font-size:9px;line-height:1.35;
+    background:#f1dfb7cc;color:#17120d}
   /* The notification lane clears a raised card. #toast already transitions `bottom`. */
   #game.hand-raised #stage{--toast-lane:356px}
 
@@ -492,6 +516,7 @@
     /* Fades only. The fan still assembles itself — its geometry is where a card IS, not an
        approach to it — but nothing travels: the card jumps to its raised position, the picks
        do not deal in, and both flights are handled in JS, which drops to a plain fade. */
+    #handCards{transition:none}
     #handCards .card{transition:opacity .12s linear}
     #handCards .card.active,#handCards .card.landed,#handCards .card.refused,
     .pick,.pick.rejected{animation:none}
@@ -504,11 +529,12 @@
   /* Same specificity as the rules these shadow, and later in the sheet, which is what lets a
      matching query win — see the note on #stage at the top of this file. */
   @container game-frame (max-width:799px){
-    #handDock{height:190px}#handCards{bottom:14px;--cw:86px}
+    #handDock{height:196px;width:min(640px,max(200px,100% - 140px))}#handCards{--cw:86px}
+    #handDock.peek #handCards{transform:translateY(96px)}
     #stage{--toast-lane:180px}#game.hand-raised #stage{--toast-lane:262px}
     #draftTitle{font-size:16px;padding-bottom:5px;border-bottom-width:2px}
     #draftSub{font-size:10px;margin-top:6px}
     #draftPicks{gap:16px}.pick{--cw:150px;gap:7px}.pick-dest{font-size:9px}
     #draftBar{padding:7px;font-size:9px}
-    #handHint{font-size:8px;right:6px;bottom:6px}#handHint kbd{font-size:8px}
+    #handHint{font-size:8px;left:6px;bottom:6px;max-width:200px}#handHint kbd{font-size:8px}
   }

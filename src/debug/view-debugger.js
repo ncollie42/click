@@ -23,10 +23,7 @@
 //             tunable holders (TUNE, DBG), or a setter a module exposes (setOrthoCamera,
 //             setShadows, setOutlines, setSelectorPreview, setCapacity, setPins). None of them is a
 //             bare imported binding: those are read-only, and assigning to one throws.
-//   Asks:     syncBuildHud() from src/ui/hud.js, after flipping DBG.unlimitedCharges — the dock
-//             prints charge counts, so the switch has to repaint it. The dependency runs
-//             debugger -> hud and never back.
-//             HOOKS.resizeView() — injected by main.js. Toggling the orthographic camera needs the
+//   Asks:     HOOKS.resizeView() — injected by main.js. Toggling the orthographic camera needs the
 //             ONE resize path (scene first, then the overlay with the same box), and main.js owns
 //             that composition; re-deriving it here would fork the invariant.
 //   Keeps:    authored normalized defaults for reportable bindV() controls, captured once while
@@ -48,12 +45,16 @@ import {
   ENEMY_TYPES,
   NIGHT_WAVE_RECIPES
 } from "../game/data.js";
+// The card catalog, read for the dealer grid only: one chip per authored row, never a hand-picked
+// subset, so a card added to the registry is dealable the day it lands. Read-only, like every other
+// authored table this panel touches.
+import {CARDS} from "../game/cards.js";
 import {
   TUNE, DBG, state, xp, waveTier, skillPoints, levelState,
   setCameraZoom, setCapacity, openSkillTree,
   // debug entry points (view panel > gameplay)
   spawnEnemy, debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
-  debugStartWave, debugClearEnemies, debugHealAll
+  debugStartWave, debugClearEnemies, debugHealAll, debugDealCard, debugClearHand
 } from "../game/simulation.js";
 import {
   view, VIEW_TUNE, IND,
@@ -62,7 +63,6 @@ import {
 } from "../render/scene.js";
 import {setOutlines, outlineMat} from "../render/models.js";
 import {BARS, BADGE, BADGE_ICON_RATIO, DAMAGE_TEXT} from "../render/overlay.js";
-import {syncBuildHud} from "../ui/hud.js";
 
 // ── host hooks ──────────────────────────────────────────────────────────────
 // Same shape as the simulation's connect(effects): named sinks, filled in wholesale at boot.
@@ -236,6 +236,35 @@ function fillSelect(id, items){
   }));
 }
 
+// ── the card dealer (gameplay > cards) ──────────────────────────────────────
+// A chip per registry card, grouped by category in the registry's own order, labelled with the id
+// because that is what the rest of the debugger speaks. Clicking one calls debugDealCard(), the
+// same command the ?draftDemo console helpers use, so a dealt card is an ordinary hand entry.
+// Only a consumable or a blueprint can be HELD — a buff applies on the draft and an aura has no
+// implementation yet — so those chips are drawn (the grid is the whole catalog) but disabled.
+const DEALER_GROUPS=[["blueprint","blueprints"],["consumable","consumables"],["aura","auras"],["buff","buffs"]];
+const DEALABLE=new Set(["consumable","blueprint"]);
+function buildCardDealer(){
+  const root=$v("vCardDealer");
+  root.replaceChildren();
+  for(const [category,label] of DEALER_GROUPS){
+    const cards=CARDS.filter(card=>card.category===category);
+    if(!cards.length)continue;
+    const heading=document.createElement("h4");heading.textContent=label+" ("+cards.length+")";root.appendChild(heading);
+    const grid=document.createElement("div");grid.className="vCardGrid";
+    for(const card of cards){
+      const chip=document.createElement("button");
+      chip.type="button";chip.className="vCardChip r-"+card.rarity;chip.textContent=card.id;
+      chip.title=card.rarity+" · "+card.text+(card.inPool?"":" · out of pool");
+      if(!card.inPool)chip.classList.add("off-pool");
+      if(DEALABLE.has(category))chip.addEventListener("click",()=>{debugDealCard(card.id);});
+      else{chip.disabled=true;chip.title=card.rarity+" · "+card.text+" · not holdable (applies on draft)";}
+      grid.appendChild(chip);
+    }
+    root.appendChild(grid);
+  }
+}
+
 // ── the bindings ────────────────────────────────────────────────────────────
 // One call per control, in pane order. Each bindV() applies its markup default the moment it is
 // bound, so this list is also the boot sequence for every tunable the panel owns.
@@ -333,7 +362,6 @@ function bindControls(){
 
   // economy — free costs bypasses the DELIVERY, it does not zero a cost or top up a store.
   bindV("vFreeCosts", v=>{ DBG.freeCosts=v; debugSweepFreeCosts(); });
-  bindV("vUnlimitedCharges", v=>{ DBG.unlimitedCharges=v; syncBuildHud(); });
   bindV("vGroundSourcing", v => { DBG.groundSourcing = v; });
   bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });
   bindV("vBuilderRadius", v => { TUNE.builderSourceRadius = v; }, v => v + "px");
@@ -367,6 +395,10 @@ function bindControls(){
   // yet. Not a debug command: this is the same openSkillTree() a real trigger will call, and the
   // guards that keep two modals off screen at once live in it, not here.
   bindBtn("vOpenSkillTree", ()=>{ openSkillTree(); });
+
+  // cards — the dealer grid is generated from the registry; only the two buttons are bound here.
+  buildCardDealer();
+  bindBtn("vClearHand", ()=>{ debugClearHand(); });
 }
 
 // Three different numbers on purpose: xp is everything ever fed, the level is what the draft rides
@@ -459,8 +491,8 @@ export function drainScans(){
 
 // ── registration ────────────────────────────────────────────────────────────
 // Every listener and binding this adapter owns, in one auditable list. Called once, by main.js,
-// after initHud() (the `unlimited charges` binding repaints the dock) and after initInput() (whose
-// keydown listener must stay ahead of the shift+digit handler below).
+// after initHud() and after initInput() (whose keydown listener must stay ahead of the shift+digit
+// handler below).
 export function initViewDebugger(hooks={}){
   Object.assign(HOOKS, hooks);
 

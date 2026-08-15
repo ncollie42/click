@@ -14,8 +14,8 @@
 // Fields:
 //   id         unique slug
 //   category   "buff" (permanent, stackable) | "consumable" (free, expendable)
-//              | "aura" (free, temporary buff tower) | "blueprint" (unlocks a buildable,
-//              leaves the pool when taken)
+//              | "aura" (free, temporary buff tower) | "blueprint" (drops one construction
+//              site; it stays in the pool and may be offered again)
 //   rarity     "common" | "rare" | "epic" | "legendary"
 //   text       player-facing effect line
 //   stacks     max times a buff can be drafted (buffs only)
@@ -179,10 +179,23 @@ export const CARDS=[
    ref:"concept:wildFoundation", model:null, implemented:false, inPool:false,
    notes:"prototype: matching biome costs 25% less; mismatched biome costs 25% more; biome detection does not exist yet"},
 
+  // ── D · blueprints — the base kit ─────────────────────────────────────────
+  // The build shop is gone: these five ARE the ordinary economy/defense menu, dealt as cards. Each
+  // one drops a single ordinary CONSTRUCTION SITE at the building's own authored cost — the card
+  // buys the plan, never the materials — and the house site charges nextHouseCost(), the same
+  // escalating price every later house pays. They are common and they stay in the pool, so a run
+  // can keep drawing houses and camps as it grows.
+  {id:"bpHouse",     category:"blueprint", rarity:"common", text:"place a house blueprint",     features:["workers","physical space"], charges:1, ref:"building:house",     model:null, implemented:true, inPool:true, notes:"one house site at the ESCALATED house cost — the same price the nth house has always cost"},
+  {id:"bpLumber",    category:"blueprint", rarity:"common", text:"place a lumber camp blueprint",features:["resources","physical space"], charges:1, ref:"building:lumber",    model:null, implemented:true, inPool:true, notes:"one lumber camp site at its authored cost; staff it with a worker once it stands"},
+  {id:"bpQuarry",    category:"blueprint", rarity:"common", text:"place a quarry blueprint",    features:["resources","physical space"], charges:1, ref:"building:quarry",    model:null, implemented:true, inPool:true, notes:"one quarry site at its authored cost; staff it with a worker once it stands"},
+  {id:"bpStockpile", category:"blueprint", rarity:"common", text:"place a stockpile blueprint", features:["resources","physical space"], charges:1, ref:"building:stockpile", model:null, implemented:true, inPool:true, notes:"one stockpile site at its authored cost; local storage haulers can fill"},
+  {id:"bpTower",     category:"blueprint", rarity:"common", text:"place a basic tower blueprint",features:["physical space"], charges:1, ref:"building:tower",     model:null, implemented:true, inPool:true, notes:"one basic tower site, plannedVariant null — the chassis, free to take any variant later"},
+
   // ── D · blueprints — the tower table is the pool ──────────────────────────
   // Every card below refs a real authored table row, so all of them are in the pool. Drafting one
-  // puts the card in the HAND and takes it out of the pool for the run; playing it arms the ordinary
-  // build placement flow and the click drops a normal CONSTRUCTION SITE, one per card. The card is
+  // puts the card in the HAND; playing it arms the ordinary build placement flow and the click drops
+  // a normal CONSTRUCTION SITE, one per card. A blueprint does NOT leave the pool — sites are not
+  // unlocks, so a run may draw the same plan again and stand three of the thing. The card is
   // access to the variant, never its materials: the site costs the authored basic-tower price and
   // its variant upgrade is accepted the moment the chassis stands, so the player pays exactly what
   // building the tower and buying the upgrade by hand would have cost.

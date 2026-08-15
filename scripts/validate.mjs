@@ -107,14 +107,27 @@ try{
   assert.equal(sim.chests.length,data.CHEST.startingCount);
   {const chest=sim.chests[0],cell=grid.worldToCell(chest.x,chest.y),center=grid.cellToWorld(cell.cx,cell.cy),radius=sim.distance(chest.x,chest.y,sim.state.camera.x,sim.state.camera.y);assert.deepEqual({x:chest.x,y:chest.y},center);assert.ok(radius>=data.CHEST.discoverMinRadius&&radius<=data.CHEST.discoverMaxRadius);assert.equal(sim.canPlace(chest.x,chest.y,null,null,null,chest),true);assert.equal(sim.canPlace(chest.x,chest.y,"house"),false);assert.equal("contents" in chest,false);assert.equal("outcome" in chest,false);}
   sim.initializeRunMode("normal");
-  assert.equal(sim.initializeRunMode("normal"),undefined);
+  // ── the starting hand ──
+  // With the build shop gone a fresh run can only build out of the hand, so normal initialization
+  // seeds the opening kit. It is dealt ONCE (re-initializing the same mode stays idempotent) and it
+  // is dealt through the ordinary hand writer, so every entry is a real one-copy stack.
+  {
+    const opening=sim.hand();
+    assert.deepEqual(opening.map(entry=>entry.id),["bpHouse","bpLumber","bpQuarry","bpTower"],"a normal run must open with the base-kit blueprints");
+    assert.equal(opening.every(entry=>entry.count===1&&entry.charges===null),true,"a seeded card must be an ordinary untouched stack");
+    assert.equal(opening.every(entry=>cardCatalog.cardById[entry.id].category==="blueprint"),true);
+    assert.equal(sim.initializeRunMode("normal"),undefined);
+    assert.deepEqual(sim.hand().map(entry=>entry.id),opening.map(entry=>entry.id),"re-initializing a run must not deal the opening kit twice");
+  }
   assert.throws(()=>sim.initializeRunMode("invalid"),/invalid run mode/);
   sim.spawnEnemy("north","raider");const taggedEnemy=sim.state.enemies[0];
   taggedEnemy.combatKind="invalid";assert.throws(()=>sim.validateSimulationInvariants(),/unknown combat kind/);taggedEnemy.combatKind="enemy";
   taggedEnemy.type="invalid";assert.throws(()=>sim.validateSimulationInvariants(),/unknown enemy type/);taggedEnemy.type="raider";
   const invalidDrop={kind:"invalid",x:100,y:100,groundY:100,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null};sim.resourceDrops.push(invalidDrop);assert.throws(()=>sim.validateSimulationInvariants(),/unknown resource drop kind/);sim.resourceDrops.pop();
   sim.state.runMode="invalid";assert.throws(()=>sim.update(1/60),/invalid run mode/);sim.state.runMode="normal";
-  sim.DBG.freeCosts=true;let houseSite=null;for(let y=64;y<data.H-64&&!houseSite;y+=data.CELL)for(let x=64;x<data.W-64;x+=data.CELL)if(sim.canPlace(x,y,"house")){houseSite={x,y};break;}assert.ok(houseSite);sim.setPointerWorld(houseSite.x,houseSite.y);sim.toggleBuildMode("house");sim.primaryPress();sim.primaryRelease();sim.DBG.instantWorkers=true;sim.update(1/60);const worker=sim.state.workers[0],workerOrigin={x:worker.x,y:worker.y};sim.setPointerWorld(worker.x,worker.y);sim.secondaryPress();assert.equal(sim.heldWorker(),worker);sim.pointerCancelled();assert.equal(worker.x,workerOrigin.x);assert.equal(worker.y,workerOrigin.y);assert.equal(sim.state.workers.includes(worker),true);sim.DBG.freeCosts=sim.DBG.instantWorkers=false;
+  // The house is placed the only way a house can be placed now: by playing the bpHouse card the
+  // opening kit dealt. There is no dock and no toggleBuildMode() to reach for.
+  sim.DBG.freeCosts=true;let houseSite=null;for(let y=64;y<data.H-64&&!houseSite;y+=data.CELL)for(let x=64;x<data.W-64;x+=data.CELL)if(sim.canPlace(x,y,"house")){houseSite={x,y};break;}assert.ok(houseSite);sim.setPointerWorld(houseSite.x,houseSite.y);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),"targeting");assert.equal(sim.state.buildMode,"house");sim.primaryPress();sim.primaryRelease();assert.equal(sim.buildings.some(item=>item.type==="house"&&item.complete),true,"the bpHouse card did not stand a house");sim.DBG.instantWorkers=true;sim.update(1/60);const worker=sim.state.workers[0],workerOrigin={x:worker.x,y:worker.y};sim.setPointerWorld(worker.x,worker.y);sim.secondaryPress();assert.equal(sim.heldWorker(),worker);sim.pointerCancelled();assert.equal(worker.x,workerOrigin.x);assert.equal(worker.y,workerOrigin.y);assert.equal(sim.state.workers.includes(worker),true);sim.DBG.freeCosts=sim.DBG.instantWorkers=false;
 
   // A fixed seed must reproduce startup, and an impossible first batch must be discarded.
   const startupProgram=`
@@ -159,7 +172,7 @@ try{
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();sim.windowBlurred();assert.deepEqual({x:chest.x,y:chest.y},placed);assert.equal(sim.chests.includes(chest),true);
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();sim.openSkillTree();assert.deepEqual({x:chest.x,y:chest.y},placed);assert.equal(sim.chests.includes(chest),true);sim.closeSkillTree();
         const shock={type:"tower",x:chest.x,y:chest.y,complete:true,cost:{},delivered:{wood:0,stone:0},storage:counts(),upgrades:{},activeUpgrade:null,tower:{variant:"shock",cooldown:0,flash:0,hitFlash:0,hp:15,maxHp:15},hazard:null,pulse:0},overlapWorker=makeWorker(chest.x,chest.y);sim.buildings.push(shock);sim.state.workers.push(overlapWorker);sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldWorker(),overlapWorker,"worker must outrank tower and chest");sim.pointerCancelled();sim.state.workers.splice(sim.state.workers.indexOf(overlapWorker),1);sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldBuilding(),shock,"movable tower must outrank chest");sim.pointerCancelled();sim.buildings.splice(sim.buildings.indexOf(shock),1);sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldChest(),chest,"chest must follow worker and tower priority");sim.pointerCancelled();
-        sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();const beforeBuildCount=sim.buildings.length,beforeHeldHp=chest.hp;sim.toggleBuildMode("house");assert.equal(sim.state.buildMode,null);sim.primaryPress();sim.update(1);sim.primaryRelease();assert.equal(sim.buildings.length,beforeBuildCount,"primary/build overlap placed while chest held");assert.equal(chest.hp,beforeHeldHp);sim.pointerCancelled();assert.deepEqual({x:chest.x,y:chest.y},placed);sim.validateSimulationInvariants();
+        sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();const beforeBuildCount=sim.buildings.length,beforeHeldHp=chest.hp;assert.equal(sim.debugDealCard("bpHouse"),true);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),false,"a card must not arm a placement while a chest is held");assert.equal(sim.state.buildMode,null);sim.primaryPress();sim.update(1);sim.primaryRelease();assert.equal(sim.buildings.length,beforeBuildCount,"primary/build overlap placed while chest held");assert.equal(chest.hp,beforeHeldHp);sim.pointerCancelled();assert.deepEqual({x:chest.x,y:chest.y},placed);sim.validateSimulationInvariants();
         sim.resourceDrops.length=0;for(const kind of data.RESOURCE_KINDS)sim.state.carried[kind]=0;sim.state.capacity=2;sim.debugForceNextChestOutcome("cache");Math.random=()=>0;sim.setPointerWorld(chest.x,chest.y);
         sim.primaryPress();sim.update(.005);sim.setPointerOutside();sim.update(.02);sim.setPointerWorld(chest.x,chest.y);sim.update(.005);sim.primaryRelease();assert.equal(chest.hp,4,"leaving target must reset hold progress");
         for(let i=0;i<3;i++){hit();assert.equal(chest.hp,3-i);assert.equal(sim.resourceDrops.length,0);assert.equal(carried(),0);}
@@ -375,7 +388,15 @@ try{
       const place=(x,y)=>{sim.setPointerWorld(x,y);sim.primaryPress();sim.primaryRelease();};
       try{
         sim.initializeRunMode("normal");clearGround();
-        assert.deepEqual(sim.hand(),[]);assert.equal(sim.draftKind(),null);
+        // 0 · the opening kit, and the debug command that takes it away again
+        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpHouse","bpLumber","bpQuarry","bpTower"],"a normal run must open with the base-kit blueprints");
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpTower")),"targeting","a seeded card must play like any other");
+        assert.equal(sim.state.buildMode,"tower");assert.equal(sim.cancelBuildMode(),true);
+        assert.equal(sim.debugClearHand(),4,"clearing the hand must report what it dropped");
+        assert.deepEqual(sim.hand(),[],"debugClearHand must empty the hand");
+        assert.equal(sim.state.cardTargeting,null);assert.equal(sim.state.buildMode,null);
+        assert.equal(sim.debugClearHand(),0,"clearing an empty hand is a no-op");
+        assert.equal(sim.draftKind(),null);
         assert.equal(sim.playCard(0),false,"an empty hand plays nothing");assert.equal(sim.playCard(-1),false);assert.equal(sim.playCard(.5),false);
 
         // 1 · a drafted consumable is DRAWN, not fired
@@ -420,7 +441,6 @@ try{
         // 4 · a kit targets, spends one charge per placement, survives a cancel, and leaves on the last
         clearGround();
         assert.equal(sim.debugDealCard("spikeKit"),true);
-        const dockStacks=sim.state.buildStacks.spikes;
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="spikeKit")),"targeting");
         assert.equal(sim.state.buildMode,"spikes");assert.equal(held("spikeKit").charges,cardById.spikeKit.charges);
         assert.equal(sim.playCard(0),false,"nothing else may play while a card is targeting");
@@ -436,7 +456,7 @@ try{
         assert.equal(sim.state.buildMode,null);assert.equal(sim.state.cardTargeting,null);
         assert.equal(sim.buildings.filter(item=>item.type==="spikes").length,3,"three charges must place three traps");
         assert.equal(sim.buildings.every(item=>item.complete),true,"card-placed traps must be finished");
-        assert.equal(sim.state.buildStacks.spikes,dockStacks,"a card kit must never spend the dock's own charges");
+        assert.equal("buildStacks" in sim.state,false,"the dock's stack counters must be gone with the dock");
 
         // 5 · the fireball burns inside its radius, spares what is outside it, and leaves nothing
         clearGround();
@@ -514,10 +534,50 @@ try{
         assert.equal(held("bpObelisk"),null,"the card is spent when the site is placed");
         deliver(obelisk,data.BUILDING_TYPES.obelisk.cost);
         assert.equal(obelisk.complete,true,"the authored obelisk cost did not finish the site");
-        // the ordinary dock build is untouched by any of it: it still arrives as a site to fill
-        sim.toggleBuildMode("obelisk");place(500,700);
-        const paidObelisk=sim.buildings.at(-1);
-        assert.equal(paidObelisk.complete,false,"a dock-bought obelisk must still be paid for");
+        // a blueprint is not an unlock: the SAME card again lands a second, equally unpaid site
+        assert.equal(sim.debugDealCard("bpObelisk"),true);
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpObelisk")),"targeting");
+        place(500,700);
+        const secondObelisk=sim.buildings.at(-1);
+        assert.notEqual(secondObelisk,obelisk,"the second obelisk card placed nothing");
+        assert.equal(secondObelisk.complete,false,"a repeated blueprint must still be paid for");
+
+        // 7b · a blueprint stays in the POOL after it is taken, so later offers may deal it again
+        {
+          const before=sim.hand().length;
+          let repeats=0,guardPool=0,seen=null;
+          while(repeats<2&&guardPool++<900){
+            if(!sim.draftPending())sim.debugGrantXp(400);
+            const offer=sim.draftPending();if(!offer)continue;
+            const at=seen===null?offer.findIndex(id=>cardById[id].category==="blueprint"):offer.indexOf(seen);
+            if(at<0){sim.chooseDraft(0);continue;}
+            if(seen===null)seen=offer[at];
+            sim.chooseDraft(at);repeats++;
+          }
+          assert.equal(repeats,2,"a taken blueprint never came back in a later offer");
+          assert.ok(seen&&cardById[seen].category==="blueprint");
+          assert.equal(sim.hand().find(entry=>entry.id===seen).count>=2||sim.hand().length>before,true,"the second copy never reached the hand");
+          drain();
+        }
+
+        // 7c · the house card charges the ESCALATED price, exactly as the dock's house button did
+        {
+          clearGround();sim.debugClearHand();
+          const houseAt=(x,y)=>{
+            assert.equal(sim.debugDealCard("bpHouse"),true);
+            assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),"targeting");
+            place(x,y);return sim.buildings.at(-1);
+          };
+          const first=houseAt(300,300);
+          assert.equal(first.type,"house");
+          assert.deepEqual(first.cost,{wood:data.HOUSE_COST.wood,stone:data.HOUSE_COST.stone},"the first house card must charge the base house cost");
+          deliver(first,first.cost);assert.equal(first.complete,true);
+          const second=houseAt(500,300);
+          assert.deepEqual(second.cost,{wood:data.HOUSE_COST.wood+data.HOUSE_COST_ESCALATION.wood,stone:data.HOUSE_COST.stone+data.HOUSE_COST_ESCALATION.stone},"the second house card must charge the escalated cost");
+          assert.deepEqual(second.cost,sim.nextHouseCost(),"the site's snapshot must be nextHouseCost() at the moment it landed");
+          deliver(second,second.cost);assert.equal(second.complete,true);
+          assert.equal(sim.buildings.filter(item=>item.type==="house"&&item.complete).length,2);
+        }
 
         // 8 · every consumable the pool can deal is actually playable
         clearGround();
@@ -539,7 +599,7 @@ try{
   const html=readFileSync(join(root,"index.html"),"utf8"),overlay=readFileSync(join(root,"src/render/overlay.js"),"utf8"),debuggerSource=readFileSync(join(root,"src/debug/view-debugger.js"),"utf8");
   const viewPanel=html.slice(html.indexOf('<section id="viewPanel"'),html.indexOf('<!-- Empty showcase roots'));
   assert.equal(/<p class="hint">/.test(viewPanel),false);
-  const expectedSubtabs={visibility:["scan","readability"],input:["hand","click","projectiles"],overlays:["damage","bars","badge"],gameplay:["economy","builders","time","combat","population"]};
+  const expectedSubtabs={visibility:["scan","readability"],input:["hand","click","projectiles"],overlays:["damage","bars","badge"],gameplay:["economy","builders","time","combat","population","cards"]};
   for(const [pane,expected] of Object.entries(expectedSubtabs)){
     const body=viewPanel.match(new RegExp(`<section class="pane" data-tab="${pane}">([\\s\\S]*?)</section>`))?.[1];
     assert.ok(body,`missing view pane: ${pane}`);
@@ -548,6 +608,26 @@ try{
   for(const pane of ["camera","selectors"]){
     const body=viewPanel.match(new RegExp(`<section class="pane" data-tab="${pane}">([\\s\\S]*?)</section>`))?.[1];
     assert.ok(body&&!body.includes('class="vSubpane"'),`${pane} must remain ungrouped`);
+  }
+  // ── the build dock is gone, everywhere ──
+  // Markup, styles, the HUD adapter and the simulation must all agree, or a dead selector or a
+  // dangling command would sit around waiting to be re-wired by mistake.
+  {
+    const css=readFileSync(join(root,"styles.css"),"utf8"),hud=readFileSync(join(root,"src/ui/hud.js"),"utf8"),simSource=readFileSync(join(root,"src/game/simulation.js"),"utf8");
+    for(const [name,text] of [["index.html",html],["styles.css",css]])
+      for(const token of ["buildDock","buildCards","buildTabs","dock-tab","build-category"])
+        assert.equal(text.includes(token),false,`${name} still mentions the removed dock (${token})`);
+    for(const token of ["toggleBuildMode","setBuildDockCategory","buildDockChanged","buildStacks","unlimitedCharges"])
+      assert.equal(hud.includes(token),false,`src/ui/hud.js still reaches for ${token}`);
+    for(const token of ["export function toggleBuildMode","export function setBuildDockCategory","state.buildStacks","DBG.unlimitedCharges"])
+      assert.equal(simSource.includes(token),false,`src/game/simulation.js still carries ${token}`);
+    assert.equal(typeof sim.toggleBuildMode,"undefined","toggleBuildMode must no longer be exported");
+    assert.equal(typeof sim.setBuildDockCategory,"undefined","setBuildDockCategory must no longer be exported");
+    assert.equal(typeof sim.debugClearHand,"function","the card dealer needs debugClearHand");
+    // the card dealer pane and its two moving parts
+    assert.match(html,/id="vCardDealer"/);assert.match(html,/id="vClearHand"/);
+    assert.ok(debuggerSource.includes("function buildCardDealer()"),"the dealer grid must be generated from the registry");
+    assert.ok(debuggerSource.includes('bindBtn("vClearHand"'),"clear hand is unbound");
   }
   assert.match(html,/id="vGroundSourcing" checked/);assert.match(html,/id="vBuilderSelfSupply" checked/);assert.match(html,/id="vBuilderRadius" min="60" max="400" step="10" value="300"/);assert.match(html,/id="vBlueprintRecruiting" checked/);assert.match(html,/id="vIdleSeeksWork" checked/);assert.match(html,/id="vRecruitRadius" min="100" max="500" step="20" value="200"/);assert.ok(debuggerSource.includes('bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });'));assert.ok(debuggerSource.includes('bindV("vBlueprintRecruiting", v => { DBG.blueprintRecruiting = v; });'));assert.ok(debuggerSource.includes('bindV("vIdleSeeksWork", v => { DBG.idleSeeksWork = v; });'));assert.ok(debuggerSource.includes('bindV("vRecruitRadius", v => { TUNE.recruitRadius = v; }, v => v + "px")'));assert.ok(overlay.includes("workerOccupancyStatus(target)"));assert.ok(overlay.includes("workerOccupancyAt(state.mouse.x,state.mouse.y)"));assert.ok(overlay.includes("drawWorkerSlots(target,height,status)"));assert.ok(overlay.includes("state.workers.length>0||!!heldWorker()"));assert.match(overlay,/hollow circles are vacancies/);assert.match(overlay,/! vacant/);assert.ok(overlay.includes("const BUILD_JOB_ACCENT=css(PAL.jobBuild)"));assert.ok(overlay.includes("workerIsLoaned(worker)"));assert.equal(overlay.includes("worker.homePost"),false);assert.ok(overlay.includes('hovered?.kind==="building"&&!hovered.object.complete'));assert.ok(overlay.includes('worker.job==="build"&&worker.jobTarget===site'));assert.equal(overlay.match(/if\(state\.runMode!=="normal"\)return/g)?.length,2);
 

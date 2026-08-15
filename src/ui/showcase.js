@@ -38,7 +38,7 @@ export function initShowcaseUi(hooks={}){
   const cameraChanged=hooks.cameraChanged||(()=>{}),game=document.getElementById("game"),root=document.getElementById("showcasePanel"),labelsRoot=document.getElementById("showcaseLabels");
   game.classList.add("showcase-active");
   root.replaceChildren();labelsRoot.replaceChildren();root.hidden=labelsRoot.hidden=false;
-  document.getElementById("phaseHud").hidden=true;document.getElementById("buildDock").hidden=true;
+  document.getElementById("phaseHud").hidden=true;
   const title=document.createElement("h2");title.textContent="showcase sandbox";root.appendChild(title);
   const nav=document.createElement("nav");nav.setAttribute("aria-label","showcase gallery sections");root.appendChild(nav);
   const wanted=new Set(["resources","buildings","towers","units","dummies","props","progress"]),handlers=[];
@@ -55,7 +55,7 @@ export function initShowcaseUi(hooks={}){
   syncLabels();
   teardownCurrent=()=>{
     active=false;for(const [element,handler] of handlers)element.removeEventListener("click",handler);
-    root.replaceChildren();labelsRoot.replaceChildren();root.hidden=labelsRoot.hidden=true;game.classList.remove("showcase-active");document.getElementById("phaseHud").hidden=false;document.getElementById("buildDock").hidden=false;
+    root.replaceChildren();labelsRoot.replaceChildren();root.hidden=labelsRoot.hidden=true;game.classList.remove("showcase-active");document.getElementById("phaseHud").hidden=false;
     labels=[];labelByKey.clear();labelsRevision=-1;readout=null;readoutText="";
   };
 }
