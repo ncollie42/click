@@ -142,9 +142,9 @@ const state = {
   // never have to be reconstructed from each other. Both are written by feedBase() alone.
   xp:0,levelXp:0,level:0,skillPoints:0,
   // The draft's whole run ledger: queued level-ups, queued dawn rewards, the live 3-card offer and
-  // which kind of offer it is, buff stacks taken, blueprints spent, banked free-cost waivers, and
-  // the two banked consumable effects. Authored tables stay untouched.
-  draft:{queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},blueprints:new Set(),waivers:{},calmNight:false,dayBonus:0},
+  // which kind of offer it is, buff stacks taken, blueprints spent, and the two banked consumable
+  // effects. Authored tables stay untouched.
+  draft:{queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},blueprints:new Set(),calmNight:false,dayBonus:0},
   // ── the hand ──
   // Every card the player is HOLDING, oldest first. One entry per id: {id, count, charges} where
   // count is how many copies are held and charges is the partially-spent kit's remaining placements
@@ -311,7 +311,7 @@ function buildShowcaseFixtures(){
 }
 // First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
-function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},blueprints:new Set(),waivers:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
+function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},blueprints:new Set(),calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
   if(initializedMode&&initializedMode!==mode)throw new Error("run mode already initialized as "+initializedMode);
@@ -375,6 +375,12 @@ export function validateSimulationInvariants(){
   for(const kind of Object.keys(state.stored))invariant(RESOURCE_KIND_SET.has(kind),"unknown stored resource "+kind);
   for(const worker of state.workers){invariant(worker.hp>=0&&worker.hp<=WORKER_HP,"illegal worker health");if(worker.taskTarget)invariant(resourceDrops.includes(worker.taskTarget)||trees.includes(worker.taskTarget)||rocks.includes(worker.taskTarget)||diamonds.includes(worker.taskTarget),"worker task target left owned collection");}
   for(const building of buildings)if(building.tower)invariant(building.tower.hp>=0&&building.tower.hp<=building.tower.maxHp,"illegal tower health");
+  // A designated variant is a promise made to an unfinished tower site; completeBuilding() turns it
+  // into the upgrade job and clears it, so it can never outlive the construction it was made to.
+  for(const building of buildings)if(building.plannedVariant){
+    invariant(building.type==="tower"&&TOWER_VARIANTS[building.plannedVariant],"illegal designated tower variant "+building.plannedVariant);
+    invariant(!building.complete,"a designated tower variant outlived its construction");
+  }
   for(const id of state.skillTree.selected)invariant(state.skillTree.revealed.has(id)&&SKILL_NODES_BY_ID[id],"selected skill is not revealed");
   for(const id of state.skillTree.revealed)invariant(SKILL_NODES_BY_ID[id],"unknown revealed skill "+id);
   if(state.heldObject){const held=state.heldObject,kind=assertHeldKind(held);invariant(Number.isFinite(held.originX)&&Number.isFinite(held.originY),"invalid held origin");if(kind==="worker")invariant(!state.workers.includes(held.object),"held worker still installed");else if(kind==="building")invariant(!buildings.includes(held.object),"held building still installed");else if(kind==="chest"){invariant(!chests.includes(held.object),"held chest still installed");invariant(Number.isFinite(held.object.x)&&Number.isFinite(held.object.y),"held chest has non-finite coordinates");invariant(Number.isInteger(held.object.hp)&&held.object.hp>0&&held.object.hp<=held.object.max&&held.object.max===CHEST.maxHp,"held dead chest");invariant(held.object.footprint===CHEST.footprint,"held chest has invalid footprint");}else invariant(showcaseProps.includes(held.object),"held prop lost ownership");}
@@ -590,7 +596,9 @@ function detonateBlast(building){
 }
 function createBuilding(type,x,y){
   const def=BUILDING_TYPES[type],cost=type==="house"?nextHouseCost():{...def.cost};
-  return {type,x,y,cost,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
+  // plannedVariant: the tower variant a blueprint card designated for this site, accepted as an
+  // upgrade job the moment construction finishes. Null on every ordinary build.
+  return {type,x,y,cost,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
 }
 
 function chestAt(x,y){
@@ -697,18 +705,13 @@ function leftClick(){
       // completion is unconditional a free-cost placement can never leave a stuck blueprint.
       const freed=DBG.freeCosts&&!placed.complete;
       if(freed)completeBuilding(placed);
-      // A banked blueprint waiver finishes this one build for nothing, through the same
-      // completeBuilding() a satisfied delivery reaches. The cost snapshot is left as authored and
-      // state.stored is never touched; the waiver is spent only when it actually pays for something.
-      const waived=!placed.complete&&spendWaiver("building:"+type);
-      if(waived){completeBuilding(placed);toast("blueprint spent — "+def.name+" raised free");}
       // unlimited charges (debug): the stack counter is simply never decremented, so the
       // authored starting counts and the "n left" HUD stay honest the moment it is off.
       if(def.stack){if(!DBG.unlimitedCharges)state.buildStacks[type]--;state.buildMode=DBG.unlimitedCharges||state.buildStacks[type]>0?type:null;}else state.buildMode=null;
       setBuildDockCategory(null);effects.buildHudChanged();
       sound(240,.06);
       // completeBuilding() already announced a freed blueprint's own ready message.
-      if(!freed&&!waived)toast(def.stack?def.name+" placed — "+(DBG.unlimitedCharges?"unlimited":state.buildStacks[type]+" stacks remain"):def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
+      if(!freed)toast(def.stack?def.name+" placed — "+(DBG.unlimitedCharges?"unlimited":state.buildStacks[type]+" stacks remain"):def.instant?def.name+" placed — hover it to detonate":"blueprint placed — carry its resources to it");
     }else toast("needs clear ground away from the base");
     return;
   }
@@ -1031,13 +1034,30 @@ function consumeHandCopy(entry){
 // radius ring the existing placement flow already draws — so targeting needs no render work at all.
 // `cast` is the escape hatch for a spell: fireball borrows the blast charge's ghost (its radius IS
 // FIREBALL.radius) and detonates on placement instead of leaving anything behind.
+// `site` is the blueprint half of the table (below): the card drops an ordinary CONSTRUCTION SITE
+// where a kit drops an authored instant building, and `variant` is the tower variant that site is
+// already promised to. The card buys ACCESS to the variant, never the materials.
 const TARGETED_CARDS={
   blastCharge:{type:"blast"},
   spikeKit:{type:"spikes"},
   mineKit:{type:"landmine"},
   tarKit:{type:"tar"},
-  fireball:{type:"blast",cast:castFireball}
+  fireball:{type:"blast",cast:castFireball},
+  // A blueprint asks WHERE exactly like a kit does — its own authored row names what lands, so the
+  // whole set is derived from the registry rather than restated here. "tower:sniper" drops a tower
+  // site promised to the sniper variant; "building:obelisk" drops an obelisk site. A blueprint whose
+  // ref is a concept has no table row yet and stays out, so playing one refuses.
+  ...Object.fromEntries(CARDS.filter(card=>card.category==="blueprint").map(card=>[card.id,blueprintPlacement(card.ref)]).filter(([,spec])=>spec))
 };
+function blueprintPlacement(ref){
+  const [kind,id]=String(ref||"").split(":");
+  if(kind==="tower"&&TOWER_VARIANTS[id])return {type:"tower",variant:id,site:true};
+  if(kind==="building"&&BUILDING_TYPES[id])return {type:id,variant:null,site:true};
+  return null;
+}
+/** What a blueprint card's placement will be called once it stands up: its variant's authored name
+ *  when it is a tower, the building's own otherwise. */
+function blueprintName(spec){return spec.variant?TOWER_VARIANTS[spec.variant].name:BUILDING_TYPES[spec.type].name;}
 function cardCharges(id){return cardById[id].charges??1;}
 /** The fireball's whole effect: one area hit at the anchor, no building, blast-style noise and dust. */
 function castFireball(x,y){
@@ -1049,7 +1069,7 @@ function castFireball(x,y){
 function beginCardTargeting(entry){
   const spec=TARGETED_CARDS[entry.id];
   entry.charges??=cardCharges(entry.id);
-  state.cardTargeting={id:entry.id,type:spec.type,cast:spec.cast||null};
+  state.cardTargeting={id:entry.id,type:spec.type,cast:spec.cast||null,site:!!spec.site,variant:spec.variant||null};
   state.buildMode=spec.type;setBuildDockCategory(null);effects.buildHudChanged();effects.handChanged();
   toast(cardById[entry.id].text+" — click clear ground ("+entry.charges+" charge"+(entry.charges===1?"":"s")+")");sound(660,.08);
   return "targeting";
@@ -1066,10 +1086,21 @@ function placeCardCharge(anchor){
   if(!canPlace(anchor.x,anchor.y,targeting.type)){toast("needs clear ground away from the base");return false;}
   if(targeting.cast)targeting.cast(anchor.x,anchor.y);
   else{
-    // Free charges: these are the authored cost-0 instant buildings, and the card — never
-    // state.buildStacks — is what pays for them.
-    buildings.push(createBuilding(targeting.type,anchor.x,anchor.y));
-    toast(BUILDING_TYPES[targeting.type].name+" placed — "+(entry.charges-1)+" charge"+(entry.charges===1?"":"s")+" left");sound(240,.06);
+    const placed=createBuilding(targeting.type,anchor.x,anchor.y);
+    // A blueprint card is ACCESS to the variant, not materials for it: what lands is an ordinary
+    // construction site at the authored cost, already promised to the card's variant. The player
+    // still carries every resource, exactly as if they had built the chassis and bought the upgrade.
+    if(targeting.site)placed.plannedVariant=targeting.variant;
+    buildings.push(placed);
+    // A kit's charges are free: these are the authored cost-0 instant buildings, and the card —
+    // never state.buildStacks — is what pays for them.
+    if(!targeting.site)
+      toast(BUILDING_TYPES[targeting.type].name+" placed — "+(entry.charges-1)+" charge"+(entry.charges===1?"":"s")+" left");
+    // free costs (debug): the same rule the dock placement follows — the site is created exactly as
+    // authored and then finished, designated upgrade included, so the toggle strands nothing.
+    else if(DBG.freeCosts){completeBuilding(placed);applyFinishedUpgrade(placed);}
+    else toast(blueprintName(targeting)+" blueprint placed — carry its resources to it");
+    sound(240,.06);
   }
   entry.charges--;
   if(entry.charges<=0){consumeHandCopy(entry);endCardTargeting();}
@@ -1078,24 +1109,6 @@ function placeCardCharge(anchor){
 }
 function endCardTargeting(){
   state.cardTargeting=null;state.buildMode=null;setBuildDockCategory(null);effects.buildHudChanged();
-}
-// ── blueprint waivers ──
-// A played blueprint banks one free-cost token, keyed by the card's own authored ref
-// ("tower:sniper", "building:obelisk"). It is spent by the next purchase of exactly that thing —
-// once. Nothing here reads or writes an authored cost table; the purchase simply skips the delivery.
-function waiverAvailable(ref){return (state.draft.waivers[ref]||0)>0;}
-function spendWaiver(ref){
-  if(!waiverAvailable(ref))return false;
-  state.draft.waivers[ref]--;return true;
-}
-function bankBlueprintWaiver(entry){
-  const card=cardById[entry.id],[kind,id]=card.ref.split(":");
-  const name=kind==="tower"?TOWER_VARIANTS[id]?.name:kind==="building"?BUILDING_TYPES[id]?.name:null;
-  if(!name)return false;                    // a concept blueprint has nothing to waive
-  state.draft.waivers[card.ref]=(state.draft.waivers[card.ref]||0)+1;
-  consumeHandCopy(entry);
-  toast("blueprint drawn up — the next "+name+" costs nothing");sound(700,.16);
-  return "applied";
 }
 
 // ── card buffs, layered at READ time ────────────────────────────────────────
@@ -1118,12 +1131,19 @@ function completeBuilding(building){
   const def=BUILDING_TYPES[building.type];building.complete=true;building.starved=false;
   if(def.resource)state.capacity+=2;
   if(building.type==="tower"){const variant=TOWER_VARIANTS.basic;building.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp};}
+  // A blueprint card designated a variant when it dropped this site. The chassis is finished exactly
+  // like any other, then that upgrade is accepted here — the same {id,kind,delivered} job
+  // acceptUpgrade() writes — so the next deliveries carry straight on into its authored cost and the
+  // total materials match building the tower and buying the upgrade by hand.
+  const planned=building.plannedVariant&&TOWER_VARIANTS[building.plannedVariant]?building.plannedVariant:null;
+  if(planned)building.activeUpgrade={id:planned,kind:"tower",delivered:resourceCounts()};
+  building.plannedVariant=null;
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
   // Resolve the transition as one transaction. updateWorkerSpawns() runs before workers, so leaving
   // an earlier builder unresolved until the next tick would expose its durable vacancy to autofill.
   resolveBuildingCompletionWorkers(building);
   burst(building.x,building.y-12,"#ead28d",18);
-  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?"basic tower complete — hover it to choose one variant":def.name+" complete";
+  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?"basic tower complete — "+TOWER_VARIANTS[planned].name+" already accepted, keep delivering":"basic tower complete — hover it to choose one variant"):def.name+" complete";
   toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);effects.buildHudChanged();
 }
 function dropToBuilding(building){
@@ -2056,11 +2076,6 @@ export function acceptUpgrade(){
   // free costs (debug): the job is accepted normally, then satisfied through the same
   // applyFinishedUpgrade() a full delivery reaches. Nothing is deducted or granted.
   if(DBG.freeCosts&&applyFinishedUpgrade(building))return true;
-  // A played blueprint pays for this one variant, once, down the very same path — and the token is
-  // only spent if the upgrade really finished.
-  if(kind==="tower"&&waiverAvailable("tower:"+upgrade.id)&&applyFinishedUpgrade(building)){
-    spendWaiver("tower:"+upgrade.id);toast("blueprint spent — "+upgrade.name+" built free");return true;
-  }
   toast("accepted "+upgrade.name+" — deposit resources at the "+kind);sound(590,.1);
   return true;
 }
@@ -2163,7 +2178,6 @@ export function playCard(index){
   if(state.gameOver||state.paused||state.draftPaused||state.buildMode||state.cardTargeting)return false;
   const entry=state.hand[index],card=cardById[entry.id];
   if(!card)return false;
-  if(card.category==="blueprint")return bankBlueprintWaiver(entry);
   if(TARGETED_CARDS[entry.id])return beginCardTargeting(entry);
   const effect=CARD_EFFECTS[entry.id];
   if(!effect)return false;                  // a held card with no effect is a catalog bug, not a click
@@ -2223,6 +2237,4 @@ export {
   // debug commands (view panel > gameplay)
   debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
   debugStartWave, debugClearEnemies, debugHealAll, debugForceNextChestOutcome, debugDealCard,
-  // banked blueprint waivers — read-only peek for tooling; only playing a blueprint banks one
-  waiverAvailable,
 };

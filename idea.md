@@ -50,6 +50,22 @@ Explicitly postponed:
 - Buildings cost resources to construct; drag resources into their blueprints.
 - A special building type can pull in nearby resources automatically.
 
+### Time-Normalized Building Costs
+
+**Tags:** `Core Gameplay`, `Retention`
+
+Price buildings by the time required to acquire their resources, not by arbitrary resource totals. A starter cost of 3 wood + 1 stone might represent roughly four seconds of gathering. Mid-game costs should scale with the expected acquisition-rate multiplier at that progression stage: if wood and stone arrive 40× faster, the equivalent four-second price becomes 120 wood + 40 stone.
+
+For each resource `r`:
+
+> `stageCost[r] = readableRound(baseCost[r] × expectedRate[r, stage] / baselineRate[r])`
+
+Expected rate should include the whole acquisition path: click yield × action speed × uptime, crits, workers, carry capacity, travel, collection, and delivery efficiency. Prefer measured/simulated sustained rates over multiplying isolated upgrade stats.
+
+Default to costs authored from the expected rate **when the building unlocks**, not prices that continuously rise with the player's live power. Live scaling would make gathering upgrades feel cancelled out and punish efficient play. If adaptive pricing is ever tested, treat it as an explicit difficulty system.
+
+Validate costs by measuring actual time-to-deliver under representative early-, mid-, and late-game states. Preserve resource ratios only when their acquisition rates scale similarly; otherwise normalize wood and stone independently.
+
 ## Theme (committed): The Thing in the Ground
 
 **Tags:** `Immersion`, `Core Gameplay`

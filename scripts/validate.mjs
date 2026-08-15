@@ -75,7 +75,7 @@ try{
       checkRef(card.ref,`card ${card.id}`);
       if(card.model){assert.ok(["hand","worker","global","xp"].includes(card.model.target),`card ${card.id} model target`);assert.ok(card.model.mult>1,`card ${card.id} model mult must exceed 1`);}
       if(card.type){assert.ok(["consumable","aura"].includes(card.category),`card ${card.id} type is deployable-only`);assert.ok(["building","spell"].includes(card.type),`card ${card.id} has unknown deployable type`);}
-      if(card.charges!==undefined){assert.ok(["consumable","aura"].includes(card.category),`card ${card.id} charges are deployable-only`);assert.ok(Number.isInteger(card.charges)&&card.charges>0,`card ${card.id} charges must be a positive integer`);}
+      if(card.charges!==undefined){assert.ok(["consumable","aura","blueprint"].includes(card.category),`card ${card.id} charges are deployable-only`);assert.ok(Number.isInteger(card.charges)&&card.charges>0,`card ${card.id} charges must be a positive integer`);}
       if(card.durationSeconds!==undefined){assert.ok(["consumable","aura"].includes(card.category),`card ${card.id} duration is deployable-only`);assert.ok(Number.isFinite(card.durationSeconds)&&card.durationSeconds>0,`card ${card.id} duration must be positive`);}
       if(card.category==="aura"){assert.equal(card.type,"building",`aura ${card.id} must be a building`);assert.ok(card.charges>0&&card.durationSeconds>0,`aura ${card.id} must be temporary and charged`);}
       if(card.tags!==undefined){assert.ok(Array.isArray(card.tags)&&card.tags.length>0,`card ${card.id} tags must be a non-empty array`);assert.ok(card.tags.every(tag=>typeof tag==="string"&&tag.length>0),`card ${card.id} has an invalid tag`);}
@@ -357,7 +357,7 @@ try{
   }).trim());
   assert.ok(Math.abs(buffResult.ratio-1.2544)<1e-9);
   // ── the hand ──
-  // Drafting, dawn rewards, playing, targeting, partial kits and blueprint waivers, all measured in
+  // Drafting, dawn rewards, playing, targeting, partial kits and blueprint placements, all measured in
   // one clean process: a card is only ever an effect once the player plays it.
   const handResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
@@ -455,35 +455,69 @@ try{
         assert.equal(far.hp,farHp,"the fireball reached past its radius");
         assert.equal(held("fireball"),null);assert.equal(sim.state.buildMode,null);
 
-        // 6 · a blueprint banks a free-cost waiver, spent by the next matching purchase exactly once
+        // 6 · a blueprint targets like a kit, but what its click lands is an ordinary CONSTRUCTION
+        //     SITE promised to the variant — the player still carries every resource, and the total
+        //     is exactly the basic tower plus that variant's own authored upgrade cost.
         clearGround();for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;
-        assert.equal(sim.waiverAvailable("tower:sniper"),false);
+        assert.equal(sim.DBG.freeCosts,false);
         assert.equal(sim.debugDealCard("bpSniper"),true);
-        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpSniper")),"applied");
-        assert.equal(sim.waiverAvailable("tower:sniper"),true);assert.equal(held("bpSniper"),null);
-        const chassis=(x,y)=>{const tower={type:"tower",x,y,complete:true,cost:{},delivered:{wood:0,stone:0},storage:counts(),upgrades:{},activeUpgrade:null,tower:{variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:10,maxHp:10},hazard:null,pulse:0};sim.buildings.push(tower);return tower;};
-        const waived=chassis(300,300),paid=chassis(400,300);
-        assert.equal(sim.openUpgradeMenu(waived,"tower"),true);sim.selectUpgrade("sniper");assert.equal(sim.acceptUpgrade(),true);
-        assert.equal(waived.tower.variant,"sniper","the waiver did not finish the upgrade");assert.equal(waived.activeUpgrade,null);
-        assert.equal(waived.tower.maxHp,data.TOWER_VARIANTS.sniper.maxHp);
-        assert.deepEqual(sim.state.stored,counts(),"a waived upgrade must not touch storage");
-        assert.equal(sim.waiverAvailable("tower:sniper"),false,"the waiver must be spent exactly once");
-        assert.equal(sim.openUpgradeMenu(paid,"tower"),true);sim.selectUpgrade("sniper");assert.equal(sim.acceptUpgrade(),true);
-        assert.equal(paid.tower.variant,"basic","the second sniper must still be paid for");
-        assert.deepEqual(paid.activeUpgrade,{id:"sniper",kind:"tower",delivered:counts()});
+        // the cancel path first: the card comes back to hand with its charge unspent
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpSniper")),"targeting");
+        assert.equal(sim.state.buildMode,"tower","a blueprint must arm the tower footprint");
+        assert.equal(sim.cancelBuildMode(),true);
+        assert.equal(sim.state.cardTargeting,null);assert.equal(held("bpSniper")?.charges,1,"a cancelled blueprint must keep its charge");
+        const storedBeforeBlueprint=JSON.stringify(sim.state.stored);
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpSniper")),"targeting");
+        const sniperAnchor=snapToCellCenter(300,300);
+        place(300,300);
+        const sniper=sim.buildings.at(-1);
+        assert.equal(sim.buildings.length,1,"the blueprint placed nothing, or placed twice");
+        assert.equal(sniper.type,"tower");assert.equal(sniper.x,sniperAnchor.x);assert.equal(sniper.y,sniperAnchor.y);
+        assert.equal(sniper.complete,false,"a blueprint card must land a site, not a finished tower");
+        assert.equal(sniper.tower,null);assert.equal(sniper.activeUpgrade,null,"the variant is designated, not yet accepted");
+        assert.equal(sniper.plannedVariant,"sniper","the site was not promised to the card's variant");
+        assert.deepEqual(sniper.delivered,{wood:0,stone:0},"a fresh site has been delivered nothing");
+        assert.deepEqual(sniper.cost,data.BUILDING_TYPES.tower.cost,"a card must not rewrite an authored cost");
+        assert.equal(JSON.stringify(sim.state.stored),storedBeforeBlueprint,"placing a site must not touch storage");
+        assert.equal(held("bpSniper"),null,"the blueprint must leave the hand as its site lands");
+        assert.equal(sim.state.buildMode,null);assert.equal(sim.state.cardTargeting,null);
+        sim.validateSimulationInvariants();
+        // carry the chassis cost to it: the tower stands as a BASIC one and accepts the sniper job
+        const deliver=(building,cost)=>{
+          for(const kind of data.RESOURCE_KINDS)sim.state.carried[kind]=cost[kind]||0;
+          sim.setPointerWorld(building.x,building.y);sim.secondaryRelease();
+        };
+        deliver(sniper,data.BUILDING_TYPES.tower.cost);
+        assert.equal(sniper.complete,true,"the authored chassis cost did not finish the site");
+        assert.equal(sniper.tower.variant,"basic");assert.equal(sniper.plannedVariant,null,"the designation must be spent on completion");
+        assert.deepEqual(sniper.activeUpgrade,{id:"sniper",kind:"tower",delivered:counts()},"the variant upgrade must be accepted for the player");
+        // and the variant's own authored cost finishes it, at full variant hp
+        deliver(sniper,data.TOWER_VARIANTS.sniper.cost);
+        assert.equal(sniper.tower.variant,"sniper","the designated upgrade never completed");
+        assert.equal(sniper.activeUpgrade,null);
+        assert.equal(sniper.tower.maxHp,data.TOWER_VARIANTS.sniper.maxHp);
+        assert.equal(sniper.tower.hp,data.TOWER_VARIANTS.sniper.maxHp,"a finished variant tower must be at full hp");
+        assert.deepEqual(sim.state.carried,counts(),"the delivery spent exactly the authored costs");
+        assert.equal(JSON.stringify(sim.state.stored),storedBeforeBlueprint,"deliveries come from the hand, never from storage");
 
-        // 7 · the obelisk blueprint waives a BUILD cost the same way
+        // 7 · the obelisk blueprint drops an obelisk SITE at its authored cost, card spent
+        clearGround();
         assert.equal(sim.debugDealCard("bpObelisk"),true);
-        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpObelisk")),"applied");
-        clearGround();assert.equal(sim.DBG.freeCosts,false);
-        sim.toggleBuildMode("obelisk");place(500,600);
-        const freeObelisk=sim.buildings.at(-1);
-        assert.equal(freeObelisk.type,"obelisk");assert.equal(freeObelisk.complete,true,"the obelisk waiver did not raise it free");
-        assert.deepEqual(freeObelisk.delivered,{wood:0,stone:0},"a waived build must deliver nothing");
-        assert.deepEqual(freeObelisk.cost,data.BUILDING_TYPES.obelisk.cost,"a waiver must not rewrite an authored cost");
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpObelisk")),"targeting");
+        assert.equal(sim.state.buildMode,"obelisk");
+        place(500,600);
+        const obelisk=sim.buildings.at(-1);
+        assert.equal(obelisk.type,"obelisk");assert.equal(obelisk.complete,false,"the obelisk card must land a site to fill");
+        assert.equal(obelisk.plannedVariant,null,"only a tower card designates a variant");
+        assert.deepEqual(obelisk.delivered,{wood:0,stone:0});
+        assert.deepEqual(obelisk.cost,data.BUILDING_TYPES.obelisk.cost,"a card must not rewrite an authored cost");
+        assert.equal(held("bpObelisk"),null,"the card is spent when the site is placed");
+        deliver(obelisk,data.BUILDING_TYPES.obelisk.cost);
+        assert.equal(obelisk.complete,true,"the authored obelisk cost did not finish the site");
+        // the ordinary dock build is untouched by any of it: it still arrives as a site to fill
         sim.toggleBuildMode("obelisk");place(500,700);
         const paidObelisk=sim.buildings.at(-1);
-        assert.equal(paidObelisk.complete,false,"the obelisk waiver was spent twice");
+        assert.equal(paidObelisk.complete,false,"a dock-bought obelisk must still be paid for");
 
         // 8 · every consumable the pool can deal is actually playable
         clearGround();
@@ -497,7 +531,7 @@ try{
         }
         for(const entry of sim.hand()){assert.ok(cardById[entry.id]);assert.ok(entry.count>=1);assert.ok(entry.charges===null||entry.charges>0);}
         sim.validateSimulationInvariants();
-        console.log(JSON.stringify({checks:78,drafted,dawnCard,playable:playable.length,nearRange:Math.round(nearRange),farRange:Math.round(farRange),stacks:sim.hand().length}));
+        console.log(JSON.stringify({checks:99,drafted,dawnCard,playable:playable.length,nearRange:Math.round(nearRange),farRange:Math.round(farRange),stacks:sim.hand().length}));
       }finally{Math.random=old;}
     `
   }).trim());

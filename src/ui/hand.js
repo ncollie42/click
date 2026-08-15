@@ -125,7 +125,7 @@ function cardText(card){
  * line to put in front of a player. Every branch below reads one authored field and states it.
  */
 function cardNote(card){
-  const detail=card.category==="blueprint"?(refName(card.ref)?"the next "+refName(card.ref)+" is free":"a plan for something unbuilt")
+  const detail=card.category==="blueprint"?(refName(card.ref)?"one site · you supply the materials":"a plan for something unbuilt")
     :card.category==="aura"?"one placement · "+card.durationSeconds+"s"
     :card.charges>1?card.charges+" placements"
     :card.category==="buff"&&card.stacks>1?"stacks to "+card.stacks

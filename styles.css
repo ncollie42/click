@@ -449,12 +449,18 @@
   /* ── the pick-3 overlay ──
      One overlay, two headings: the level draft and the dawn payout. Full-stage like the skill
      tree, so it is a modal in the same sense — src/ui/hud.js reads its `hidden` flag to answer
-     modalOpen(). Dawn recolours the ground from violet to sunrise; nothing else changes. */
+     modalOpen(). Dawn recolours the ground from violet to sunrise; nothing else changes.
+
+     The backdrop is a TRANSLUCENT vignette, never a panel: three cards dealt over the world, with
+     the ground still plainly readable behind them, because the offer comes from the thing IN that
+     ground and violet is its colour here. One radial ramp does all of it — ~24% dim at the centre
+     so the card faces sit on something quiet, ~58% at the corners so the HUD behind goes back. No
+     flat layer underneath it: an opaque base would defeat the whole idea. */
   #draftOverlay{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
-    color:#efe2c6;background:radial-gradient(106% 78% at 50% 40%,#2d1c46e0,#120b1a 74%),#0c0712fb;
+    color:#efe2c6;background:radial-gradient(112% 82% at 50% 42%,#6b3fa83d,#2c17507a 58%,#170c2894);
     --accent:var(--violet-lit);--band:#4a2f6a}
   #draftOverlay[data-kind="dawn"]{--accent:#f0b45f;--band:#7a4a24;
-    background:radial-gradient(106% 78% at 50% 40%,#57301ce0,#1c0f08 74%),#120a06fb}
+    background:radial-gradient(112% 82% at 50% 42%,#c97a3a3d,#4c22107a 58%,#26100694)}
   #draftOverlay[hidden]{display:none}
   #draftOverlay.resolving{opacity:.26;pointer-events:none;transition:opacity .32s ease-out}
   #draftHeader{flex:0 0 auto;text-align:center;padding-top:20px}
