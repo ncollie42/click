@@ -1,0 +1,103 @@
+<!doctype html>
+<!-- Map editor — standalone authored-map tool host.
+     Serve from REPO ROOT (e.g. `python3 -m http.server 8000`), open /tools/map-editor.html.
+     Authored cells/regions define what exists; WFC decides terrain appearance.
+     src/game/map-document.js is authoritative; everything else is derived.
+     window.__mapEditorReady === true once the editor is interactive; window.__mapEditor
+     exposes deterministic debug state for browser tests. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>map editor</title>
+<link rel="stylesheet" href="map-editor.css">
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+</head>
+<body data-ui-layout="toolbox" data-authoring-panel="terrain">
+<header id="toolbar">
+  <fieldset id="mapControls">
+    <legend>map</legend>
+    <label>w <input id="uWidth" type="number" min="8" max="256" value="241"></label>
+    <label>h <input id="uHeight" type="number" min="8" max="256" value="161"></label>
+    <label>cell <input id="uCellSize" type="number" min="4" max="128" value="32"></label>
+    <button id="uNew" type="button">new map</button>
+    <button id="uSave" type="button">download JSON</button>
+    <label class="fileButton">load JSON<input id="uLoad" type="file" accept=".json,application/json"></label>
+  </fieldset>
+  <fieldset id="brushControls">
+    <legend>author</legend>
+    <nav id="authoringTabs" aria-label="Authoring mode">
+      <button id="uTabTerrain" type="button">terrain</button>
+      <button id="uTabScatter" type="button">scatter</button>
+      <button id="uTabObjects" type="button">objects</button>
+    </nav>
+    <div class="toolGroup terrainToolGroup" aria-label="Terrain surface">
+      <label class="terrainMode"><input type="radio" name="brush" value="water" id="uBrushWater">water</label>
+      <label class="terrainMode"><input type="radio" name="brush" value="ground" id="uBrushGround" checked>ground</label>
+      <label class="terrainMode"><input type="radio" name="brush" value="raised" id="uBrushRaised">raised</label>
+    </div>
+    <div class="toolGroup objectToolGroup" aria-label="Object operation">
+      <label class="objectMode"><input type="radio" name="brush" value="erase" id="uBrushErase">erase</label>
+      <label class="objectMode"><input type="radio" name="brush" value="object" id="uBrushObject">place</label>
+    </div>
+    <label class="scatterMode"><input type="radio" name="brush" value="scatter" id="uBrushScatter">scatter</label>
+    <select id="uObjectKind" class="objectMode" disabled></select>
+    <div class="toolGroup shapeToolGroup" aria-label="Paint shape">
+      <label class="brushToolControl"><input type="radio" name="tool" value="paint" id="uToolPaint">brush</label>
+      <label class="brushToolControl"><input type="radio" name="tool" value="rect" id="uToolRect" checked>rect</label>
+    </div>
+    <label class="brushSizeControl">size <select id="uBrushSize">
+      <option value="1" selected>1</option><option value="2">2</option>
+      <option value="3">3</option><option value="4">4</option>
+    </select></label>
+    <div class="sampleRow"><button id="uSample" class="sampleControl" type="button" title="or hold Alt and click">sample</button></div>
+  </fieldset>
+  <fieldset id="scatterControls">
+    <legend>scatter regions</legend>
+    <div id="scatterCreateControls">
+      <strong id="uScatterSettingsTitle">new region</strong>
+      <label>kind <select id="uScatterKind"><option>tree</option><option>rock</option><option>grass</option></select></label>
+      <label>density <input id="uScatterDensity" type="range" min="0" max="1" step="0.001" value="0.12"><output id="uScatterDensityValue">12%</output></label>
+      <span id="uScatterHint" class="hint">Drag on the map to create. Click a region to inspect; repeated clicks cycle overlaps.</span>
+    </div>
+    <div id="scatterRegionBrowser">
+      <strong id="uRegionListTitle">regions</strong>
+      <select id="uRegionList" size="5" aria-label="Scatter regions"></select>
+      <span class="hint">Stable-ID order; document array order has no placement meaning.</span>
+    </div>
+    <div id="scatterSelectionControls">
+      <strong>identity, bounds, and reroll</strong>
+      <label class="regionIdField">id <input id="uRegionId" type="text" autocomplete="off" spellcheck="false"></label>
+      <label>x <input id="uRegionX" type="number" min="0" step="1"></label>
+      <label>y <input id="uRegionY" type="number" min="0" step="1"></label>
+      <label>w <input id="uRegionWidth" type="number" min="1" step="1"></label>
+      <label>h <input id="uRegionHeight" type="number" min="1" step="1"></label>
+      <label>seed <input id="uRegionSeed" type="number" min="0" max="4294967295" step="1"></label>
+      <button id="uRegionReroll" type="button">reroll</button>
+      <button id="uRegionDelete" type="button">delete</button>
+      <span id="uRegionStats" class="status"></span>
+    </div>
+  </fieldset>
+  <fieldset id="historyControls">
+    <legend>history</legend>
+    <button id="uUndo" type="button" title="Ctrl+Z">undo</button>
+    <button id="uRedo" type="button" title="Ctrl+Shift+Z / Ctrl+Y">redo</button>
+  </fieldset>
+  <fieldset id="previewControls">
+    <legend>preview</legend>
+    <button id="uResetCamera" type="button">top-down</button>
+    <button id="uGameView" type="button" title="match the in-game camera angle">game view</button>
+    <span id="uSolveStatus" class="status"></span>
+  </fieldset>
+</header>
+<main id="panes">
+  <section id="paintPane">
+    <canvas id="paint"></canvas>
+  </section>
+  <section id="previewPane">
+    <canvas id="preview"></canvas>
+  </section>
+</main>
+<footer id="statusBar"><span id="uStatus"></span><span id="uError" class="error"></span></footer>
+<script type="module" src="map-editor/editor.js"></script>
+</body>
+</html>

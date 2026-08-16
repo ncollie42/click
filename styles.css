@@ -27,6 +27,9 @@
      of this file would silently do nothing from up here. The raised variant lives with the
      card rules, also on #stage, so the two overrides stay comparable. */
   #stage{position:absolute;inset:0;--toast-lane:240px}
+  /* Tab's hold-to-hide keeps the transparent overlay interactive while removing every composited
+     UI surface. Flights live outside the game frame, so they must be named separately. */
+  body.ui-hidden #stage > :not(#scene),body.ui-hidden #cardFlights{opacity:0!important}
   /* Frame-local stack: HUD 3, hand 5, prompt/pause 5, upgrade 6, toast 8, viewPanel 9,
      skill tree 10, draft 10, game-over 11. Both full-stage overlays cover every panel above; only
      the end card, which ends the run outright, may cover them. The two are mutually exclusive, so
@@ -132,6 +135,7 @@
   #viewPanel{position:absolute;z-index:9;left:8px;top:8px;width:252px;max-height:calc(100% - 16px);
     display:flex;flex-direction:column;padding:6px 8px 8px;background:#242919f2;color:#f1dfb7;
     border:2px solid #d8c58f;box-shadow:var(--shadow);font-size:11px}
+  #viewPanel[hidden]{display:none}
   #viewPanel.collapsed{width:96px}
   #viewPanel.collapsed #vTabs,#viewPanel.collapsed #vPanes,#viewPanel.collapsed #vFooterActions,
   #viewPanel.collapsed #vChangedOutput{display:none}

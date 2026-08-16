@@ -3,13 +3,13 @@
 
 import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
-  GRID_COLS,
+  CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
   FOOTPRINT_1x1,RESOURCE_FOOTPRINT,
   RESOURCE_KINDS,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
   HOUSE_SLOTS,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,BLUEPRINT_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
-  ENEMY_TYPES,MAP_SIDE,MAP_SIDES,WAVE_FRONT_SECONDARY,
+  ENEMY_TYPES,ENEMY_SPAWN_RADIUS,
   ENEMY_POOL,
   NIGHT_WAVE_SPAWNS,NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_TIER_BONUS_SPAWNS,NIGHT_WAVE_RECIPES,
   DAY_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
@@ -19,6 +19,11 @@ import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
   footprintCellBounds,footprintWorldRect,footprintInWorldBounds
 } from "./grid.js";
+import {
+  buildStarterWorld,LAND,WATER,TERRAIN_ORDER,TERRAIN_CELL_SIZE,TERRAIN_COLS,TERRAIN_ROWS,TERRAIN_ORIGIN_X,TERRAIN_ORIGIN_Y,
+  terrainAtRasterCell as queryTerrainAtRasterCell,terrainAtWorldPoint as queryTerrainAtWorldPoint,
+  validateTerrainTags,worldRectEntirelyOnLand
+} from "./authored-map.js";
 // The authored skill graph: shape only. This module owns state.skillTree over it, never the nodes.
 import {SKILL_NODES,SKILL_EDGES,SKILL_TREE_ROOT_ID,SKILL_NODES_BY_ID,SKILL_NEIGHBORS} from "./skill-tree-data.js";
 // Authored showcase coordinates are immutable input; all live fixture objects remain owned here.
@@ -104,6 +109,10 @@ function chopProgress(){return chopState.target?clamp(chopState.t/TUNE.chopTime,
 const trees = [];
 const rocks = [];
 const diamonds = [];
+// One-hit, no-yield vegetation. The array is render-facing; the cell map owns fast pointer lookup.
+const grass = [];
+const grassByCell = new Map();
+let vegetationRevision = 0;
 const resourceDrops = [];
 const buildings = [];
 // Unopened chest ownership is exclusive: this collection owns placed chests; held chests are
@@ -160,7 +169,7 @@ const state = {
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
   // activeNightNumber owns the generation currently eligible to gate dawn. Scheduled enemies copy
   // it to enemy.waveNightNumber; manual/showcase enemies deliberately omit that field.
-  nightWave:{upcomingSide:null,upcomingRecipe:null,activeSide:null,secondarySide:null,activeRecipe:null,lastSides:[],totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0,activeNightNumber:null},
+  nightWave:{upcomingRecipe:null,activeRecipe:null,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0,activeNightNumber:null},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
   upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,showcaseFocus:null,
   // revealed: every node the player can SEE; selected: the subset taken, always a subset of it.
@@ -199,7 +208,6 @@ const DBG={
 // Gameplay reads:    globalUpgradeEnabled() is pure obelisk ownership; there is no override map.
 function legitimateGlobalUpgradeOwned(id){return buildings.some(building=>building.complete&&building.type==="obelisk"&&building.upgrades[id]);}
 function globalUpgradeEnabled(id){return legitimateGlobalUpgradeOwned(id);}
-function oppositeMapSide(side){return side===MAP_SIDE.NORTH?MAP_SIDE.SOUTH:side===MAP_SIDE.SOUTH?MAP_SIDE.NORTH:side===MAP_SIDE.EAST?MAP_SIDE.WEST:MAP_SIDE.EAST;}
 // THE night difficulty dial, re-derived from the level rather than stored: every third level opens
 // the next recipe tier and adds a bonus spawn batch, and tier 4 is the authored ceiling.
 function waveTier(){return Math.min(4,Math.floor(state.level/3));}
@@ -213,62 +221,50 @@ function livingActiveWaveEnemies(){
   return activeNightNumber===null?0:state.enemies.reduce((count,enemy)=>count+(enemy.hp>0&&enemy.waveNightNumber===activeNightNumber?1:0),0);
 }
 function chooseUpcomingNight(){
-  const wave=state.nightWave,choices=MAP_SIDES.filter(side=>!wave.lastSides.includes(side));
   const recipes=NIGHT_WAVE_RECIPES.filter(recipe=>recipe.minTier<=waveTier());
-  wave.upcomingSide=choices[(Math.random()*choices.length)|0];
-  wave.upcomingRecipe=recipes[(Math.random()*recipes.length)|0];
+  state.nightWave.upcomingRecipe=recipes[(Math.random()*recipes.length)|0];
 }
 chooseUpcomingNight();
 
-// Full land map: dense resource patches surround one initial clearing.
-// ── Resource cell ownership ──
-// Written by: seedWorld() — the only writer of initial node cells. Every tree/rock/diamond is born on
-//             a cell CENTER and claims that cell exclusively, so no two active nodes share ground.
-// Read by:    canPlace(), the occupancy consumer — it maps each node back through worldToCell() and
-//             refuses any building footprint overlapping an ACTIVE node's cell. A depleted node keeps
-//             its original cell (nothing ever moves it) but stops blocking, so clearing a node frees
-//             exactly the one cell it stood on for construction.
-const SEED_CELL_TRIES=8000;   // per-batch dart throws before a layout is declared unworkable
-const SEED_LAYOUT_TRIES=24;   // whole-world re-rolls; diamonds are the batch that can genuinely box out
-function seedWorld(){
-  const cellKey=(cx,cy)=>cy*GRID_COLS+cx;   // unique per addressable cell; cx<GRID_COLS by construction
-  const attempt=()=>{
-    const occupied=[],takenCells=new Set();
-    // Bounded rejection sampling: a batch ends by satisfying `count` or by reporting a shortfall.
-    // `minGap` spreads seeded nodes; live placement uses cell occupancy instead.
-    const place=(count,minGap,make,accept=()=>true)=>{
-      let tries=0;
-      while(count>0&&tries++<SEED_CELL_TRIES){
-        // Sample broadly, then quantize; stepping cells in order would create visible rows.
-        const c=worldToCell(rand(30,W-30),rand(35,H-25));
-        if(takenCells.has(cellKey(c.cx,c.cy)))continue;          // one node per cell, no exceptions
-        if(!footprintInWorldBounds(c.cx,c.cy,RESOURCE_FOOTPRINT))continue;
-        const {x,y}=cellToWorld(c.cx,c.cy);                      // nodes live exactly on cell centers
-        if(distance(x,y,BASE.x,BASE.y)<110||!accept(x,y))continue;
-        if(occupied.some(p=>distance(x,y,p.x,p.y)<minGap))continue;
-        takenCells.add(cellKey(c.cx,c.cy));occupied.push({x,y});make(x,y);count--;
-      }
-      return count===0;
-    };
-    // Nodes carry RESOURCE_FOOTPRINT so grid consumers share one definition.
-    return place(80,45,(x,y)=>trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:trees.length%3,footprint:RESOURCE_FOOTPRINT}))
-      && place(24,49,(x,y)=>rocks.push({x,y,hp:70,max:70,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT}))
-      && place(5,110,(x,y)=>diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT}),
-        (x,y)=>distance(x,y,BASE.x,BASE.y)>600)
-      // Chest samples after every authored node batch, so existing node counts and spacing stay intact.
-      // It still shares this attempt's occupied cells and bounded rejection budget.
-      && place(CHEST.startingCount,0,(x,y)=>chests.push({x,y,hp:CHEST.maxHp,max:CHEST.maxHp,shake:0,footprint:CHEST.footprint}),
-        (x,y)=>{const d=distance(x,y,state.camera.x,state.camera.y);return d>=CHEST.discoverMinRadius&&d<=CHEST.discoverMaxRadius;});
-  };
-  // A dense tree/rock scatter can leave no far-from-base cell that still clears the diamond gap, and no
-  // amount of extra dart throwing fixes that layout — so a shortfall discards the world and re-rolls.
-  for(let layout=0;layout<SEED_LAYOUT_TRIES;layout++){
-    trees.length=rocks.length=diamonds.length=chests.length=0;
-    if(attempt())return;
-  }
-  throw new Error(`seedWorld: could not place 80 trees / 24 rocks / 5 diamonds / ${CHEST.startingCount} chest in ${SEED_LAYOUT_TRIES} layout attempts`);
+// ── Initial spatial ownership ──
+// authored-map.js returns only cell tags/coordinates. This module materializes those records into
+// existing mutable runtime shapes and keeps the copied terrain array private and frozen for the run.
+let terrainStorage=Object.freeze([]),terrainRevision=0,terrainRuntime=null,raisedStorage=new Uint8Array(GRID_COLS*GRID_ROWS);
+let terrainDescriptor=Object.freeze({width:W,height:H,terrainCellSize:TERRAIN_CELL_SIZE,terrainOriginX:TERRAIN_ORIGIN_X,terrainOriginY:TERRAIN_ORIGIN_Y,terrainCols:TERRAIN_COLS,terrainRows:TERRAIN_ROWS,terrainOrder:TERRAIN_ORDER,revision:0,targets:null});
+function installTerrain(tags,metadata={}){
+  // Reject producer defects before changing any installed runtime ownership.
+  validateTerrainTags(tags,TERRAIN_COLS*TERRAIN_ROWS);
+  terrainStorage=Object.freeze([...tags]);terrainRevision++;
+  // Presentational one-level raised layer at placement-cell resolution (authored maps only;
+  // showcase all-land installs none). Gameplay ignores it: placement/movement stay 2D.
+  const raisedSource=Array.isArray(metadata.raised)&&metadata.raised.length===GRID_COLS*GRID_ROWS?metadata.raised:null;
+  raisedStorage=raisedSource?Uint8Array.from(raisedSource,value=>value===1?1:0):new Uint8Array(GRID_COLS*GRID_ROWS);
+  terrainDescriptor=Object.freeze({...terrainDescriptor,revision:terrainRevision,seed:(metadata.seed??0)>>>0,targets:metadata.targets||null});
+  terrainRuntime=Object.freeze({...terrainDescriptor,terrain:terrainStorage});
 }
-seedWorld();
+function installAllLandTerrain(){installTerrain(Array(terrainDescriptor.terrainCols*terrainDescriptor.terrainRows).fill(LAND));}
+function replaceGrass(cells){
+  grass.length=0;grassByCell.clear();
+  for(const cell of cells){const {x,y}=cellToWorld(cell.cx,cell.cy),tuft={x,y,hp:1,max:1,variant:cell.variant??0};grass.push(tuft);grassByCell.set(cell.cy*GRID_COLS+cell.cx,tuft);}
+  vegetationRevision++;
+}
+function materializeWorld(blueprint){
+  installTerrain(blueprint.terrain,blueprint);
+  trees.length=rocks.length=diamonds.length=chests.length=0;replaceGrass(blueprint.grass||[]);
+  blueprint.trees.forEach((cell,index)=>{const {x,y}=cellToWorld(cell.cx,cell.cy);trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:cell.variant??index%3,footprint:RESOURCE_FOOTPRINT});});
+  blueprint.rocks.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);rocks.push({x,y,hp:70,max:70,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
+  blueprint.diamonds.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
+  blueprint.chests.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);chests.push({x,y,hp:CHEST.maxHp,max:CHEST.maxHp,shake:0,footprint:CHEST.footprint});});
+}
+function terrainAtRasterCell(terrainX,terrainY){return queryTerrainAtRasterCell(terrainRuntime,terrainX,terrainY);}
+function terrainRaisedAtCell(cx,cy){return Number.isInteger(cx)&&Number.isInteger(cy)&&cx>=0&&cy>=0&&cx<GRID_COLS&&cy<GRID_ROWS&&raisedStorage[cy*GRID_COLS+cx]===1;}
+function terrainAtWorldPoint(worldX,worldY){return queryTerrainAtWorldPoint(terrainRuntime,worldX,worldY);}
+function terrainWorldRectEntirelyOnLand(rect){return worldRectEntirelyOnLand(terrainRuntime,rect);}
+function terrainMetadata(){return terrainDescriptor;}
+function vegetationMetadata(){return Object.freeze({revision:vegetationRevision,count:grass.length});}
+// The world is authored data, not an algorithm: src/game/maps/starter.map.json,
+// edited in tools/map-editor.html. Startup is fully deterministic.
+materializeWorld(buildStarterWorld());
 
 const RUN_MODES=new Set(["normal","showcase"]);
 const RESOURCE_KIND_SET=new Set(RESOURCE_KINDS);
@@ -288,7 +284,7 @@ function makeShowcaseWorker(f,index){
 }
 function clearShowcaseLive(){
   cancelHeldObject();closeUpgradeMenu();resetChop();state.showcaseFocus=null;
-  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=0;state.workers.length=state.enemies.length=0;
+  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=0;replaceGrass([]);state.workers.length=state.enemies.length=0;
   invariant(!state.heldObject,"held object survived showcase teardown");
 }
 function buildShowcaseFixtures(){
@@ -302,7 +298,7 @@ function buildShowcaseFixtures(){
   for(const f of SHOWCASE_MANIFEST.progress){const b=createBuilding(f.type,f.x,f.y);b.showcaseKey="progress:"+f.id;b.showcaseLabel=f.label;b.showcaseSection=f.section;if(f.state==="blueprint"){b.complete=false;b.delivered={wood:Math.floor(b.cost.wood/2),stone:Math.floor(b.cost.stone/2)};}else{const v=TOWER_VARIANTS[f.variant];b.complete=true;b.tower={variant:f.variant,cooldown:0,flash:0,hitFlash:0,hp:v.maxHp,maxHp:v.maxHp};const cost=TOWER_VARIANTS[f.upgrade].cost;b.activeUpgrade={id:f.upgrade,kind:"tower",delivered:Object.fromEntries(RESOURCE_KINDS.map(k=>[k,Math.floor((cost[k]||0)/2)]))};}buildings.push(b);}
   SHOWCASE_MANIFEST.enemies.forEach((f,i)=>{const d=ENEMY_TYPES[f.id];state.enemies.push({combatKind:"enemy",type:f.id,x:f.x,y:f.y,hp:d.hp,max:d.hp,attackCooldown:0,healCooldown:1,wob:i*.5,flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null,displayUnit:true,showcaseKey:"enemy:"+f.id,showcaseLabel:d.name,showcaseSection:f.section});});
   SHOWCASE_MANIFEST.workers.forEach((f,i)=>state.workers.push(makeShowcaseWorker(f,i)));
-  for(const f of SHOWCASE_MANIFEST.dummies)damageDummies.push({combatKind:"damage-dummy",id:f.id,x:f.x,y:f.y,homeX:f.homeX,homeY:f.homeY,hp:f.hp,max:f.hp,flash:0,defeatedTimer:0,status:{burn:null,slow:null},spawnSide:MAP_SIDE.SOUTH,recentDamage:0,hitCount:0,showcaseKey:"dummy:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
+  for(const f of SHOWCASE_MANIFEST.dummies)damageDummies.push({combatKind:"damage-dummy",id:f.id,x:f.x,y:f.y,homeX:f.homeX,homeY:f.homeY,hp:f.hp,max:f.hp,flash:0,defeatedTimer:0,status:{burn:null,slow:null},recentDamage:0,hitCount:0,showcaseKey:"dummy:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
   state.showcaseFocus=damageDummies[0]||null;
   for(const f of SHOWCASE_MANIFEST.props)showcaseProps.push({id:f.id,model:f.model,x:f.x,y:f.y,homeX:f.x,homeY:f.y,footprint:f.footprint,showcaseKey:"prop:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
   showcaseLabelRecords.push(
@@ -340,12 +336,18 @@ export function initializeRunMode(mode="normal"){
     if(!startingHandDealt){startingHandDealt=true;for(const id of STARTING_HAND)addToHand(id);}
     validateSimulationInvariants();return;
   }
-  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.activeSide=null;state.nightWave.secondarySide=null;state.nightWave.activeRecipe=null;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
+  installAllLandTerrain();
+  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.activeRecipe=null;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
 }
-export function rebuildShowcase(){if(state.runMode!=="showcase")return false;resetShowcaseEconomy();buildShowcaseFixtures();return true;}
+export function rebuildShowcase(){if(state.runMode!=="showcase")return false;resetShowcaseEconomy();installAllLandTerrain();buildShowcaseFixtures();return true;}
 
 export function validateSimulationInvariants(){
   invariant(RUN_MODES.has(state.runMode),"invalid run mode "+state.runMode);
+  invariant(Object.isFrozen(terrainStorage),"terrain storage is mutable");
+  invariant(terrainStorage.length===terrainDescriptor.terrainCols*terrainDescriptor.terrainRows,"terrain dimensions disagree with metadata");
+  invariant(terrainStorage.every(tag=>tag===LAND||tag===WATER),"unknown terrain tag");
+  invariant(terrainDescriptor.width===W&&terrainDescriptor.height===H&&terrainDescriptor.terrainCellSize===TERRAIN_CELL_SIZE&&terrainDescriptor.terrainOriginX===TERRAIN_ORIGIN_X&&terrainDescriptor.terrainOriginY===TERRAIN_ORIGIN_Y&&terrainDescriptor.terrainCols===TERRAIN_COLS&&terrainDescriptor.terrainRows===TERRAIN_ROWS&&terrainDescriptor.terrainOrder===TERRAIN_ORDER,"terrain metadata drifted");
+  invariant(Number.isInteger(terrainDescriptor.revision)&&terrainDescriptor.revision>0,"invalid terrain revision");
   invariant(Number.isFinite(state.baseHp)&&state.baseHp>=0&&state.baseHp<=state.baseMax,"illegal base health");
   invariant(Number.isInteger(state.xp)&&state.xp>=0,"illegal xp");
   invariant(Number.isInteger(state.level)&&state.level>=0,"illegal level");
@@ -374,7 +376,7 @@ export function validateSimulationInvariants(){
     const entry=handEntry(targeting.id);
     invariant(entry&&entry.charges>0,"card targeting outlived the card it is placing");
   }
-  const collections=[trees,rocks,diamonds,resourceDrops,chests,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers];
+  const collections=[trees,rocks,diamonds,grass,resourceDrops,chests,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers];
   for(const collection of collections)for(const item of collection)invariant(Number.isFinite(item.x)&&Number.isFinite(item.y),"non-finite entity coordinates");
   const wave=state.nightWave;
   invariant(Number.isInteger(wave.nightNumber)&&wave.nightNumber>=0,"illegal night number");
@@ -393,10 +395,20 @@ export function validateSimulationInvariants(){
     }
   }
   for(const dummy of damageDummies){invariant(assertCombatKind(dummy)==="damage-dummy","non-dummy in dummy collection");invariant(dummy.hp>=0&&dummy.hp<=dummy.max,"illegal dummy health");}
+  invariant(grassByCell.size===grass.length,"grass cell index disagrees with vegetation collection");
+  for(const tuft of grass){const cell=worldToCell(tuft.x,tuft.y),center=cellToWorld(cell.cx,cell.cy);invariant(tuft.x===center.x&&tuft.y===center.y&&tuft.hp===1&&tuft.max===1,"illegal grass tuft");invariant(grassByCell.get(cell.cy*GRID_COLS+cell.cx)===tuft,"grass cell index lost identity");}
+  for(const nodes of [trees,rocks,diamonds])for(const node of nodes){
+    const cell=worldToCell(node.x,node.y),center=cellToWorld(cell.cx,cell.cy);
+    invariant(node.x===center.x&&node.y===center.y,"resource is not cell aligned");
+    invariant(footprintInWorldBounds(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT),"resource footprint is out of bounds");
+    invariant(terrainWorldRectEntirelyOnLand(footprintWorldRect(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT)),"resource is not on land");
+  }
   invariant(new Set(chests).size===chests.length,"duplicate chest ownership");
   for(const chest of chests){
     const cell=worldToCell(chest.x,chest.y),center=cellToWorld(cell.cx,cell.cy);
     invariant(chest.x===center.x&&chest.y===center.y,"chest is not cell aligned");
+    invariant(footprintInWorldBounds(cell.cx,cell.cy,chest.footprint),"chest footprint is out of bounds");
+    invariant(terrainWorldRectEntirelyOnLand(footprintWorldRect(cell.cx,cell.cy,chest.footprint)),"chest is not on land");
     invariant(Number.isInteger(chest.hp)&&chest.hp>0&&chest.hp<=chest.max&&chest.max===CHEST.maxHp,"illegal chest health");
     invariant(chest.footprint===CHEST.footprint,"invalid chest footprint");
     invariant(!("contents" in chest)&&!("outcome" in chest),"chest contents rolled before destruction");
@@ -423,7 +435,7 @@ export function validateSimulationInvariants(){
   for(const id of state.skillTree.revealed)invariant(SKILL_NODES_BY_ID[id],"unknown revealed skill "+id);
   if(state.heldObject){const held=state.heldObject,kind=assertHeldKind(held);invariant(Number.isFinite(held.originX)&&Number.isFinite(held.originY),"invalid held origin");if(kind==="worker")invariant(!state.workers.includes(held.object),"held worker still installed");else if(kind==="building")invariant(!buildings.includes(held.object),"held building still installed");else if(kind==="chest"){invariant(!chests.includes(held.object),"held chest still installed");invariant(Number.isFinite(held.object.x)&&Number.isFinite(held.object.y),"held chest has non-finite coordinates");invariant(Number.isInteger(held.object.hp)&&held.object.hp>0&&held.object.hp<=held.object.max&&held.object.max===CHEST.maxHp,"held dead chest");invariant(held.object.footprint===CHEST.footprint,"held chest has invalid footprint");}else invariant(showcaseProps.includes(held.object),"held prop lost ownership");}
   if(state.runMode==="normal")invariant(!damageDummies.length&&!showcaseProps.length&&!showcaseLabelRecords.length,"normal mode contains showcase entities");
-  else{
+  else{invariant(grass.length===0&&grassByCell.size===0,"showcase contains production vegetation");
     invariant(state.enemies.every(enemy=>enemy.displayUnit)&&state.workers.every(worker=>worker.displayUnit),"showcase display units are not inert");
     for(const record of showcaseLabelRecords)if(record.key.startsWith("chest:"))invariant(chests.includes(record.entity),"stale showcase chest label");
   }
@@ -461,12 +473,23 @@ function cancelBuildMode(){
   toast(card?cardById[card.id].text+" put away — "+card.charges+" charge"+(card.charges===1?"":"s")+" left":"placement cancelled");return true;
 }
 
-function spawnEnemy(side=null,enemyType=null){
-  const attackSide=side||MAP_SIDES[(Math.random()*MAP_SIDES.length)|0],type=enemyType||ENEMY_POOL[(Math.random()*ENEMY_POOL.length)|0],def=ENEMY_TYPES[type];
-  let x,y;
-  if(attackSide===MAP_SIDE.WEST){x=8;y=rand(20,H-20);}else if(attackSide===MAP_SIDE.EAST){x=W-8;y=rand(20,H-20);}
-  else if(attackSide===MAP_SIDE.NORTH){x=rand(20,W-20);y=8;}else{x=rand(20,W-20);y=H-8;}
-  state.enemies.push({combatKind:"enemy",type,spawnSide:attackSide,x,y,hp:def.hp,max:def.hp,attackCooldown:0,healCooldown:rand(.5,2),wob:rand(0,6),flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null});
+// A random point on the spawn ring around the base, preferring land but never failing:
+// if the ring offers no land after bounded tries, the last candidate spawns anyway.
+function randomSpawnPoint(){
+  let candidate=null;
+  for(let attempt=0;attempt<80;attempt++){
+    const angle=Math.random()*Math.PI*2,radius=ENEMY_SPAWN_RADIUS*rand(.9,1.1);
+    candidate={x:clamp(BASE.x+Math.cos(angle)*radius,BUILD_MARGIN,W-BUILD_MARGIN),y:clamp(BASE.y+Math.sin(angle)*radius,BUILD_MARGIN,H-BUILD_MARGIN)};
+    if(terrainAtWorldPoint(candidate.x,candidate.y)===LAND)return candidate;
+  }
+  return candidate;
+}
+function spawnEnemy(enemyType=null){
+  // Showcase is an authored inert gallery: the always-visible debugger command deliberately no-ops
+  // rather than adding a production enemy that has no authored position or display-unit contract.
+  if(state.runMode==="showcase")return;
+  const type=enemyType||ENEMY_POOL[(Math.random()*ENEMY_POOL.length)|0],def=ENEMY_TYPES[type],{x,y}=randomSpawnPoint();
+  state.enemies.push({combatKind:"enemy",type,x,y,hp:def.hp,max:def.hp,attackCooldown:0,healCooldown:rand(.5,2),wob:rand(0,6),flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null});
 }
 function enemyAt(x,y){
   let target=null,best=Infinity;
@@ -609,7 +632,7 @@ function dropHeldObject(){
   // and an invalid drop restores the exact origin recorded at pickup.
   invariant(assertHeldKind(held)==="building","unhandled held drop kind "+held.kind);
   const building=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
-  if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)){building.x=anchor.x;building.y=anchor.y;toast(towerVariant(building).name+" placed");}
+  if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)){building.x=anchor.x;building.y=anchor.y;clearGrassInFootprint(building.x,building.y,buildingFootprint(building.type));toast(towerVariant(building).name+" placed");}
   else{building.x=held.originX;building.y=held.originY;toast("invalid ground — tower returned");}
   buildings.push(building);state.heldObject=null;sound(260,.06);return true;
 }
@@ -644,6 +667,13 @@ function chestAt(x,y){
   for(const chest of chests){const d=distance(x,y,chest.x,chest.y);if(chest.hp>0&&d<best){target=chest;best=d;}}
   return target;
 }
+function grassAt(x,y){
+  const center=worldToCell(x,y);let target=null,best=24;
+  for(let cy=center.cy-1;cy<=center.cy+1;cy++)for(let cx=center.cx-1;cx<=center.cx+1;cx++){
+    const tuft=grassByCell.get(cy*GRID_COLS+cx);if(!tuft)continue;const d=distance(x,y,tuft.x,tuft.y);if(d<best){target=tuft;best=d;}
+  }
+  return target;
+}
 function playerResourceAt(x,y){
   let target=null,kind=null,best=34;
   for(const tree of trees){if(tree.stump>0)continue;const d=distance(x,y,tree.x,tree.y-10);if(d<best){best=d;target=tree;kind="wood";}}
@@ -661,6 +691,7 @@ const PRIMARY_ACTIONS={
   stone:  {kind:"mine",   icon:"pickaxe"},
   diamond:{kind:"mine",   icon:"pickaxe"},
   chest:  {kind:"break-chest",icon:"axe"},
+  grass:  {kind:"cut-grass",icon:"axe"},
   enemy:  {kind:"attack", icon:"sword"}
 };
 /**
@@ -674,10 +705,10 @@ const PRIMARY_ACTIONS={
  * disagree, and a future icon preview needs no parallel selection logic.
  *
  * Pure: reads the world lists, mutates nothing, returns a fresh descriptor.
- * Priority is enemies, then unopened chests, then resources.
- * Felled trees, depleted rocks/diamonds and dead-or-removed enemies/chests never resolve.
+ * Priority is enemies, unopened chests, real resources, then one-hit grass.
+ * Felled/depleted/removed targets never resolve.
  *
- * @returns {null|{target:object,kind:"chop"|"mine"|"break-chest"|"attack",resource:null|"wood"|"stone"|"diamond",icon:"axe"|"pickaxe"|"sword"}}
+ * @returns {null|{target:object,kind:"chop"|"mine"|"break-chest"|"cut-grass"|"attack",resource:null|"wood"|"stone"|"diamond",icon:"axe"|"pickaxe"|"sword"}}
  */
 function resolvePrimaryAction(x,y){
   const enemy=enemyAt(x,y);
@@ -688,9 +719,10 @@ function resolvePrimaryAction(x,y){
   const chest=chestAt(x,y);
   if(chest)return {target:chest,kind:PRIMARY_ACTIONS.chest.kind,resource:null,icon:PRIMARY_ACTIONS.chest.icon};
   const node=playerResourceAt(x,y);   // already skips stumps and depleted nodes
-  if(!node)return null;
-  const action=PRIMARY_ACTIONS[node.kind];
-  return {target:node.target,kind:action.kind,resource:node.kind,icon:action.icon};
+  if(node){const action=PRIMARY_ACTIONS[node.kind];return {target:node.target,kind:action.kind,resource:node.kind,icon:action.icon};}
+  const tuft=grassAt(x,y);
+  if(tuft)return {target:tuft,kind:PRIMARY_ACTIONS.grass.kind,resource:null,icon:PRIMARY_ACTIONS.grass.icon};
+  return null;
 }
 
 // Harvesting and attacking both run through updatePrimaryClick()'s hold timer.
@@ -714,6 +746,7 @@ function updatePrimaryClick(dt){
   const quiet=primary.audioCooldown>0;
   if(hit.kind==="attack")hitCombatTarget(hit.target,quiet);
   else if(hit.kind==="break-chest")hitChest(hit.target,quiet);
+  else if(hit.kind==="cut-grass")hitGrass(hit.target,quiet);
   else hitResource(hit.target,hit.resource,false,quiet);
   if(!quiet)primary.audioCooldown=.25;
 }
@@ -744,7 +777,7 @@ function leftClick(){
   if(tower){openUpgradeMenu(tower,"tower");return;}
   const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
   if(pile){unloadStockpile(pile,m.x);return;}
-  if(!action){toast("left click a chest, tree, rock, or diamond deposit");return;}
+  if(!action){toast("left click a chest, resource, or enemy");return;}
   // Harvesting/chest breaking no longer resolves on the press; updatePrimaryClick() fills the timer.
   beginChop(action);
 }
@@ -786,6 +819,19 @@ function hitChest(chest,quiet=false){
   if(!quiet)sound(290+chest.hp*35,.06);
   if(chest.hp<=0)destroyChest(chest);
   return true;
+}
+function removeGrass(tuft,withFeedback=false,quiet=false){
+  const at=grass.indexOf(tuft);if(at<0)return false;
+  const cell=worldToCell(tuft.x,tuft.y);grass.splice(at,1);grassByCell.delete(cell.cy*GRID_COLS+cell.cx);vegetationRevision++;
+  if(chopState.target===tuft)resetChop();
+  if(withFeedback){addDamageNumber(tuft,1);burst(tuft.x,tuft.y,"#6f965c",5);if(!quiet)sound(220,.04);}
+  return true;
+}
+function hitGrass(tuft,quiet=false){return removeGrass(tuft,true,quiet);}
+function clearGrassInFootprint(x,y,footprint){
+  const cell=worldToCell(x,y),bounds=footprintCellBounds(cell.cx,cell.cy,footprint),removed=[];
+  for(let cy=bounds.minY;cy<=bounds.maxY;cy++)for(let cx=bounds.minX;cx<=bounds.maxX;cx++){const tuft=grassByCell.get(cy*GRID_COLS+cx);if(tuft)removed.push(tuft);}
+  for(const tuft of removed)removeGrass(tuft);
 }
 
 // Player and harvesting workers share this path: harvesting automation creates physical drops, never stored resources.
@@ -1111,7 +1157,7 @@ function placeCardCharge(anchor){
     // construction site at the authored cost, already promised to the card's variant. The player
     // still carries every resource, exactly as if they had built the chassis and bought the upgrade.
     if(targeting.site)placed.plannedVariant=targeting.variant;
-    buildings.push(placed);
+    buildings.push(placed);clearGrassInFootprint(placed.x,placed.y,buildingFootprint(placed.type));
     // A kit's charges are free: these are the authored cost-0 instant buildings, and the CARD is
     // the only thing that pays for them — there is no separate stack counter anywhere any more.
     if(!targeting.site)
@@ -1211,6 +1257,8 @@ function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null,ignoreChest=
   const rect=footprintWorldRect(c.cx,c.cy,footprint);
   if(rect.x<BUILD_MARGIN||rect.y<BUILD_MARGIN||rect.x+rect.w>W-BUILD_MARGIN||rect.y+rect.h>H-BUILD_MARGIN)return false;
   const bounds=footprintCellBounds(c.cx,c.cy,footprint);
+  // grid.js owns the placement footprint rectangle; fine terrain owns whether every pixel is land.
+  if(!terrainWorldRectEntirelyOnLand(rect))return false;
   // The base is just another occupant: its 3x3 blocks, the cells beside it do not.
   if(cellBoundsOverlap(bounds,occupiedCellBounds(BASE)))return false;
   // Depleted nodes no longer reserve ground, letting harvesting open construction sites.
@@ -1520,8 +1568,9 @@ function applySlow(enemy,duration,multiplier){
   enemy.status.slow={duration:Math.max(current?.duration||0,duration),multiplier:Math.min(current?.multiplier??1,multiplier)};
 }
 function pushEnemyToSpawn(enemy,distanceAmount){
-  if(enemy.spawnSide===MAP_SIDE.WEST)enemy.x-=distanceAmount;else if(enemy.spawnSide===MAP_SIDE.EAST)enemy.x+=distanceAmount;else if(enemy.spawnSide===MAP_SIDE.NORTH)enemy.y-=distanceAmount;else if(enemy.spawnSide===MAP_SIDE.SOUTH)enemy.y+=distanceAmount;
-  enemy.x=clamp(enemy.x,8,W-8);enemy.y=clamp(enemy.y,8,H-8);
+  // Radially away from the base: with ring spawning there is no per-enemy home side.
+  const dx=enemy.x-BASE.x,dy=enemy.y-BASE.y,length=Math.hypot(dx,dy)||1;
+  enemy.x=clamp(enemy.x+dx/length*distanceAmount,8,W-8);enemy.y=clamp(enemy.y+dy/length*distanceAmount,8,H-8);
 }
 function nearestTowerTarget(building,range){
   let target=null,best=range;eachTowerCombatTarget(enemy=>{const d=distance(building.x,building.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}});return target;
@@ -1666,11 +1715,11 @@ function transitionPhase(){
     clock.phase="night";clock.remaining=0;
     // Tier is snapshotted at night setup: leveling mid-wave changes the next telegraphed night only.
     const totalSpawns=nightSpawnTotal();state.draft.calmNight=false;
-    wave.activeSide=wave.upcomingSide;wave.activeRecipe=wave.upcomingRecipe;wave.secondarySide=wave.activeRecipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;wave.lastSides=wave.secondarySide?[wave.activeSide,wave.secondarySide]:[wave.activeSide];wave.totalSpawns=totalSpawns;wave.remainingSpawns=totalSpawns;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/totalSpawns;wave.nightNumber++;wave.activeNightNumber=wave.nightNumber;
+    wave.activeRecipe=wave.upcomingRecipe;wave.totalSpawns=totalSpawns;wave.remainingSpawns=totalSpawns;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/totalSpawns;wave.nightNumber++;wave.activeNightNumber=wave.nightNumber;
   }else{
     // A long day drafted at night is banked here, so the card is never silently wasted.
     clock.phase="day";clock.remaining=DAY_DURATION+state.draft.dayBonus;state.draft.dayBonus=0;clock.completedNights++;
-    wave.activeSide=null;wave.secondarySide=null;wave.activeRecipe=null;wave.remainingSpawns=0;wave.activeNightNumber=null;
+    wave.activeRecipe=null;wave.remainingSpawns=0;wave.activeNightNumber=null;
     // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
     chooseUpcomingNight();
     // Surviving the night IS the reward: one pick of three consumables or blueprints, straight into
@@ -1698,10 +1747,9 @@ function updateNightEnemyWave(dt){
   // Scheduled thresholds, rather than random frame rolls, keep the quota stable across frame rates.
   while(wave.remainingSpawns>0&&wave.elapsed>=wave.nextSpawnAt&&state.enemies.length<NIGHT_ENEMY_CAP){
     const index=(wave.totalSpawns-wave.remainingSpawns)%wave.activeRecipe.spawns.length;
-    const spawn=wave.activeRecipe.spawns[index],side=spawn[1]===WAVE_FRONT_SECONDARY?wave.secondarySide:wave.activeSide;
     // This is the sole membership writer. spawnEnemy() stays membership-neutral for debugger calls
     // and preserves its command-style undefined return contract.
-    spawnEnemy(side,spawn[0]);state.enemies[state.enemies.length-1].waveNightNumber=wave.activeNightNumber;
+    spawnEnemy(wave.activeRecipe.spawns[index]);state.enemies[state.enemies.length-1].waveNightNumber=wave.activeNightNumber;
     wave.remainingSpawns--;wave.nextSpawnAt+=interval;
   }
 }
@@ -1994,8 +2042,6 @@ function debugStartWave(id){
   const transitioned=state.clock.phase!=="night"; if(transitioned) transitionPhase();
   const wave=state.nightWave;
   wave.activeRecipe=recipe;
-  wave.activeSide??=MAP_SIDES[(Math.random()*MAP_SIDES.length)|0];
-  wave.secondarySide=recipe.id==="twoFront"?oppositeMapSide(wave.activeSide):null;
   wave.totalSpawns=transitioned?wave.totalSpawns:nightSpawnTotal();
   wave.remainingSpawns=wave.totalSpawns; wave.elapsed=0; wave.nextSpawnAt=0;
   effects.phaseHudChanged(); toast("debug wave: "+recipe.id);
@@ -2062,7 +2108,7 @@ export function releaseKey(code){ state.keys.delete(code); }
 export function beginCameraPan(x,y){ const camera=state.camera; camera.panning=true; camera.dragX=x; camera.dragY=y; }
 export function endCameraPan(){ state.camera.panning=false; }
 export function dragCameraTo(x,y){ const camera=state.camera; camera.x+=camera.dragX-x; camera.y+=camera.dragY-y; clampCamera(); }
-export function zoomCameraBy(factor){ const camera=state.camera; camera.zoom=clamp(camera.zoom*factor,.2,5); }
+export function zoomCameraBy(factor){ const camera=state.camera; camera.zoom=clamp(camera.zoom*factor,.1,5); }
 export function setCameraZoom(zoom){ state.camera.zoom=zoom; clampCamera(); }
 /** Showcase UI camera command; section coordinates remain authored in showcase-data.js. */
 export function focusShowcaseSection(id){const section=SHOWCASE_MANIFEST.sections[id];if(state.runMode!=="showcase"||!section)return false;state.camera.x=section.x;state.camera.y=section.y;state.camera.zoom=section.zoom;clampCamera();return true;}
@@ -2242,7 +2288,7 @@ function skillTreeEdges(){
 
 export {
   // live collections — iterate, never mutate
-  state, trees, rocks, diamonds, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers,
+  state, trees, rocks, diamonds, grass, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers,
   // debug flags (the gameplay pane's own bindings are the only writers)
   DBG,
   // the step
@@ -2252,14 +2298,16 @@ export {
   // hover / action resolution
   hoverTarget, hoveredBuilding, badgeAction, chopTarget, chopProgress,
   resolvePrimaryAction,
-  // placement + coverage
+  // placement + immutable, coordinate-explicit terrain queries
   canPlace, indicatorRadius, towerRadius, towerVariant,
+  terrainAtRasterCell,terrainAtWorldPoint,terrainWorldRectEntirelyOnLand,terrainMetadata,terrainRaisedAtCell,
+  vegetationMetadata,
   // costs and progress
   buildingCost, costText, upgradeList, towerUpgradeList, nextHouseCost,
   // world lookups the render layer projects
   storageServiceRadius, workerAssignmentAt, heldWorker, heldBuilding, heldChest, heldProp,
   workerOccupancyStatus, workerOccupancyAt, durablePostStatus, vacantDurablePosts,
-  workerIsLoaned, workerCoatColor, workerLoad, carriedTotal, resourceIsActive, oppositeMapSide,
+  workerIsLoaned, workerCoatColor, workerLoad, carriedTotal, resourceIsActive,
   // skill tree — read-only projections of the authored graph over this run's two id sets
   skillTreeNodes, skillTreeEdges, xp, skillPoints, waveTier, livingActiveWaveEnemies, levelCost, buffStacks,
   // the effective vacuum reach, buffs included — the drawn ring should read this, not TUNE alone

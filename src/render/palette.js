@@ -14,6 +14,7 @@ export const PAL = {
   grass:      0x9db97f,
   grassAlt:   0x96b177,
   grassSpeck: 0x8dab70,
+  grassTuft:  [0x33452d, 0x405536, 0x2b3d29, 0x4b6040],
   dirt:       0xd9c9a3,   // base clearing, paths
   grid:       0x63764c,   // placement lattice; drawn at very low opacity
 

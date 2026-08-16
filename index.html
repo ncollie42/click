@@ -17,7 +17,7 @@
     <!-- tabindex=-1: never a tab stop, but a real focus target, so a modal closing over a
          vanished opener has somewhere to put focus other than a stranded <body>. -->
     <canvas id="overlay" width="960" height="540" tabindex="-1"></canvas>
-    <section id="viewPanel" aria-label="3d view debugger">
+    <section id="viewPanel" aria-label="3d view debugger" aria-keyshortcuts="T">
       <button id="vToggle" type="button">view &#9662;</button>
       <nav id="vTabs"></nav>
       <div id="vPanes">
@@ -53,7 +53,7 @@
           <label><span class="row"><span>yaw</span><span id="o_vYaw"></span></span>
             <input autocomplete="off" type="range" id="vYaw" min="-180" max="180" step="1" value="0"></label>
           <label><span class="row"><span>zoom</span><span id="o_vZoom"></span></span>
-            <input autocomplete="off" type="range" id="vZoom" min="0.2" max="5" step="0.05" value="0.9"></label>
+            <input autocomplete="off" type="range" id="vZoom" min="0.1" max="5" step="0.05" value="0.9"></label>
           <label><span class="row"><span>fov</span><span id="o_vFov"></span></span>
             <input autocomplete="off" type="range" id="vFov" min="12" max="70" step="1" value="38"></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vOrtho"><span>orthographic</span></label>

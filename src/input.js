@@ -21,6 +21,7 @@ let surface = null;
 // named sinks, filled in wholesale at boot. The default is a no-op so this module runs headless.
 const HOOKS = {
   cameraChanged(){},
+  uiVisibilityChanged(){},
 };
 
 /** Event -> world pixels -> the simulation's pointer. Outside the ground plane counts as outside. */
@@ -68,8 +69,11 @@ function onPointerDown(event){
 // Window-level release prevents collection or camera drag getting stuck outside the canvas.
 function onPointerUp(event){if(event.button===0)primaryRelease();if(event.button===2)secondaryRelease();if(event.button===1)endCameraPan();}
 function onPointerCancel(){ pointerCancelled(); }
-function onBlur(){ windowBlurred(); }
+function onBlur(){ windowBlurred();HOOKS.uiVisibilityChanged(false); }
 function onKeyDown(event){
+  // Hold-to-hide is presentation-only. It precedes modal guards so screenshots can hide any UI,
+  // and preventing default keeps focus fixed instead of walking the debugger or modal controls.
+  if(event.code==="Tab"){event.preventDefault();if(!event.repeat)HOOKS.uiVisibilityChanged(true);return;}
   // Escape is a dismiss chain, outermost thing first, and each link reports whether it consumed the
   // press: the skill tree covers the whole stage, so it goes before the panel underneath it.
   if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeSkillTree())return;if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
@@ -81,7 +85,10 @@ function onKeyDown(event){
   if(state.skillTree.open)return;
   if(["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowLeft","ArrowDown","ArrowRight"].includes(event.code)){event.preventDefault();pressKey(event.code);}
 }
-function onKeyUp(event){ releaseKey(event.code); }
+function onKeyUp(event){
+  if(event.code==="Tab")HOOKS.uiVisibilityChanged(false);
+  releaseKey(event.code);
+}
 
 // ── registration ────────────────────────────────────────────────────────────
 // Every listener this adapter owns, in registration order. Called once by main.js after initHud()

@@ -3,12 +3,16 @@
 
 import {CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,W,H,FOOTPRINT_1x1,BUILDING_TYPES} from "./data.js";
 
-const worldToCellX=x=>Math.floor((x-GRID_ORIGIN_X)/CELL);
-const worldToCellY=y=>Math.floor((y-GRID_ORIGIN_Y)/CELL);
-export const worldToCell=(x,y)=>({cx:worldToCellX(x),cy:worldToCellY(y)});
-const cellToWorldX=cx=>GRID_ORIGIN_X+cx*CELL+CELL/2;
-const cellToWorldY=cy=>GRID_ORIGIN_Y+cy*CELL+CELL/2;
-export const cellToWorld=(cx,cy)=>({x:cellToWorldX(cx),y:cellToWorldY(cy)});
+// Parameterized forms let DOM-free generators use the same conversions without importing world policy.
+export function worldToCellInGrid(x,y,{cellSize,gridOriginX,gridOriginY}){
+  return {cx:Math.floor((x-gridOriginX)/cellSize),cy:Math.floor((y-gridOriginY)/cellSize)};
+}
+export function cellToWorldInGrid(cx,cy,{cellSize,gridOriginX,gridOriginY}){
+  return {x:gridOriginX+cx*cellSize+cellSize/2,y:gridOriginY+cy*cellSize+cellSize/2};
+}
+const DEFAULT_GRID={cellSize:CELL,gridOriginX:GRID_ORIGIN_X,gridOriginY:GRID_ORIGIN_Y};
+export const worldToCell=(x,y)=>worldToCellInGrid(x,y,DEFAULT_GRID);
+export const cellToWorld=(cx,cy)=>cellToWorldInGrid(cx,cy,DEFAULT_GRID);
 // Snap an arbitrary world point onto the center of the cell that contains it. A point exactly on a
 // cell edge belongs to the higher-index cell (floor semantics), so snapping is total and stable.
 export function snapToCellCenter(x,y){const c=worldToCell(x,y);return cellToWorld(c.cx,c.cy);}
@@ -28,13 +32,19 @@ export function footprintCells(cx,cy,footprint=FOOTPRINT_1x1){
   return cells;
 }
 // World-space rectangle covered by a footprint; the rendering/placement consumer of {w,h}.
-export function footprintWorldRect(cx,cy,footprint=FOOTPRINT_1x1){
+export function footprintWorldRectInGrid(cx,cy,footprint,{cellSize,gridOriginX,gridOriginY}){
   const b=footprintCellBounds(cx,cy,footprint);
-  return {x:GRID_ORIGIN_X+b.minX*CELL,y:GRID_ORIGIN_Y+b.minY*CELL,w:footprint.w*CELL,h:footprint.h*CELL};
+  return {x:gridOriginX+b.minX*cellSize,y:gridOriginY+b.minY*cellSize,w:footprint.w*cellSize,h:footprint.h*cellSize};
+}
+export function footprintInBounds(cx,cy,footprint,grid){
+  const r=footprintWorldRectInGrid(cx,cy,footprint,grid);
+  return r.x>=0&&r.y>=0&&r.x+r.w<=grid.width&&r.y+r.h<=grid.height;
+}
+export function footprintWorldRect(cx,cy,footprint=FOOTPRINT_1x1){
+  return footprintWorldRectInGrid(cx,cy,footprint,DEFAULT_GRID);
 }
 // Boundary test on the COMPLETE footprint, not just the anchor: a 3x3 anchored one cell from the
 // border overhangs the world even though its anchor is in-bounds. Half-clipped edge cells always fail.
 export function footprintInWorldBounds(cx,cy,footprint=FOOTPRINT_1x1){
-  const r=footprintWorldRect(cx,cy,footprint);
-  return r.x>=0&&r.y>=0&&r.x+r.w<=W&&r.y+r.h<=H;
+  return footprintInBounds(cx,cy,footprint,{...DEFAULT_GRID,width:W,height:H});
 }

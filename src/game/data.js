@@ -3,7 +3,7 @@
 
 // ── frame and world dimensions ──────────────────────────────────────────────
 export const VIEW_W=960,VIEW_H=540;          // Fixed 16:9 logical frame; CSS scales both axes together.
-export const W=1536,H=1024;                  // Larger world explored through camera pan/zoom.
+export const W=1536*5,H=1024*5;              // 5× each axis; explored through camera pan/zoom.
 
 // ── the base ────────────────────────────────────────────────────────────────
 // Authored anchor, radius and reserved footprint. Not run state: base HEALTH is
@@ -21,16 +21,16 @@ export const BUILD_MARGIN=45;
 // over them; the simulation and rendering only consume both.
 // CELL is measured in simulation pixels, the same space as W/H, BASE, mouse, and building x/y.
 // Origin is shifted back by half a cell so cell CENTERS land on exact multiples of CELL. That keeps
-// BASE (768,512 = 24·CELL, 16·CELL) sitting precisely on a cell center, so the base stays a valid
+// BASE (3840,2560 = 120·CELL, 80·CELL) sitting precisely on a cell center, so the base stays a valid
 // alignment reference for anything snapped to the grid.
 // Map-edge treatment: because of that half-cell shift the first and last column/row are HALF cells
 // clipped by the world border - cell (0,*) spans x∈[-16,16] and cell (48,*) spans x∈[1520,1552],
 // with centers exactly on x=0 and x=W. They remain addressable (worldToCell never returns a
 // negative index for an in-world point) but are never fully inside the world, so
-// footprintInWorldBounds() rejects them. Fully-interior cells are cx∈[1,47], cy∈[1,31] (47x31).
+// footprintInWorldBounds() rejects them. Fully-interior cells are cx∈[1,239], cy∈[1,159] (239x159).
 export const CELL=32;
 export const GRID_ORIGIN_X=-CELL/2,GRID_ORIGIN_Y=-CELL/2;   // world coords of cell (0,0)'s top-left corner
-export const GRID_COLS=W/CELL+1,GRID_ROWS=H/CELL+1;         // 49 x 33 addressable cells, edge ones half-clipped
+export const GRID_COLS=W/CELL+1,GRID_ROWS=H/CELL+1;         // 241 x 161 addressable cells, edge ones half-clipped
 
 // ── Footprint ownership ──
 // Written by: the literals below and the BUILDING_TYPES / world-node definitions that reference them.
@@ -140,21 +140,23 @@ export const ENEMY_TYPES=Object.freeze({
   healer:Object.freeze({name:"healer",hp:5,speed:38,damage:0,range:180,rate:0,size:1}),
   brute:Object.freeze({name:"brute",hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35})
 });
-export const MAP_SIDE={NORTH:"north",EAST:"east",SOUTH:"south",WEST:"west"},MAP_SIDES=Object.values(MAP_SIDE);
-export const WAVE_FRONT_SECONDARY="secondary";
+// Enemies spawn at a random angle on a ring around the base (small radial jitter in
+// simulation.js), preferring land. No directional/shoreline spawning.
+export const ENEMY_SPAWN_RADIUS=800;
 export const ENEMY_POOL=Object.freeze(["raider","raider","archer","healer","brute"]);
 export const NIGHT_WAVE_SPAWNS=12,NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
 // Per-tier bonus spawns are read only by simulation.js; no runtime path may assign into this value.
 export const NIGHT_TIER_BONUS_SPAWNS=3;
-// Authored order/composition shapes the forecast. Freeze every level so a live wave can retain a
-// recipe reference without any runtime or debugger path changing later spawn types or fronts.
-const freezeWaveRecipe=recipe=>Object.freeze({...recipe,spawns:Object.freeze(recipe.spawns.map(spawn=>Object.freeze(spawn)))});
+// Authored order/composition shapes the forecast (spawn TYPES only — spawning is a
+// random ring around the base). Freeze every level so a live wave can retain a recipe
+// reference without any runtime or debugger path changing later spawn types.
+const freezeWaveRecipe=recipe=>Object.freeze({...recipe,spawns:Object.freeze([...recipe.spawns])});
 export const NIGHT_WAVE_RECIPES=Object.freeze([
-  {id:"raiderRush",minTier:0,spawns:[["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
-  {id:"archerLine",minTier:0,spawns:[["raider","primary"],["archer","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"],["archer","primary"],["raider","primary"],["archer","primary"]]},
-  {id:"healerEscort",minTier:1,spawns:[["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["healer","primary"],["raider","primary"],["raider","primary"],["raider","primary"]]},
-  {id:"brutePush",minTier:2,spawns:[["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"],["raider","primary"],["brute","primary"]]},
-  {id:"twoFront",minTier:2,spawns:[["raider","primary"],["raider","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"],["brute","primary"],["brute","secondary"],["archer","primary"],["archer","secondary"],["raider","primary"],["raider","secondary"]]}
+  {id:"raiderRush",minTier:0,spawns:["raider","raider","raider","raider","raider","raider","raider","raider","raider","raider","raider","raider"]},
+  {id:"archerLine",minTier:0,spawns:["raider","archer","archer","archer","raider","archer","archer","raider","archer","archer","raider","archer"]},
+  {id:"healerEscort",minTier:1,spawns:["raider","raider","healer","raider","raider","healer","raider","raider","healer","raider","raider","raider"]},
+  {id:"brutePush",minTier:2,spawns:["raider","brute","raider","brute","raider","brute","raider","brute","raider","brute","raider","brute"]},
+  {id:"twoFront",minTier:2,spawns:["raider","raider","archer","archer","raider","raider","brute","brute","archer","archer","raider","raider"]}
 ].map(freezeWaveRecipe));
 
 // ── day / night pacing ──────────────────────────────────────────────────────

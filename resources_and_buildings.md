@@ -10,21 +10,21 @@ Living reference for resources, building categories, and behavior tags.
 | Stone | Stone nodes | Construction and upgrades |
 | Dust essence | 25% enemy death drop | Tower variant upgrades |
 | Gold coin | Temporary random spawn; flashes and vanishes after about 8 seconds | Shock tower variant upgrade |
-| Diamond | Five rare deposits generated more than 600px from the base | Advanced tower variant upgrades |
+| Diamond | 5–8 rare deposits generated more than 600px from the base | Advanced tower variant upgrades |
 
 Resources may exist in several states: loose on the ground, carried by the player or a hauling worker, stored at the base or stockpile, or delivered to construction/upgrade progress. Loose drops are continuous — only the *nodes* are grid-anchored.
 
-Each run seeds 80 trees, 24 stone nodes, and 5 diamond deposits onto distinct cell centres, one node per cell (see [Placement Grid](#placement-grid)).
+Each normal run loads explicit landmarks plus deterministic authored scatter regions. Trees, rocks, and grass may come from regions; diamonds and chests remain explicit. Regions occupy placement-grid rectangles and use a finite `[0,1]` density per eligible land cell. Resolution priority is explicit objects → rocks → trees → grass, so the frozen blueprint contains distinct cells before `simulation.js` materializes mutable runtime nodes.
 
 ## Placement Grid
 
 Everything that is *placed* lands on one shared square lattice. `src/game/data.js` owns its dimensions, `src/game/grid.js` owns pure lattice math, and simulation/render consumers share those definitions.
 
-- **Cell size is 32 simulation pixels.** The same unit as world width/height, base position, mouse position, and every building `x`/`y`. The world is 1536x1024, so the lattice addresses 49x33 cells.
-- **The anchor is the centre cell.** A building's stored `x`/`y` is always a cell *centre*, never a corner. The origin is deliberately shifted back by half a cell so centres land on exact multiples of 32, which puts the base (768, 512) on a centre and makes it a valid alignment reference.
+- **Cell size is 32 simulation pixels.** The same unit as world width/height, base position, mouse position, and every building `x`/`y`. The world is 7680x5120, so the lattice addresses 241x161 cells.
+- **The anchor is the centre cell.** A building's stored `x`/`y` is always a cell *centre*, never a corner. The origin is deliberately shifted back by half a cell so centres land on exact multiples of 32, which puts the base (3840, 2560) on a centre and makes it a valid alignment reference.
 - **Footprints must be odd.** An odd `{w, h}` has a whole-cell half-extent on each side of the anchor, so a model can stay centred on the cell it is anchored to. `1x1` and `3x3` are the only sizes in use; a `2x2` would have no centre cell and is not supported.
 - **The whole footprint is validated, not just the anchor.** Bounds, the build margin, and occupancy against nodes, buildings, and the base are all tested against every cell the footprint covers. A 3x3 whose anchor is in bounds can still be rejected because a corner cell overhangs.
-- **The half-clipped border row and column always fail.** The half-cell origin shift makes column 0 / 48 and row 0 / 32 straddle the world edge. They remain addressable but never fully inside the world, so nothing can be placed on them. Fully interior cells are 47x31.
+- **The half-clipped border row and column always fail.** The half-cell origin shift makes column 0 / 240 and row 0 / 160 straddle the world edge. They remain addressable but never fully inside the world, so nothing can be placed on them. Fully interior cells are 239x159.
 - **Cell occupancy is the only spacing rule between placed things.** There is no minimum distance between buildings any more. Two 1x1 deployables may sit in touching cells; they may never share one.
 
 ### Footprints
@@ -56,6 +56,10 @@ Towers are permanently 3x3. Choosing a chassis upgrade never resizes an already-
 
 Trees, stone nodes, and diamond deposits each reserve exactly one cell *while active*. Felling a tree or exhausting a node clears that reservation immediately: the cell becomes buildable, but the node object does not move and does not disappear. The stump or spent rock stays on the map as scenery on the same cell it always occupied. Harvesting is therefore the way to open construction sites in a crowded forest.
 
+### Grass vegetation
+
+Grass-textured `LAND` is immutable topology. Separate frozen blueprint grass descriptors become mutable runtime vegetation in normal runs only. Tufts have 1 HP and use one existing completed hold-action hit. They are lower priority than enemies, chests, and real resources; clearing yields no drops, XP, workers, occupancy, or topology change. `canPlace()` ignores grass, while successful building placement and Shock Tower relocation clear overlapping tufts. The shared scatter resolver reserves grass source cells after explicit objects, rocks, and trees, preventing spawn overlap without making grass runtime occupancy. Rendering uses one bounded instanced mesh rebuilt only when the separate vegetation revision changes. Land color samples a deterministic repeating 64×64 RGBA tile: 16 KiB canvas backing plus 16 KiB GPU level (mipmaps disabled), replacing the former 7680×5120 allocation of about 150 MiB on each side.
+
 ### Footprint is not the other radii
 
 Footprint occupancy answers one question only: *which cells does this object reserve so nothing else can be placed there?* It is unrelated to, and must not be confused with:
@@ -67,13 +71,21 @@ Footprint occupancy answers one question only: *which cells does this object res
 - **Build margin.** A 45px inset from the world border, still a continuous rule; the grid only decides which cells are tested against it. (The base is *not* in this list any more — it is plain cell occupancy.)
 - **Hover and drop targeting.** Picking a blueprint, stockpile, or upgrade button under the cursor is still a distance test, so two structures in adjacent cells can both be inside each other's hover range even though their footprints never overlap.
 
+### Terrain ownership and generation
+
+`authored-map.js` loads the hand-authored starter map (`src/game/maps/starter.map.json`, one authored cell per 32px placement cell, edited in `tools/map-editor.html`) and derives the 16px, 480x320 row-major `LAND`/`WATER` raster. Data flows map JSON → `map-document.js` validation → DOM-free `scatter-regions.js` resolution → frozen game blueprint/editor preview → `simulation.js` mutable materialization. Placement rejects footprints touching water. Showcase initialization/rebuild installs authored all-land terrain.
+
+Scatter candidates hash the map seed, stable region ID/local uint32 seed, kind, and cell coordinates. Changing the map seed deterministically affects WFC and every region; local reroll changes one region except where overlap priority legitimately exposes or hides lower-priority candidates. Generated cells require land, the 45px build margin, and the protected base 3×3. WFC chooses terrain appearance only; scatter regions choose resource and vegetation presence.
+
+Production enemies spawn near the base on the configured ring, preferring authored land. Showcase enemies retain authored positions; the production/debug spawn command is intentionally a no-op in showcase mode.
+
 ### What stays continuous
 
-The grid governs *placement only*. Workers, enemies, the player cursor, loose resource drops, projectiles, and all movement remain free-floating in continuous world pixels. There is no pathfinding, no tile-based movement, no rotation, and no persistence of the grid between runs — `seedWorld()` simply re-rolls node anchors onto fresh unique cells each run.
+The grid governs *placement only*. Workers, enemies, the player cursor, loose resource drops, projectiles, and all movement remain free-floating in continuous world pixels. There is no pathfinding, no tile-based movement, no rotation, and no persistence between runs. **Temporary limitation:** shoreline selection makes enemies start on land and prefers a clear direct approach, but workers and enemies still have no water collision and may later cross ocean or lakes while pursuing targets. Teleport pushback still follows the recorded cardinal `spawnSide`, so it may also push an enemy across shoreline water.
 
 ## Showcase Validation
 
-`?mode=showcase` installs an authored, inert gallery alongside production tower combat and damage dummies. Its fixture manifest validates registry coverage, IDs, sections, footprints, margins, and overlap at import. Run `node scripts/validate.mjs` for deterministic normal/showcase stress, fixture rebuild/reset checks, and complete skill-graph reveal.
+`?mode=showcase` installs an authored gallery: display units stay inert, while towers use production combat against resettable damage dummies and authored props/chests retain their demonstrated pointer interactions. Its fixture manifest validates registry coverage, IDs, sections, footprints, margins, and overlap at import. Run `node scripts/validate.mjs` for deterministic normal/showcase stress, fixture rebuild/reset checks, and complete skill-graph reveal.
 
 ## Building Categories
 

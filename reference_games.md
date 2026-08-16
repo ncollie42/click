@@ -8,6 +8,7 @@ Living list of games to study for specific design problems. Copy principles, not
 | **Beaconfall** | Similar overall structure; especially workers and player actions. |
 | **Super Fantasy Kingdom** | Worker roles, assignment, automation, and readability. |
 | **Bills Must Be Paid** | How features are introduced incrementally without overwhelming the player. |
+| **Thronefall** | Visual inspiration: vibrant popping colors, readable top-down view, unit/tower/projectile presentation, Steam page look. |
 
 ## Clikyland
 
@@ -54,3 +55,16 @@ Apply this pacing rule:
 5. Add the next pressure only after the prior system reads clearly.
 
 This supports the existing pressure curve: **overload → automate → brief surplus → new pressure → overload**. Also use its interaction presentation as reference for hover, pickup, and placement states; see [Open Thoughts and Ideas](idea.md#3d-hover-and-selection-visualization).
+
+## Thronefall
+
+Primary visual reference. Study the look, not the mechanics.
+
+Observations:
+
+- Clear, vibrant colors that pop; limited palette per scene keeps everything readable.
+- Top-down view similar to ours — good comparison for camera angle and scene composition.
+- Enemies and towers are very readable at a glance despite minimalist shapes.
+- Steam page stands out: each screenshot uses a different dominant color out the gate. Use as the bar for what our screenshots should look like — mock up what a screenshot of our game could be.
+
+Steal directly from: units, towers, HP presentation, projectiles, and juice (hit feedback, motion, impact effects).

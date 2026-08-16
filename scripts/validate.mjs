@@ -23,14 +23,16 @@ for(const path of jsFiles)execFileSync(process.execPath,["--check",path],{stdio:
 let randomState=0x5eed1234;
 const originalRandom=Math.random;
 Math.random=()=>((randomState=Math.imul(randomState,1664525)+1013904223>>>0)/0x100000000);
-let sim,data,grid,showcase,cardCatalog;
+let sim,data,grid,showcase,cardCatalog,am,mapdoc;
 try{
-  [sim,data,grid,showcase,cardCatalog]=await Promise.all([
+  [sim,data,grid,showcase,cardCatalog,am,mapdoc]=await Promise.all([
     import(pathToFileURL(join(root,"src/game/simulation.js"))),
     import(pathToFileURL(join(root,"src/game/data.js"))),
     import(pathToFileURL(join(root,"src/game/grid.js"))),
     import(pathToFileURL(join(root,"src/game/showcase-data.js"))),
-    import(pathToFileURL(join(root,"src/game/cards.js")))
+    import(pathToFileURL(join(root,"src/game/cards.js"))),
+    import(pathToFileURL(join(root,"src/game/authored-map.js"))),
+    import(pathToFileURL(join(root,"src/game/map-document.js")))
   ]);
 
   assert.deepEqual(data.FEED_XP,{wood:1,stone:1,dust:5,coin:5,diamond:12});
@@ -45,6 +47,88 @@ try{
   assert.deepEqual(Object.keys(data.CHEST.weights),data.RESOURCE_KINDS);
   assert.equal(data.CHEST.startingCount,1);assert.equal(data.CHEST.maxHp,4);assert.deepEqual(data.CHEST.outcomeOdds,{cache:.5,pinata:.5});assert.equal(data.CHEST.cachePayout,5);assert.equal(data.CHEST.pinataPayout,12);assert.equal(data.CHEST.footprint,data.FOOTPRINT_1x1);
   assert.ok(data.CHEST.weights.wood>data.CHEST.weights.dust&&data.CHEST.weights.stone>data.CHEST.weights.coin&&data.CHEST.weights.diamond<Math.min(...data.RESOURCE_KINDS.filter(k=>k!=="diamond").map(k=>data.CHEST.weights[k])));
+
+  // ── authored starter world ──
+  // The world is authored data (src/game/maps/starter.map.json) parsed by map-document and
+  // loaded by authored-map. Structural checks run on the pure loader before any simulation state.
+  const placementGrid={width:data.W,height:data.H,cellSize:data.CELL,gridOriginX:data.GRID_ORIGIN_X,gridOriginY:data.GRID_ORIGIN_Y,gridCols:data.GRID_COLS,gridRows:data.GRID_ROWS};
+  const authoredWorld=am.buildStarterWorld();
+  {
+    const starterDoc=mapdoc.parseMapDocument(am.STARTER_MAP_SOURCE);
+    assert.deepEqual([starterDoc.width,starterDoc.height,starterDoc.cellSize],[data.GRID_COLS,data.GRID_ROWS,data.CELL],"starter map must cover the placement grid 1:1");
+    assert.deepEqual(am.buildStarterWorld(),authoredWorld,"authored world loading must be deterministic");
+    assert.deepEqual([authoredWorld.width,authoredWorld.height,authoredWorld.terrainCellSize,authoredWorld.terrainOriginX,authoredWorld.terrainOriginY,authoredWorld.terrainCols,authoredWorld.terrainRows,authoredWorld.terrainOrder],[data.W,data.H,16,0,0,am.TERRAIN_COLS,am.TERRAIN_ROWS,"row-major"]);
+    assert.deepEqual([authoredWorld.placementCellSize,authoredWorld.placementOriginX,authoredWorld.placementOriginY,authoredWorld.placementCols,authoredWorld.placementRows],[data.CELL,data.GRID_ORIGIN_X,data.GRID_ORIGIN_Y,data.GRID_COLS,data.GRID_ROWS]);
+    assert.equal(authoredWorld.terrain.length,am.TERRAIN_COLS*am.TERRAIN_ROWS);assert.equal(authoredWorld.terrain.every(tag=>am.TERRAIN_TAGS.includes(tag)),true);
+    assert.equal(Object.isFrozen(authoredWorld)&&Object.isFrozen(authoredWorld.terrain)&&Object.isFrozen(authoredWorld.trees)&&Object.isFrozen(authoredWorld.grass)&&authoredWorld.grass.every(Object.isFrozen)&&Object.isFrozen(authoredWorld.targets)&&Object.isFrozen(authoredWorld.raised),true,"blueprint ownership is not read-only at public boundaries");
+    // 1:1 grid alignment: a placement cell is buildable land exactly when its authored cell is painted land.
+    for(let cy=1;cy<data.GRID_ROWS-1;cy+=3)for(let cx=1;cx<data.GRID_COLS-1;cx+=3)
+      assert.equal(am.placementFootprintOnLand(authoredWorld,cx,cy,data.FOOTPRINT_1x1,placementGrid),starterDoc.land[cy*starterDoc.width+cx]===1,`raster/authored land disagreement at (${cx}, ${cy})`);
+    const baseCell=grid.worldToCell(data.BASE.x,data.BASE.y);
+    assert.equal(am.placementFootprintOnLand(authoredWorld,baseCell.cx,baseCell.cy,data.BASE.footprint,placementGrid),true,"base footprint is not entirely on authored land");
+    assert.deepEqual([authoredWorld.trees.length,authoredWorld.rocks.length,authoredWorld.diamonds.length,authoredWorld.chests.length,authoredWorld.grass.length],[authoredWorld.targets.treeCount,authoredWorld.targets.rockCount,authoredWorld.targets.diamondCount,authoredWorld.targets.chestCount,authoredWorld.targets.grassCount]);
+    assert.deepEqual(authoredWorld.targets,{treeCount:173,rockCount:36,diamondCount:2,chestCount:1,grassCount:1596},"intentional starter scatter targets changed; review distribution before updating");
+    for(const landmark of starterDoc.objects.filter(object=>object.kind==="tree"||object.kind==="rock")){const loaded=authoredWorld[`${landmark.kind}s`].find(cell=>cell.cx===landmark.cx&&cell.cy===landmark.cy);assert.ok(loaded,"explicit landmark was not loaded");assert.equal(loaded.variant,landmark.variant,"explicit landmark variant drifted");}
+    const starterScatter=am.resolveAuthoredMapScatter(starterDoc);
+    assert.deepEqual(starterScatter.totals,{tree:170,rock:34,grass:1596});
+    const reordered=mapdoc.cloneMapDocument(starterDoc);reordered.scatterRegions.reverse();assert.deepEqual(am.resolveAuthoredMapScatter(reordered),starterScatter,"JSON region order changed resolved resources");
+    const rerolled=mapdoc.cloneMapDocument(starterDoc),west=rerolled.scatterRegions.find(region=>region.id==="forest-west");west.seed=(west.seed+1)>>>0;const rerolledScatter=am.resolveAuthoredMapScatter(rerolled);
+    assert.deepEqual(rerolledScatter.trees.filter(cell=>cell.regionId==="forest-east"),starterScatter.trees.filter(cell=>cell.regionId==="forest-east"),"local reroll perturbed a disjoint region");
+    assert.ok(authoredWorld.grass.length>1000,"starter vegetation is too sparse to read as Clickyland grass");
+    assert.equal(authoredWorld.chests.length,data.CHEST.startingCount,"starter map must place the starting chest count");
+    for(const cell of authoredWorld.chests){const p=grid.cellToWorld(cell.cx,cell.cy),radius=Math.hypot(p.x-data.BASE.x,p.y-data.BASE.y);assert.ok(radius>=data.CHEST.discoverMinRadius&&radius<=data.CHEST.discoverMaxRadius,"authored chest escaped the discover band");}
+    const occupied=new Set();
+    for(const cell of [...authoredWorld.trees,...authoredWorld.rocks,...authoredWorld.diamonds,...authoredWorld.chests]){
+      const address=cell.cy*data.GRID_COLS+cell.cx;
+      assert.equal(occupied.has(address),false,"authored occupants share a cell");occupied.add(address);
+      assert.equal(am.placementFootprintOnLand(authoredWorld,cell.cx,cell.cy,data.FOOTPRINT_1x1,placementGrid),true,"authored occupant touches water");
+    }
+    const vegetationCells=new Set(authoredWorld.grass.map(cell=>cell.cy*data.GRID_COLS+cell.cx));
+    assert.equal(vegetationCells.size,authoredWorld.grass.length,"two grass tufts share one source cell");
+    for(const cell of authoredWorld.grass){assert.equal(occupied.has(cell.cy*data.GRID_COLS+cell.cx),false,"grass overlaps an authored occupant");assert.equal(am.placementFootprintOnLand(authoredWorld,cell.cx,cell.cy,data.FOOTPRINT_1x1,placementGrid),true,"grass touches water");}
+    const protectedBaseCell=grid.worldToCell(data.BASE.x,data.BASE.y),generated=[...starterScatter.trees,...starterScatter.rocks,...starterScatter.grass];
+    for(const cell of generated){const rect=grid.footprintWorldRect(cell.cx,cell.cy,data.FOOTPRINT_1x1);assert.ok(rect.x>=data.BUILD_MARGIN&&rect.y>=data.BUILD_MARGIN&&rect.x+rect.w<=data.W-data.BUILD_MARGIN&&rect.y+rect.h<=data.H-data.BUILD_MARGIN,"generated cell escaped build margin");assert.ok(Math.abs(cell.cx-protectedBaseCell.cx)>1||Math.abs(cell.cy-protectedBaseCell.cy)>1,"generated cell entered protected base footprint");}
+    // Loader rejections: bad authored data must fail loudly, never repair.
+    const plain=()=>JSON.parse(JSON.stringify(am.STARTER_MAP_SOURCE));
+    assert.throws(()=>am.buildWorldFromMapData("{nope"),/invalid JSON/);
+    {const bad=plain();bad.width=64;bad.height=40;bad.land=bad.land.slice(0,40).map(row=>row.slice(0,64));bad.raised=bad.raised.slice(0,40).map(row=>row.slice(0,64));bad.objects=[];bad.scatterRegions=[];assert.throws(()=>am.buildWorldFromMapData(bad),/must be 241x161 cells/);}
+    {const bad=plain();bad.objects=[...bad.objects,{kind:"house",cx:120,cy:60,rotation:0,variant:null}];assert.throws(()=>am.buildWorldFromMapData(bad),/cannot load into the game yet/);}
+    {const bad=plain();for(const cy of [79,80,81])bad.land[cy]=bad.land[cy].slice(0,119)+"~~~"+bad.land[cy].slice(122);assert.throws(()=>am.buildWorldFromMapData(bad),/base footprint.*not entirely on painted land/);}
+    {const allLand=plain();allLand.objects=allLand.objects.filter(object=>object.kind!=="chest"||true);allLand.land=allLand.land.map(row=>"#".repeat(row.length));am.buildWorldFromMapData(allLand);} // oceanless maps are legal: spawning is a ring around the base
+    {const bad=plain();bad.raised[0]="^"+bad.raised[0].slice(1);assert.throws(()=>am.buildWorldFromMapData(bad),/raised implies land/,"raised-over-water imports must be rejected, not repaired");}
+
+    // Terrain raster query helpers keep their exact contract on synthetic worlds.
+    const synthetic={width:192,height:192,terrainCellSize:16,terrainOriginX:0,terrainOriginY:0,terrainCols:12,terrainRows:12,terrainOrder:"row-major",terrain:Array(144).fill(am.LAND)};
+    synthetic.terrain[5*12+4]=am.WATER;
+    assert.equal(am.terrainAtRasterCell(synthetic,4,5),am.WATER,"row-major terrain indexing drifted");
+    assert.equal(am.terrainAtRasterCell(synthetic,-1,0),null);assert.equal(am.terrainAtRasterCell(synthetic,12,0),null);
+    assert.equal(am.terrainAtWorldPoint(synthetic,0,0),am.LAND);assert.equal(am.terrainAtWorldPoint(synthetic,191.999,191.999),am.LAND);
+    assert.equal(am.terrainAtWorldPoint(synthetic,192,0),null);assert.equal(am.terrainAtWorldPoint(synthetic,0,192),null);
+    assert.equal(am.worldRectEntirelyOnLand({...synthetic,terrain:Array(144).fill(am.LAND)},{x:0,y:0,w:192,h:192}),true,"exact world-boundary rectangle must cover the final raster cells without overrun");
+    assert.equal(am.worldRectEntirelyOnLand(synthetic,{x:0,y:0,w:192,h:192}),false);
+    assert.equal(am.worldRectEntirelyOnLand(synthetic,{x:-1,y:0,w:1,h:1}),false);assert.equal(am.worldRectEntirelyOnLand(synthetic,{x:191,y:191,w:2,h:1}),false);
+    assert.equal(am.worldRectEntirelyOnLand(synthetic,{x:63,y:80,w:1,h:1}),true);
+    assert.equal(am.worldRectEntirelyOnLand(synthetic,{x:63,y:80,w:2,h:1}),false,"partial overlap with a water raster cell was accepted");
+    assert.equal(am.worldRectEntirelyOnLand(synthetic,{x:64,y:80,w:Number.EPSILON,h:1}),false,"sub-ULP span skipped water at a raster boundary");
+    assert.equal(am.worldRectEntirelyOnLand(synthetic,{x:192,y:0,w:Number.EPSILON,h:1}),false,"sub-ULP span starting at the world boundary was accepted");
+    const syntheticPlacement={width:192,height:192,cellSize:32,gridOriginX:-16,gridOriginY:-16,gridCols:7,gridRows:7};
+    assert.equal(am.placementFootprintOnLand(synthetic,3,3,{w:1,h:1},syntheticPlacement),true,"1x1 placement footprint queried the wrong raster cells");
+    assert.equal(am.placementFootprintOnLand(synthetic,3,3,{w:3,h:3},syntheticPlacement),false,"3x3 placement footprint missed fine-raster water");
+    assert.throws(()=>am.terrainAtRasterCell({terrainCols:4,terrainRows:4,terrain:[]},0,0),/malformed row-major terrain blueprint/);
+    const badTag={...synthetic,terrain:[...synthetic.terrain]};badTag.terrain[0]="lava";assert.throws(()=>am.terrainAtRasterCell(badTag,0,0),/unknown terrain tag/);assert.throws(()=>am.validateTerrainTags(badTag.terrain,badTag.terrain.length),/unknown terrain tag/);
+    for(const footprint of [{w:0,h:1},{w:-1,h:1},{w:2,h:2},{w:1.5,h:1}])assert.throws(()=>am.placementFootprintOnLand(synthetic,1,1,footprint,syntheticPlacement),/positive odd integers/);
+    // The raised layer rides the blueprint at authored-cell resolution and always implies land.
+    assert.equal(authoredWorld.raised.length,data.GRID_COLS*data.GRID_ROWS);
+    authoredWorld.raised.forEach((value,address)=>{if(value===1)assert.equal(starterDoc.land[address],1,"blueprint raised cell is not land");});
+  }
+
+  // Grass is lowest-priority one-hit scenery: no drops, no occupancy, no second hit.
+  {
+    const tuft=sim.grass[0],beforeCount=sim.grass.length,beforeDrops=sim.resourceDrops.length,oldChopTime=sim.TUNE.chopTime;
+    assert.ok(tuft&&tuft.hp===1&&tuft.max===1);assert.equal(sim.canPlace(tuft.x,tuft.y,null),true,"grass incorrectly blocks placement");
+    assert.equal(sim.resolvePrimaryAction(tuft.x,tuft.y)?.kind,"cut-grass");sim.TUNE.chopTime=.01;sim.setPointerWorld(tuft.x,tuft.y);sim.primaryPress();sim.update(.02);sim.primaryRelease();sim.TUNE.chopTime=oldChopTime;
+    assert.equal(sim.grass.length,beforeCount-1);assert.equal(sim.grass.includes(tuft),false);assert.equal(sim.resourceDrops.length,beforeDrops,"grass yielded a resource");assert.notEqual(sim.resolvePrimaryAction(tuft.x,tuft.y)?.target,tuft,"destroyed grass remained targetable");sim.validateSimulationInvariants();
+  }
 
   // The pacing docs may never drift from the authored tables: every typed ref in
   // progression-spec.js and cards.js must resolve, beats stay sorted, phases tile
@@ -124,18 +208,29 @@ try{
     assert.deepEqual(sim.hand().map(entry=>entry.id),opening.map(entry=>entry.id),"re-initializing a run must not deal the opening kit twice");
   }
   assert.throws(()=>sim.initializeRunMode("invalid"),/invalid run mode/);
-  sim.spawnEnemy("north","raider");const taggedEnemy=sim.state.enemies[0];
-  assert.equal(taggedEnemy.waveNightNumber,undefined,"manual spawn silently joined a scheduled wave");assert.equal(sim.livingActiveWaveEnemies(),0);
+  // Ring spawning: every manual spawn lands near ENEMY_SPAWN_RADIUS of the base, preferring land.
+  for(let i=0;i<8;i++){
+    assert.equal(sim.spawnEnemy("raider"),undefined,"manual spawn command changed its return contract");const enemy=sim.state.enemies.at(-1);
+    const radius=Math.hypot(enemy.x-data.BASE.x,enemy.y-data.BASE.y);
+    assert.ok(radius>=data.ENEMY_SPAWN_RADIUS*.89&&radius<=data.ENEMY_SPAWN_RADIUS*1.11,`spawn radius ${radius.toFixed(0)} escaped the ring band`);
+    assert.equal(sim.terrainAtWorldPoint(enemy.x,enemy.y),am.LAND,"manual enemy began in water on a map with land on the ring");
+    assert.equal(enemy.waveNightNumber,undefined,"manual spawn silently joined a scheduled wave");
+  }
+  for(const enemy of [...sim.state.enemies]){
+    const before=Math.hypot(enemy.x-data.BASE.x,enemy.y-data.BASE.y),variant=data.TOWER_VARIANTS.teleport,teleport={type:"tower",x:enemy.x,y:enemy.y,complete:true,pulse:0,tower:{variant:"teleport",cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp},hazard:null};sim.buildings.push(teleport);sim.update(.001);sim.buildings.splice(sim.buildings.indexOf(teleport),1);
+    assert.ok(Math.hypot(enemy.x-data.BASE.x,enemy.y-data.BASE.y)>before+1,"teleport tower did not push the enemy radially away from the base");
+  }
+  const taggedEnemy=sim.state.enemies[0];assert.equal(sim.livingActiveWaveEnemies(),0);
   taggedEnemy.combatKind="invalid";assert.throws(()=>sim.validateSimulationInvariants(),/unknown combat kind/);taggedEnemy.combatKind="enemy";
   taggedEnemy.type="invalid";assert.throws(()=>sim.validateSimulationInvariants(),/unknown enemy type/);taggedEnemy.type="raider";
-  taggedEnemy.waveNightNumber=0;assert.throws(()=>sim.validateSimulationInvariants(),/malformed wave membership/);delete taggedEnemy.waveNightNumber;
+  taggedEnemy.waveNightNumber=0;assert.throws(()=>sim.validateSimulationInvariants(),/malformed wave membership/);delete taggedEnemy.waveNightNumber;sim.state.enemies.splice(1);
   const invalidDrop={kind:"invalid",x:100,y:100,groundY:100,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null};sim.resourceDrops.push(invalidDrop);assert.throws(()=>sim.validateSimulationInvariants(),/unknown resource drop kind/);sim.resourceDrops.pop();
   sim.state.runMode="invalid";assert.throws(()=>sim.update(1/60),/invalid run mode/);sim.state.runMode="normal";
   // The house is placed the only way a house can be placed now: by playing the bpHouse card the
   // opening kit dealt. There is no dock and no toggleBuildMode() to reach for.
-  sim.DBG.freeCosts=true;let houseSite=null;for(let y=64;y<data.H-64&&!houseSite;y+=data.CELL)for(let x=64;x<data.W-64;x+=data.CELL)if(sim.canPlace(x,y,"house")){houseSite={x,y};break;}assert.ok(houseSite);sim.setPointerWorld(houseSite.x,houseSite.y);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),"targeting");assert.equal(sim.state.buildMode,"house");sim.primaryPress();sim.primaryRelease();assert.equal(sim.buildings.some(item=>item.type==="house"&&item.complete),true,"the bpHouse card did not stand a house");sim.DBG.instantWorkers=true;sim.update(1/60);const worker=sim.state.workers[0],workerOrigin={x:worker.x,y:worker.y};sim.setPointerWorld(worker.x,worker.y);sim.secondaryPress();assert.equal(sim.heldWorker(),worker);sim.pointerCancelled();assert.equal(worker.x,workerOrigin.x);assert.equal(worker.y,workerOrigin.y);assert.equal(sim.state.workers.includes(worker),true);sim.DBG.freeCosts=sim.DBG.instantWorkers=false;
+  sim.DBG.freeCosts=true;const houseGrass=sim.grass.find(tuft=>sim.canPlace(tuft.x,tuft.y,"house")),houseSite=houseGrass&&{x:houseGrass.x,y:houseGrass.y};assert.ok(houseSite);sim.setPointerWorld(houseSite.x,houseSite.y);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),"targeting");assert.equal(sim.state.buildMode,"house");sim.primaryPress();sim.primaryRelease();assert.equal(sim.buildings.some(item=>item.type==="house"&&item.complete),true,"the bpHouse card did not stand a house");assert.equal(sim.grass.includes(houseGrass),false,"successful building placement did not clear overlapping grass");sim.DBG.instantWorkers=true;sim.update(1/60);const worker=sim.state.workers[0],workerOrigin={x:worker.x,y:worker.y};sim.setPointerWorld(worker.x,worker.y);sim.secondaryPress();assert.equal(sim.heldWorker(),worker);sim.pointerCancelled();assert.equal(worker.x,workerOrigin.x);assert.equal(worker.y,workerOrigin.y);assert.equal(sim.state.workers.includes(worker),true);sim.DBG.freeCosts=sim.DBG.instantWorkers=false;
 
-  // A fixed seed must reproduce startup, and an impossible first batch must be discarded.
+  // Startup is deterministic authored data; a fixed gameplay seed reproduces it exactly.
   const startupProgram=`
     let seed=0x41c6ce57;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
     const sim=await import("./src/game/simulation.js");
@@ -144,14 +239,34 @@ try{
   const startupA=execFileSync(process.execPath,["--input-type=module","-"],{cwd:root,encoding:"utf8",input:startupProgram}).trim();
   const startupB=execFileSync(process.execPath,["--input-type=module","-"],{cwd:root,encoding:"utf8",input:startupProgram}).trim();
   assert.equal(startupA,startupB,"seeded startup drifted");
-  const retryResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{cwd:root,encoding:"utf8",input:`
+  const startupCounts=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{cwd:root,encoding:"utf8",input:`
     import assert from "node:assert/strict";
-    let calls=0,seed=0x51a7;Math.random=()=>{calls++;if(calls<=16002)return .5;return ((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);};
     const sim=await import("./src/game/simulation.js");
-    assert.equal(sim.trees.length,80);assert.equal(sim.rocks.length,24);assert.equal(sim.diamonds.length,5);assert.equal(sim.chests.length,1);sim.validateSimulationInvariants();
-    console.log(JSON.stringify({calls,chests:sim.chests.length}));
+    const targets=sim.terrainMetadata().targets;assert.equal(sim.trees.length,targets.treeCount);assert.equal(sim.rocks.length,targets.rockCount);assert.equal(sim.diamonds.length,targets.diamondCount);assert.equal(sim.chests.length,targets.chestCount);assert.equal(sim.grass.length,targets.grassCount);sim.validateSimulationInvariants();
+    console.log(JSON.stringify({trees:sim.trees.length,rocks:sim.rocks.length,diamonds:sim.diamonds.length,chests:sim.chests.length,grass:sim.grass.length}));
   `}).trim());
-  assert.ok(retryResult.calls>16002);
+  assert.deepEqual(startupCounts,{trees:authoredWorld.trees.length,rocks:authoredWorld.rocks.length,diamonds:authoredWorld.diamonds.length,chests:authoredWorld.chests.length,grass:authoredWorld.grass.length},"startup counts drifted from the authored map");
+
+  const terrainPlacementResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{cwd:root,encoding:"utf8",input:`
+    import assert from "node:assert/strict";
+    import * as sim from "./src/game/simulation.js";import * as data from "./src/game/data.js";import {cellToWorld,footprintWorldRect} from "./src/game/grid.js";
+    sim.initializeRunMode("normal");
+    let water=null,shore=null;
+    for(let cy=2;cy<data.GRID_ROWS-2;cy++)for(let cx=2;cx<data.GRID_COLS-2;cx++){
+      const p=cellToWorld(cx,cy),one=footprintWorldRect(cx,cy,data.FOOTPRINT_1x1),three=footprintWorldRect(cx,cy,data.FOOTPRINT_3x3);
+      if(!water&&!sim.terrainWorldRectEntirelyOnLand(one)&&p.x>data.BUILD_MARGIN&&p.y>data.BUILD_MARGIN&&p.x<data.W-data.BUILD_MARGIN&&p.y<data.H-data.BUILD_MARGIN)water={cx,cy,...p};
+      if(!shore&&sim.terrainWorldRectEntirelyOnLand(one)&&!sim.terrainWorldRectEntirelyOnLand(three))shore={cx,cy,...p};
+    }
+    assert.ok(water&&shore);assert.equal(sim.canPlace(water.x,water.y,"house"),false);assert.equal(sim.canPlace(0,0,"house"),false);assert.equal(sim.canPlace(shore.x,shore.y,"tower"),false,"3x3 footprint ignored neighboring water");
+    const chest=sim.chests[0],chestOrigin={x:chest.x,y:chest.y};sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldChest(),chest);sim.setPointerWorld(water.x,water.y);sim.secondaryRelease();assert.deepEqual({x:chest.x,y:chest.y},chestOrigin,"chest relocated onto water");
+    sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=0;
+    let origin=null;for(let cy=3;cy<data.GRID_ROWS-3&&!origin;cy++)for(let cx=3;cx<data.GRID_COLS-3;cx++){const p=cellToWorld(cx,cy);if(sim.canPlace(p.x,p.y,"tower")){origin=p;break;}}assert.ok(origin);
+    const zero=()=>({wood:0,stone:0,dust:0,coin:0,diamond:0}),shock={type:"tower",x:origin.x,y:origin.y,complete:true,cost:{},delivered:{wood:0,stone:0},storage:zero(),upgrades:{},activeUpgrade:null,tower:{variant:"shock",cooldown:3,flash:0,hitFlash:0,hp:12,maxHp:15},hazard:null,pulse:0};sim.buildings.push(shock);
+    sim.setPointerWorld(shock.x,shock.y);sim.secondaryPress();assert.equal(sim.heldBuilding(),shock);sim.setPointerWorld(shore.x,shore.y);sim.secondaryRelease();assert.deepEqual({x:shock.x,y:shock.y},origin,"Shock tower relocated across water");assert.equal(shock.tower.cooldown,3);sim.validateSimulationInvariants();
+    console.log(JSON.stringify({water:[water.cx,water.cy],shore:[shore.cx,shore.cy]}));
+  `}).trim());
+  assert.equal(terrainPlacementResult.water.length,2);
+
 
   const chestResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
@@ -168,7 +283,7 @@ try{
         sim.initializeRunMode("normal");sim.TUNE.chopTime=.01;
         const chest=sim.chests[0],seedOrigin={x:chest.x,y:chest.y};
         assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).kind,"break-chest");assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).icon,"axe");
-        const overlapTree={x:chest.x,y:chest.y,hp:3,max:3,stump:0,shake:0,variant:0,footprint:data.RESOURCE_FOOTPRINT};sim.trees.push(overlapTree);sim.spawnEnemy("north","raider");const overlapEnemy=sim.state.enemies.at(-1);overlapEnemy.x=chest.x;overlapEnemy.y=chest.y;assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,overlapEnemy,"enemy must outrank chest");sim.state.enemies.splice(sim.state.enemies.indexOf(overlapEnemy),1);assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,chest,"chest must outrank resource");sim.chests.splice(sim.chests.indexOf(chest),1);assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,overlapTree);sim.chests.push(chest);sim.trees.splice(sim.trees.indexOf(overlapTree),1);
+        const overlapTree={x:chest.x,y:chest.y,hp:3,max:3,stump:0,shake:0,variant:0,footprint:data.RESOURCE_FOOTPRINT};sim.trees.push(overlapTree);sim.spawnEnemy("raider");const overlapEnemy=sim.state.enemies.at(-1);overlapEnemy.x=chest.x;overlapEnemy.y=chest.y;assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,overlapEnemy,"enemy must outrank chest");sim.state.enemies.splice(sim.state.enemies.indexOf(overlapEnemy),1);assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,chest,"chest must outrank resource");sim.chests.splice(sim.chests.indexOf(chest),1);assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,overlapTree);sim.chests.push(chest);sim.trees.splice(sim.trees.indexOf(overlapTree),1);
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldChest(),chest);assert.equal(sim.chests.includes(chest),false);sim.validateSimulationInvariants();
         let valid=null;for(let y=64;y<data.H-64&&!valid;y+=data.CELL)for(let x=64;x<data.W-64;x+=data.CELL)if((x!==seedOrigin.x||y!==seedOrigin.y)&&sim.canPlace(x,y,null,null,null,chest)){valid={x,y};break;}assert.ok(valid);
         sim.setPointerWorld(valid.x+3,valid.y+3);sim.secondaryRelease();assert.deepEqual({x:chest.x,y:chest.y},snapToCellCenter(valid.x+3,valid.y+3));assert.equal(sim.chests.includes(chest),true);assert.equal(sim.canPlace(chest.x,chest.y,"house"),false);const placed={x:chest.x,y:chest.y};
@@ -223,7 +338,7 @@ try{
         reset();{const site=building("tower",100,100,false,{wood:1,stone:1}),tree={x:130,y:100,hp:3,max:3,stump:0,shake:0},rock={x:190,y:100,hp:3,max:3,depleted:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.rocks.push(rock);sim.state.workers.push(builder);step();assert.deepEqual(builder.selfSupply,{kind:"wood",node:tree},"nearest needed node must win across kinds");}
         reset();{const site=building("tower",100,100,false,{wood:2,stone:0}),tree={x:170,y:100,hp:6,max:6,stump:0,shake:0},a=worker("build",site,100,100),b=worker("build",site,102,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(a,b);step();assert.ok(a.selfSupply||b.selfSupply);assert.equal([a,b].filter(item=>item.selfSupply).length,1,"node/self-supply reservation duplicated");step(700);assert.equal(site.delivered.wood,site.cost.wood);assert.equal(site.complete,true,"builders must reselect without over-delivery");}
         reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step(90);assert.ok(builder.selfSupply);sim.setPointerWorld(builder.x,builder.y);sim.secondaryPress();assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);sim.pointerCancelled();}
-        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step(90);builder.hp=1;sim.spawnEnemy("north","healer");const danger=sim.state.enemies[0];danger.x=builder.x+5;danger.y=builder.y;step();assert.equal(builder.fleeing,true);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);assert.equal(builder.job,"build");assert.equal(builder.jobTarget,site);}
+        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step(90);builder.hp=1;sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=builder.x+5;danger.y=builder.y;step();assert.equal(builder.fleeing,true);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);assert.equal(builder.job,"build");assert.equal(builder.jobTarget,site);}
         reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);sim.DBG.builderSelfSupply=false;step();assert.equal(builder.starved,true);assert.equal(builder.selfSupply,null);assert.equal(builder.x,100);assert.ok(builder.y>100&&builder.y<=builder.postY);}
         reset();{const site=building("lumber",100,100,false),loose=drop("wood",105,100),builder=worker("build",site,100,100);sim.buildings.push(site);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.taskTarget,loose);}
         reset();{const site=building("lumber",100,100,false,{wood:2,stone:0}),a=worker("build",site,100,100),b=worker("build",site,101,100),one=drop("wood",104,100),two=drop("wood",106,100);sim.buildings.push(site);sim.resourceDrops.push(one,two);sim.state.workers.push(a,b);sim.DBG.groundSourcing=true;step();assert.ok(a.taskTarget&&b.taskTarget);assert.notEqual(a.taskTarget,b.taskTarget);step(500);assert.ok(site.delivered.wood<=site.cost.wood);assert.equal(site.complete,true);assert.equal(a.job,"staff");assert.equal(a.jobTarget,site);}
@@ -239,7 +354,7 @@ try{
         reset();{const site=building("tower",300,300,false),a=worker("build",site,300,320),b=worker("build",site,301,320),held=worker("guard",null,310,300);sim.buildings.push(site);sim.state.workers.push(a,b,held);assert.deepEqual(sim.workerOccupancyStatus(site),{target:site,assigned:2,capacity:2});assert.equal(sim.workerAssignmentAt(held,site.x,site.y),null);sim.setPointerWorld(a.x,a.y);sim.secondaryPress();assert.equal(sim.workerOccupancyStatus(site).assigned,2);assert.ok(sim.workerAssignmentAt(a,site.x,site.y));sim.pointerCancelled();}
         reset();{sim.trees.length=sim.rocks.length=sim.diamonds.length=0;const tree={x:200,y:200,hp:3,max:3,stump:0},camp=building("lumber",232,200),far=building("quarry",264,200);sim.trees.push(tree);sim.buildings.push(far,camp);assert.equal(sim.workerOccupancyAt(camp.x,camp.y).target,camp);assert.equal(sim.workerOccupancyAt(far.x,far.y).target,far);tree.stump=1;sim.buildings.length=0;assert.equal(sim.workerOccupancyAt(tree.x,tree.y),null);}
         assert.equal(sim.DBG.blueprintRecruiting,true);assert.equal(sim.TUNE.recruitRadius,200);
-        reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),a=worker("guard",null,300,316),b=worker("guard",null,340,300),replacement=worker("guard",null,350,300),far=worker("guard",null,561,300);a.carried.dust=1;sim.buildings.push(site);sim.state.workers.push(far,replacement,b,a);sim.DBG.blueprintRecruiting=false;step(31);a.x=300;a.y=316;const before={x:a.x,y:a.y,carried:{...a.carried}};sim.DBG.blueprintRecruiting=true;step();assert.deepEqual([a,b].map(item=>item.job),["build","build"]);assert.ok(a.homePost&&b.homePost);assert.deepEqual({x:a.x,y:a.y,carried:a.carried},before);assert.equal(far.job,"guard");assert.equal(sim.workerOccupancyStatus(site).assigned,2);a.hp=2;sim.spawnEnemy("north","raider");const killer=sim.state.enemies[0];killer.x=a.x;killer.y=a.y;step();assert.equal(sim.state.workers.includes(a),false,"production enemy hit did not kill builder");sim.state.enemies.length=0;step(28);assert.equal(replacement.job,"guard","recruited before cadence");const elapsedBeforePause=sim.state.clock.elapsed;sim.togglePause();step(60);assert.equal(sim.state.clock.elapsed,elapsedBeforePause);assert.equal(replacement.job,"guard");sim.togglePause();step(2);assert.equal(replacement.job,"build","not recruited once cadence elapsed");}
+        reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),a=worker("guard",null,300,316),b=worker("guard",null,340,300),replacement=worker("guard",null,350,300),far=worker("guard",null,561,300);a.carried.dust=1;sim.buildings.push(site);sim.state.workers.push(far,replacement,b,a);sim.DBG.blueprintRecruiting=false;step(31);a.x=300;a.y=316;const before={x:a.x,y:a.y,carried:{...a.carried}};sim.DBG.blueprintRecruiting=true;step();assert.deepEqual([a,b].map(item=>item.job),["build","build"]);assert.ok(a.homePost&&b.homePost);assert.deepEqual({x:a.x,y:a.y,carried:a.carried},before);assert.equal(far.job,"guard");assert.equal(sim.workerOccupancyStatus(site).assigned,2);a.hp=2;sim.spawnEnemy("raider");const killer=sim.state.enemies[0];killer.x=a.x;killer.y=a.y;step();assert.equal(sim.state.workers.includes(a),false,"production enemy hit did not kill builder");sim.state.enemies.length=0;step(28);assert.equal(replacement.job,"guard","recruited before cadence");const elapsedBeforePause=sim.state.clock.elapsed;sim.togglePause();step(60);assert.equal(sim.state.clock.elapsed,elapsedBeforePause);assert.equal(replacement.job,"guard");sim.togglePause();step(2);assert.equal(replacement.job,"build","not recruited once cadence elapsed");}
         reset();{const first=building("tower",300,300,false,{wood:99,stone:0}),second=building("tower",500,300,false,{wood:99,stone:0}),a=worker("guard",null,310,300),b=worker("guard",null,320,300),c=worker("guard",null,490,300);sim.buildings.push(first,second);sim.state.workers.push(c,b,a);forceRecruitSweep();assert.equal(sim.workerOccupancyStatus(first).assigned,2);assert.equal(sim.workerOccupancyStatus(second).assigned,1);assert.equal(c.jobTarget,second);}
         reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),manual=worker("build",site,300,320),near=worker("guard",null,310,300),far=worker("guard",null,330,300);sim.buildings.push(site);sim.state.workers.push(manual,far,near);forceRecruitSweep();assert.equal(near.job,"build");assert.equal(far.job,"guard");assert.equal(sim.workerOccupancyStatus(site).assigned,2);}
         reset();{const site=building("lumber",300,300,false),manual=worker("build",site,300,300),loan=worker("guard",null,310,300);loan.postX=100;loan.postY=120;sim.buildings.push(site);sim.state.workers.push(manual,loan);assert.equal(sim.workerIsLoaned(manual),false);forceRecruitSweep();assert.equal(sim.workerIsLoaned(loan),true);manual.carried.wood=1;step(20);assert.equal(site.complete,true);assert.equal(manual.job,"staff");assert.equal(manual.jobTarget,site);assert.equal(loan.job,"staff");assert.equal(loan.jobTarget,site);assert.equal(loan.homePost,null);assert.equal(sim.workerIsLoaned(loan),false);}
@@ -252,9 +367,9 @@ try{
         reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),combat=worker("guard",null,310,300),retaliating=worker("guard",null,320,300),returning=worker("guard",null,330,300),clean=worker("guard",null,340,300);clean.x=300;clean.y=320;clean.postX=300;clean.postY=320;sim.buildings.push(site);sim.state.workers.push(combat,retaliating,returning,clean);sim.DBG.blueprintRecruiting=false;step(31);combat.combatTarget={};retaliating.retaliationTarget={};returning.returnAfterCombat=true;sim.DBG.blueprintRecruiting=true;step();assert.equal(clean.job,"build");assert.equal(combat.job,"guard");assert.equal(retaliating.job,"guard");assert.equal(returning.job,"guard");}
         reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),loan=worker("guard",null,310,300),other=worker("guard",null,320,300);sim.buildings.push(site);sim.state.workers.push(loan,other);sim.DBG.blueprintRecruiting=false;step(31);assert.deepEqual([loan.job,other.job],["guard","guard"]);sim.DBG.blueprintRecruiting=true;step();assert.equal(loan.job,"build");sim.DBG.blueprintRecruiting=false;site.complete=true;step();assert.equal(loan.job,"guard");assert.equal(loan.homePost,null);}
         reset();{const home=building("tower",100,100),site=building("tower",300,300,false,{wood:99,stone:0}),loan=worker("guard",home,310,300);loan.postX=home.x;loan.postY=home.y;sim.buildings.push(home,site);sim.state.workers.push(loan);forceRecruitSweep();assert.equal(loan.job,"build");sim.buildings.splice(sim.buildings.indexOf(home),1);site.complete=true;step();assert.equal(loan.job,"guard");assert.equal(loan.jobTarget,null);assert.notDeepEqual([loan.postX,loan.postY],[home.x,home.y]);}
-        reset();{const tower=building("tower",120,100),site=building("lumber",300,300,false,{wood:99,stone:0}),loan=worker("build",site,200,100),claimed=drop("wood",202,100);tower.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:10,maxHp:10};loan.hp=1;loan.carried.dust=1;const savedHome={job:"guard",jobTarget:null,postX:450,postY:450};loan.homePost=savedHome;loan.taskTarget=claimed;loan.retaliationTarget={x:205,y:100};claimed.claimedBy=loan;sim.buildings.push(tower,site);sim.resourceDrops.push(claimed);sim.state.workers.push(loan);sim.spawnEnemy("north","healer");const danger=sim.state.enemies[0];danger.x=210;danger.y=100;const prior={job:loan.job,jobTarget:loan.jobTarget,homePost:loan.homePost,carried:{...loan.carried}};step();assert.equal(loan.fleeing,true);assert.equal(loan.taskTarget,null);assert.equal(claimed.claimedBy,undefined);assert.equal(loan.job,prior.job);assert.equal(loan.jobTarget,prior.jobTarget);assert.equal(loan.homePost,prior.homePost);assert.deepEqual(loan.homePost,savedHome);assert.deepEqual(loan.carried,prior.carried);assert.equal(loan.combatTarget,null);assert.equal(loan.retaliationTarget,null);const fledX=loan.x;step(10);assert.ok(loan.x<fledX);danger.x=700;danger.y=700;step(179);assert.equal(loan.fleeing,true);danger.x=loan.x+data.WORKER_LEASH+5;danger.y=loan.y;step();assert.equal(loan.fleeing,true,"danger inside recovery radius must reset safe time without causing fight/flee oscillation");assert.equal(loan.combatTarget,null);danger.x=700;danger.y=700;step(179);assert.equal(loan.fleeing,true);step(2);assert.equal(loan.fleeing,false);assert.equal(loan.job,prior.job);assert.equal(loan.jobTarget,prior.jobTarget);assert.equal(loan.homePost,prior.homePost);assert.deepEqual(loan.carried,prior.carried);assert.equal(loan.hp,1);}
-        reset();{const low=worker("guard",null,200,100);low.hp=1;sim.state.workers.push(low);sim.spawnEnemy("north","healer");const danger=sim.state.enemies[0];danger.x=205;danger.y=100;step();assert.equal(low.fleeing,true);sim.setPointerWorld(low.x,low.y);sim.secondaryPress();assert.equal(sim.heldWorker(),low);sim.setPointerWorld(500,500);sim.secondaryRelease();assert.equal(low.fleeing,false);assert.equal(low.fleeSafeTime,0);assert.deepEqual([low.x,low.y],[500,500]);}
-        reset();{const healthy=worker("guard",null,200,100);healthy.hp=sim.TUNE.fleeHpThreshold+1;healthy.attackCooldown=0;sim.state.workers.push(healthy);sim.spawnEnemy("north","healer");const enemy=sim.state.enemies[0];enemy.x=healthy.x;enemy.y=healthy.y;const hpBefore=enemy.hp;step();assert.equal(healthy.fleeing,false);assert.equal(healthy.combatTarget,enemy);assert.equal(enemy.hp,hpBefore-data.WORKER_DAMAGE);assert.equal(healthy.attackCooldown,data.WORKER_ATTACK_RATE);}
+        reset();{const tower=building("tower",120,100),site=building("lumber",300,300,false,{wood:99,stone:0}),loan=worker("build",site,200,100),claimed=drop("wood",202,100);tower.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:10,maxHp:10};loan.hp=1;loan.carried.dust=1;const savedHome={job:"guard",jobTarget:null,postX:450,postY:450};loan.homePost=savedHome;loan.taskTarget=claimed;loan.retaliationTarget={x:205,y:100};claimed.claimedBy=loan;sim.buildings.push(tower,site);sim.resourceDrops.push(claimed);sim.state.workers.push(loan);sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=210;danger.y=100;const prior={job:loan.job,jobTarget:loan.jobTarget,homePost:loan.homePost,carried:{...loan.carried}};step();assert.equal(loan.fleeing,true);assert.equal(loan.taskTarget,null);assert.equal(claimed.claimedBy,undefined);assert.equal(loan.job,prior.job);assert.equal(loan.jobTarget,prior.jobTarget);assert.equal(loan.homePost,prior.homePost);assert.deepEqual(loan.homePost,savedHome);assert.deepEqual(loan.carried,prior.carried);assert.equal(loan.combatTarget,null);assert.equal(loan.retaliationTarget,null);const fledX=loan.x;step(10);assert.ok(loan.x<fledX);danger.x=700;danger.y=700;step(179);assert.equal(loan.fleeing,true);danger.x=loan.x+data.WORKER_LEASH+5;danger.y=loan.y;step();assert.equal(loan.fleeing,true,"danger inside recovery radius must reset safe time without causing fight/flee oscillation");assert.equal(loan.combatTarget,null);danger.x=700;danger.y=700;step(179);assert.equal(loan.fleeing,true);step(2);assert.equal(loan.fleeing,false);assert.equal(loan.job,prior.job);assert.equal(loan.jobTarget,prior.jobTarget);assert.equal(loan.homePost,prior.homePost);assert.deepEqual(loan.carried,prior.carried);assert.equal(loan.hp,1);}
+        reset();{const low=worker("guard",null,200,100);low.hp=1;sim.state.workers.push(low);sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=205;danger.y=100;step();assert.equal(low.fleeing,true);sim.setPointerWorld(low.x,low.y);sim.secondaryPress();assert.equal(sim.heldWorker(),low);sim.setPointerWorld(500,500);sim.secondaryRelease();assert.equal(low.fleeing,false);assert.equal(low.fleeSafeTime,0);assert.deepEqual([low.x,low.y],[500,500]);}
+        reset();{const healthy=worker("guard",null,200,100);healthy.hp=sim.TUNE.fleeHpThreshold+1;healthy.attackCooldown=0;sim.state.workers.push(healthy);sim.spawnEnemy("healer");const enemy=sim.state.enemies[0];enemy.x=healthy.x;enemy.y=healthy.y;const hpBefore=enemy.hp;step();assert.equal(healthy.fleeing,false);assert.equal(healthy.combatTarget,enemy);assert.equal(enemy.hp,hpBefore-data.WORKER_DAMAGE);assert.equal(healthy.attackCooldown,data.WORKER_ATTACK_RATE);}
         reset();{const house=building("house",100,100),camp=building("lumber",295,100),idle=worker("guard",null,100,123);idle.spawnSource=house;idle.postX=100;idle.postY=123;house.spawnTimer=data.WORKER_SPAWN_TIME;sim.buildings.push(house,camp);sim.state.workers.push(idle);sim.DBG.blueprintRecruiting=false;sim.DBG.idleSeeksWork=true;step(31);assert.equal(idle.job,"staff");assert.equal(idle.jobTarget,camp);assert.equal(idle.homePost,null);assert.equal(idle.reposting,true);assert.equal(idle.spawnSource,house);}
         reset();{const house=building("house",100,100),camp=building("lumber",300,100),manual=worker("guard",null,110,123);manual.spawnSource=house;manual.postX=110;manual.postY=123;sim.buildings.push(house,camp);sim.state.workers.push(manual);sim.DBG.blueprintRecruiting=false;sim.DBG.idleSeeksWork=true;step(31);assert.equal(manual.job,"guard");sim.DBG.idleSeeksWork=false;manual.postX=100;step(31);assert.equal(manual.job,"guard");}
         reset();{const site=building("tower",200,100,false,{wood:1,stone:0}),guard=worker("guard",null,100,100),loose=drop("wood",105,100);guard.postX=200;guard.postY=100;guard.returnAfterCombat=true;sim.DBG.idleSeeksWork=true;sim.buildings.push(site);sim.resourceDrops.push(loose);sim.state.workers.push(guard);sim.DBG.blueprintRecruiting=false;step();assert.equal(guard.carried.wood,1);assert.equal(sim.resourceDrops.includes(loose),false);step(180);assert.equal(site.complete,true);assert.equal(site.delivered.wood,1);assert.equal(guard.carried.wood,0);}
@@ -295,9 +410,9 @@ try{
       assert.equal(sim.skillPoints(),0);while(sim.state.level<SKILL_POINT_LEVELS){sim.debugGrantXp(1);drain();}assert.equal(sim.skillPoints(),1);
       while(sim.state.level<6){sim.debugGrantXp(1);drain();}assert.equal(sim.waveTier(),2);assert.equal(sim.skillPoints(),1);
       const first=sim.skillTreeNodes().find(node=>node.status==="available");assert.equal(sim.selectSkillNode(first.id),true);assert.equal(sim.skillPoints(),0);assert.equal(sim.selectSkillNode(sim.skillTreeNodes().find(node=>node.status==="available").id),false);
-      sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,sequence=[];assert.equal(wave.totalSpawns,NIGHT_WAVE_SPAWNS+2*NIGHT_TIER_BONUS_SPAWNS);sim.update(.01);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber);sequence.push([sim.state.enemies[0].type,sim.state.enemies[0].spawnSide]);sim.state.enemies.length=0;sim.update(.01);assert.equal(sim.state.clock.phase,"night","an early clear skipped later scheduled spawns");
+      sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,sequence=[];assert.equal(wave.totalSpawns,NIGHT_WAVE_SPAWNS+2*NIGHT_TIER_BONUS_SPAWNS);sim.update(.01);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber);sequence.push(sim.state.enemies[0].type);sim.state.enemies.length=0;sim.update(.01);assert.equal(sim.state.clock.phase,"night","an early clear skipped later scheduled spawns");
       sim.debugGrantXp(2000);drain();assert.equal(sim.waveTier(),4);assert.equal(wave.totalSpawns,18,"active wave must retain its setup tier");
-      for(let i=1;i<18;i++){sim.update(30/18+.001);assert.equal(sim.state.enemies.length,1);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber,"bonus recipe cycle lost scheduled membership");sequence.push([sim.state.enemies[0].type,sim.state.enemies[0].spawnSide]);sim.state.enemies.length=0;}assert.equal(wave.remainingSpawns,0);assert.deepEqual(sequence.slice(12),sequence.slice(0,6),"bonus spawns must cycle recipe types and fronts");
+      for(let i=1;i<18;i++){sim.update(30/18+.001);assert.equal(sim.state.enemies.length,1);const enemy=sim.state.enemies[0];assert.equal(enemy.waveNightNumber,wave.activeNightNumber,"bonus recipe cycle lost scheduled membership");sequence.push(enemy.type);sim.state.enemies.length=0;}assert.equal(wave.remainingSpawns,0);assert.deepEqual(sequence.slice(12),sequence.slice(0,6),"bonus spawns must cycle recipe types");
       // The cap holds however far the level runs.
       sim.debugGrantXp(2000000);drain();assert.ok(sim.state.level>=30);assert.equal(sim.waveTier(),4);
       sim.validateSimulationInvariants();console.log(JSON.stringify({checks:44,waveSpawns:18,level:sim.state.level}));
@@ -356,7 +471,7 @@ try{
         sim.update(DAY_DURATION-1);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.remaining,1);sim.update(1);assert.equal(sim.state.clock.phase,"night","the day countdown did not reach dusk at 75 seconds");
         sim.debugStartWave("raiderRush");const wave=sim.state.nightWave,night=wave.activeNightNumber;
         assert.equal(sim.state.clock.phase,"night");assert.equal(sim.state.clock.remaining,0);assert.ok(Number.isInteger(night)&&night>0);
-        for(let i=0;i<NIGHT_ENEMY_CAP;i++)sim.spawnEnemy("north","raider");
+        for(let i=0;i<NIGHT_ENEMY_CAP;i++)sim.spawnEnemy("raider");
         assert.equal(sim.state.enemies.every(enemy=>enemy.waveNightNumber===undefined),true,"manual enemies joined the active wave");
         assert.equal(sim.livingActiveWaveEnemies(),0);
         const beforePause={elapsed:wave.elapsed,remaining:wave.remainingSpawns,run:sim.state.clock.elapsed};
@@ -368,7 +483,7 @@ try{
         const survivor=sim.state.enemies[0];sim.state.enemies.splice(1);sim.update(10);
         assert.equal(sim.state.clock.phase,"night");assert.equal(sim.livingActiveWaveEnemies(),1);assert.equal(sim.state.clock.remaining,0);
         // A debugger enemy is allowed to remain at dawn. Game over and pause still suppress updates.
-        sim.state.enemies.splice(sim.state.enemies.indexOf(survivor),1);assert.equal(sim.spawnEnemy("south","healer"),undefined,"manual spawn command changed its return contract");const manual=sim.state.enemies.at(-1);assert.equal(manual.waveNightNumber,undefined);assert.equal(sim.livingActiveWaveEnemies(),0);
+        sim.state.enemies.splice(sim.state.enemies.indexOf(survivor),1);assert.equal(sim.spawnEnemy("healer"),undefined,"manual spawn command changed its return contract");const manual=sim.state.enemies.at(-1);assert.equal(manual.waveNightNumber,undefined);assert.equal(sim.livingActiveWaveEnemies(),0);
         sim.state.gameOver=true;sim.update(1);assert.equal(sim.state.clock.phase,"night","game over transitioned to dawn");sim.state.gameOver=false;
         sim.togglePause();sim.update(1);assert.equal(sim.state.clock.phase,"night","pause transitioned to dawn");sim.togglePause();
         sim.update(1/60);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.completedNights,1);assert.equal(wave.activeNightNumber,null);assert.equal(sim.state.enemies.includes(manual),true,"manual enemy blocked or disappeared at dawn");
@@ -459,7 +574,8 @@ try{
       const clearGround=()=>{sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=sim.state.enemies.length=sim.resourceDrops.length=0;};
       const drain=()=>{while(sim.draftPending())sim.chooseDraft(0);};
       const held=id=>sim.hand().find(entry=>entry.id===id)||null;
-      const place=(x,y)=>{sim.setPointerWorld(x,y);sim.primaryPress();sim.primaryRelease();};
+      const placementAnchor=(x,y)=>{const wanted=snapToCellCenter(x,y);if(sim.canPlace(wanted.x,wanted.y,sim.state.buildMode))return wanted;let best=null,bestDistance=Infinity;for(let cy=64;cy<data.H-64;cy+=data.CELL)for(let cx=64;cx<data.W-64;cx+=data.CELL)if(sim.canPlace(cx,cy,sim.state.buildMode)){const d=Math.hypot(cx-x,cy-y);if(d<bestDistance){best={x:cx,y:cy};bestDistance=d;}}assert.ok(best,"no land placement anchor");return best;};
+      const place=(x,y)=>{const anchor=placementAnchor(x,y);sim.setPointerWorld(anchor.x,anchor.y);sim.primaryPress();sim.primaryRelease();return anchor;};
       try{
         sim.initializeRunMode("normal");clearGround();
         // 0 · the opening kit, and the debug command that takes it away again
@@ -514,6 +630,7 @@ try{
 
         // 4 · a kit targets, spends one charge per placement, survives a cancel, and leaves on the last
         clearGround();
+        sim.debugClearHand(); // drafted strays (seeded draft luck) must not shadow the dealt kit
         assert.equal(sim.debugDealCard("spikeKit"),true);
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="spikeKit")),"targeting");
         assert.equal(sim.state.buildMode,"spikes");assert.equal(held("spikeKit").charges,cardById.spikeKit.charges);
@@ -534,16 +651,17 @@ try{
 
         // 5 · the fireball burns inside its radius, spares what is outside it, and leaves nothing
         clearGround();
-        sim.spawnEnemy("north","raider");sim.spawnEnemy("north","raider");
-        const near=sim.state.enemies[0],far=sim.state.enemies[1],anchor=snapToCellCenter(600,300);
+        sim.spawnEnemy("raider");sim.spawnEnemy("raider");
+        const near=sim.state.enemies[0],far=sim.state.enemies[1];
+        assert.equal(sim.debugDealCard("fireball"),true);
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="fireball")),"targeting");
+        const anchor=placementAnchor(600,300);
         near.x=anchor.x;near.y=anchor.y+100;far.x=anchor.x;far.y=anchor.y+200;
         const nearRange=sim.distance(anchor.x,anchor.y,near.x,near.y),farRange=sim.distance(anchor.x,anchor.y,far.x,far.y);
         assert.ok(nearRange<=data.FIREBALL.radius&&farRange>data.FIREBALL.radius,"the fireball test targets are not on both sides of the radius");
         assert.ok(data.FIREBALL.damage>=data.ENEMY_TYPES.raider.hp,"the fireball must be lethal to a raider for this measurement");
-        assert.equal(sim.debugDealCard("fireball"),true);
-        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="fireball")),"targeting");
         const buildingsBefore=sim.buildings.length,farHp=far.hp;
-        place(600,300);
+        place(anchor.x,anchor.y);
         assert.equal(sim.buildings.length,buildingsBefore,"a fireball must leave no building behind");
         assert.equal(sim.state.enemies.includes(near),false,"the fireball spared a raider inside its radius");
         assert.equal(far.hp,farHp,"the fireball reached past its radius");
@@ -562,8 +680,7 @@ try{
         assert.equal(sim.state.cardTargeting,null);assert.equal(held("bpSniper")?.charges,1,"a cancelled blueprint must keep its charge");
         const storedBeforeBlueprint=JSON.stringify(sim.state.stored);
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpSniper")),"targeting");
-        const sniperAnchor=snapToCellCenter(300,300);
-        place(300,300);
+        const sniperAnchor=place(300,300);
         const sniper=sim.buildings.at(-1);
         assert.equal(sim.buildings.length,1,"the blueprint placed nothing, or placed twice");
         assert.equal(sniper.type,"tower");assert.equal(sniper.x,sniperAnchor.x);assert.equal(sniper.y,sniperAnchor.y);
@@ -763,8 +880,9 @@ try{
         sim.initializeRunMode("showcase");
         assert.throws(()=>sim.initializeRunMode("normal"),/already initialized/);
         const expected={buildings:authored.SHOWCASE_FIXTURE_COUNTS.buildings+authored.SHOWCASE_FIXTURE_COUNTS.towers+authored.SHOWCASE_FIXTURE_COUNTS.progress,chests:authored.SHOWCASE_FIXTURE_COUNTS.chests,dummies:authored.SHOWCASE_FIXTURE_COUNTS.dummies,props:authored.SHOWCASE_FIXTURE_COUNTS.props,enemies:authored.SHOWCASE_FIXTURE_COUNTS.enemies,workers:authored.SHOWCASE_FIXTURE_COUNTS.workers};
-        const check=()=>{sim.validateSimulationInvariants();assert.equal(sim.buildings.length,expected.buildings);assert.equal(sim.chests.length,expected.chests);assert.equal(sim.damageDummies.length,expected.dummies);assert.equal(sim.showcaseProps.length,expected.props);assert.equal(sim.state.enemies.length,expected.enemies);assert.equal(sim.state.workers.length,expected.workers);assert.equal(sim.state.enemies.every(e=>e.displayUnit&&e.waveNightNumber===undefined),true);assert.equal(sim.state.workers.every(w=>w.displayUnit),true);assert.equal(sim.state.nightWave.activeNightNumber,null);assert.equal(sim.livingActiveWaveEnemies(),0);};
+        const check=()=>{sim.validateSimulationInvariants();assert.equal(sim.buildings.length,expected.buildings);assert.equal(sim.chests.length,expected.chests);assert.equal(sim.damageDummies.length,expected.dummies);assert.equal(sim.showcaseProps.length,expected.props);assert.equal(sim.state.enemies.length,expected.enemies);assert.equal(sim.state.workers.length,expected.workers);assert.equal(sim.state.enemies.every(e=>e.displayUnit&&e.waveNightNumber===undefined),true);assert.equal(sim.state.workers.every(w=>w.displayUnit),true);assert.equal(sim.state.nightWave.activeNightNumber,null);assert.equal(sim.livingActiveWaveEnemies(),0);const terrain=sim.terrainMetadata();assert.deepEqual([terrain.terrainCellSize,terrain.terrainCols,terrain.terrainRows],[16,data.W/16,data.H/16]);for(let terrainY=0;terrainY<terrain.terrainRows;terrainY++)for(let terrainX=0;terrainX<terrain.terrainCols;terrainX++)assert.equal(sim.terrainAtRasterCell(terrainX,terrainY),"land","showcase terrain must remain authored all-land");};
         check();
+        const authoredEnemies=sim.state.enemies.map(enemy=>({enemy,x:enemy.x,y:enemy.y}));for(let i=0;i<4;i++)assert.equal(sim.spawnEnemy("raider"),undefined,"showcase spawn command changed its return contract");assert.equal(sim.spawnEnemy("brute"),undefined);assert.equal(sim.state.enemies.length,authoredEnemies.length,"showcase debugger spawn added a production enemy");assert.equal(sim.state.enemies.every((enemy,index)=>enemy===authoredEnemies[index].enemy&&enemy.x===authoredEnemies[index].x&&enemy.y===authoredEnemies[index].y),true,"showcase spawn command changed authored enemy identity or position");check();
         assert.equal(sim.debugGrantXp(105),true);assert.equal(sim.xp(),105);assert.equal(sim.skillPoints(),2);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);check();
         const firstRevision=sim.showcaseLabels().revision;
         for(let i=0;i<20;i++){sim.debugGrantXp(40);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);check();}
@@ -786,7 +904,7 @@ try{
     `
   }).trim());
 
-  console.log(`validate ok | syntax ${jsFiles.length} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level waves ${tierOneResult.spawns}/${xpResult.waveSpawns} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
+  console.log(`validate ok | syntax ${jsFiles.length} | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level waves ${tierOneResult.spawns}/${xpResult.waveSpawns} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

@@ -44,7 +44,7 @@ import {
   closeUpgradeMenu, selectUpgrade, acceptUpgrade, openSkillTree,
   // queries — pure reads
   hoverTarget, costText, upgradeList,
-  xp, skillPoints, livingActiveWaveEnemies, oppositeMapSide, clamp
+  xp, skillPoints, livingActiveWaveEnemies, clamp
 } from "../game/simulation.js";
 
 // The pointer surface (<canvas id="overlay">) — handed in by main.js at init. The HUD touches
@@ -111,8 +111,7 @@ function formatDuration(totalSeconds){
 }
 export function syncPhaseHud(){
   const clock=state.clock,wave=state.nightWave,isDay=clock.phase==="day";
-  const recipeState=isDay?wave.upcomingRecipe:wave.activeRecipe,recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===recipeState?.id),side=isDay?wave.upcomingSide:wave.activeSide;
-  const secondary=recipe?.id==="twoFront"?(isDay?oppositeMapSide(side):wave.secondarySide):null,panel=document.getElementById("phaseHud");
+  const recipeState=isDay?wave.upcomingRecipe:wave.activeRecipe,recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===recipeState?.id),panel=document.getElementById("phaseHud");
   const setText=(id,text)=>{const element=document.getElementById(id);if(element.textContent!==text)element.textContent=text;};
   const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber,living=isDay?0:livingActiveWaveEnemies();
   setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",isDay?Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"elapsed "+formatDuration(wave.elapsed));
@@ -130,13 +129,12 @@ export function syncPhaseHud(){
   document.getElementById("phaseProgressFill").style.width=(100*progress).toFixed(2)+"%";
   setText("forecastLabel",isDay?"next attack":"current wave");
   setText("forecastRemaining",isDay?"":living===0&&wave.remainingSpawns===0?"wave clear · 0 enemies alive · 0 scheduled spawns remaining":living+" wave enem"+(living===1?"y":"ies")+" alive · "+wave.remainingSpawns+" scheduled spawn"+(wave.remainingSpawns===1?"":"s")+" remaining");
-  const signature=[clock.phase,recipe?.id,side,secondary].join("|");
+  const signature=[clock.phase,recipe?.id].join("|");
   if(panel.dataset.forecast!==signature){
     panel.dataset.forecast=signature;
-    const arrows={north:"↑",east:"→",south:"↓",west:"←"};
-    setText("forecastSides",side?(arrows[side]+" "+side+(secondary?" · "+arrows[secondary]+" "+secondary:"")):"no attack scheduled");
+    setText("forecastSides",recipe?"from all around the base":"no attack scheduled");
     const summary=document.getElementById("recipeSummary");summary.replaceChildren();
-    if(recipe){const counts={};for(const spawn of recipe.spawns)counts[spawn[0]]=(counts[spawn[0]]||0)+1;for(const [type,count] of Object.entries(counts)){const item=document.createElement("li");item.textContent=count+"× "+type;summary.appendChild(item);}}
+    if(recipe){const counts={};for(const spawn of recipe.spawns)counts[spawn]=(counts[spawn]||0)+1;for(const [type,count] of Object.entries(counts)){const item=document.createElement("li");item.textContent=count+"× "+type;summary.appendChild(item);}}
   }
 }
 

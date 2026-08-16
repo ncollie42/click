@@ -24,13 +24,13 @@ import {
   RESOURCE_KINDS,
   WORKER_HP,
   BUILDING_TYPES,UPGRADES,
-  ENEMY_TYPES,MAP_SIDE,
+  ENEMY_TYPES,
   NIGHT_TELEGRAPH_TIME
 } from "../game/data.js";
 import {
   state, trees, rocks, diamonds, chests, buildings, damageDummies, damageNumbers,
   badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget,
-  buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldChest, workerIsLoaned, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, oppositeMapSide, clamp
+  buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldChest, workerIsLoaned, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, clamp
 } from "../game/simulation.js";
 
 const canvas = document.getElementById("overlay");   // 2D overlay sits above the WebGL scene
@@ -473,16 +473,13 @@ function drawCarryCount(){
   ctx.fillText(total+"/"+state.capacity, p.x, p.y+14);
 }
 
-function drawWarningEdge(side,alpha){
-  const thickness=18;ctx.fillStyle="rgba(202,72,48,"+alpha+")";
-  if(side===MAP_SIDE.NORTH)ctx.fillRect(0,0,VIEW_W,thickness);
-  else if(side===MAP_SIDE.SOUTH)ctx.fillRect(0,VIEW_H-thickness,VIEW_W,thickness);
-  else if(side===MAP_SIDE.WEST)ctx.fillRect(0,0,thickness,VIEW_H);
-  else ctx.fillRect(VIEW_W-thickness,0,thickness,VIEW_H);
-}
 function drawNightTelegraph(){
-  const clock=state.clock,wave=state.nightWave,side=wave.upcomingSide,recipe=wave.upcomingRecipe;
-  if(clock.phase!=="day"||clock.remaining>NIGHT_TELEGRAPH_TIME||!side||!recipe)return;
-  const alpha=.42+Math.sin(clock.remaining*5)*.14,secondary=recipe.id==="twoFront"?oppositeMapSide(side):null;
-  drawWarningEdge(side,alpha);if(secondary)drawWarningEdge(secondary,alpha);
+  // Spawning is a ring around the base with no direction, so the telegraph is the
+  // full screen border rather than one warned edge.
+  const clock=state.clock,wave=state.nightWave;
+  if(clock.phase!=="day"||clock.remaining>NIGHT_TELEGRAPH_TIME||!wave.upcomingRecipe)return;
+  const thickness=18,alpha=.42+Math.sin(clock.remaining*5)*.14;
+  ctx.fillStyle="rgba(202,72,48,"+alpha+")";
+  ctx.fillRect(0,0,VIEW_W,thickness);ctx.fillRect(0,VIEW_H-thickness,VIEW_W,thickness);
+  ctx.fillRect(0,thickness,thickness,VIEW_H-2*thickness);ctx.fillRect(VIEW_W-thickness,thickness,thickness,VIEW_H-2*thickness);
 }

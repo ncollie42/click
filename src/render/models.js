@@ -30,7 +30,7 @@ import {MODELS as ENEMY_MODELS} from "./models/enemy-shard.js";
 // world (x*S, 0, y*S). It lives here because every model dimension below is expressed against it,
 // and scene.js imports it rather than restating the ratio.
 export const S = 1/16;                       // game pixels -> world units
-export const WU = W*S, HU = H*S;             // 96 x 64
+export const WU = W*S, HU = H*S;             // 480 x 320 world units
 export const gx = x => x*S, gz = y => y*S;
 
 export const flat = (color, extra={}) => new THREE.MeshLambertMaterial({color, flatShading:true, ...extra});
@@ -91,6 +91,18 @@ export function disposeGroup(g){
 
 
 // ─────────────────────────────────────────────────────────── entity models
+
+// Shared by scene.js's single InstancedMesh: three crossed blade clusters form one readable
+// Clickyland-style black-green tuft without allocating one object/material per vegetation cell.
+export function makeGrassTuftGeometry(){
+  const positions=[];
+  const triangle=(a,b,c)=>positions.push(...a,...b,...c);
+  for(const [x,z,h,w] of [[-.28,.08,.62,.16],[.08,-.12,.78,.18],[.3,.14,.52,.14]]){
+    triangle([x-w,0,z],[x+w,0,z],[x,h,z]);
+    triangle([x,0,z-w],[x,0,z+w],[x,h,z]);
+  }
+  const geometry=new THREE.BufferGeometry();geometry.setAttribute("position",new THREE.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();geometry.computeBoundingSphere();return geometry;
+}
 
 export function makeTree(t){
   const g = new THREE.Group();

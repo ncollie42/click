@@ -1,5 +1,5 @@
-// Owns: the "view" side panel — its top-level/contextual tabs, ~60 control bindings, sightline
-// scan/readouts, and footer utilities. Owns no gameplay state and no meshes; it only writes the
+// Owns: the "view" side panel — its visibility, top-level/contextual tabs, ~60 control bindings,
+// sightline scan/readouts, and footer utilities. Owns no gameplay state and no meshes; it only writes the
 // holders other modules expose.
 // ═══════════════════════════════════════════════════════════════════════════
 // VIEW DEBUGGER
@@ -80,6 +80,12 @@ const boundDefaults = new Map();
 
 // ── tabs ────────────────────────────────────────────────────────────────────
 function resetPaneScroll(){ $v("vPanes").scrollTop = 0; }
+// Hide only the panel root. Descendant DOM and classes remain untouched, so restoring preserves the
+// collapsed state, selected tabs, scroll position, controls, and readouts exactly as left.
+function togglePanelVisibility(){
+  const panel=$v("viewPanel");
+  panel.hidden=!panel.hidden;
+}
 function showVTab(name){
   for(const p of vPanes) p.classList.toggle("on", p.dataset.tab===name);
   for(const b of $v("vTabs").children) b.classList.toggle("on", b.dataset.tab===name);
@@ -381,8 +387,8 @@ function bindControls(){
   bindBtn("vStartNight",   ()=>debugGoToPhase("night"));
   bindBtn("vAdvancePhase", debugAdvancePhase);
 
-  // combat — spawnEnemy() has no phase guard, so debugger spawns need no bypass.
-  bindBtn("vSpawnEnemy",   ()=>spawnEnemy(null,$v("vEnemyType").value));
+  // combat — normal-mode spawnEnemy() has no phase guard; showcase intentionally no-ops to keep authored fixtures inert.
+  bindBtn("vSpawnEnemy",   ()=>spawnEnemy($v("vEnemyType").value));
   bindBtn("vStartWave",    ()=>debugStartWave($v("vWaveRecipe").value));
   bindBtn("vClearEnemies", debugClearEnemies);
   bindV("vInvulnBase", v=>{ DBG.invulnBase=v; });
@@ -512,11 +518,16 @@ export function initViewDebugger(hooks={}){
   // it reads simulation-owned state without duplicating URL mode selection in the debugger.
   queueMicrotask(syncShowcaseAction);
 
-  // shift+digit switches tabs; plain digits stay free for the game. Silent while the skill tree is
-  // up: it covers this panel, and the `inert` it hangs on the rest of the frame stops clicks and
-  // focus but not a listener bound to `window`.
+  // T hides/restores the entire panel without changing any descendant state. Shift+digit switches
+  // tabs; plain digits stay free for the game. Silent while the skill tree is up: it covers this
+  // panel, and the `inert` it hangs on the rest of the frame stops clicks and focus but not a
+  // listener bound to `window`.
   window.addEventListener("keydown", e=>{
-    if(!e.shiftKey||state.skillTree.open)return;
+    if(state.skillTree.open)return;
+    if(e.code==="KeyT"&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
+      e.preventDefault();if(!e.repeat)togglePanelVisibility();return;
+    }
+    if(!e.shiftKey)return;
     const n = "!@#$%^&*("./* shifted digits */indexOf(e.key);
     if(n>=0 && vPanes[n]){ showVTab(vPanes[n].dataset.tab); e.preventDefault(); }
   });

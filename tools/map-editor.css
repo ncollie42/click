@@ -1,0 +1,74 @@
+/* Map editor — tool chrome for tools/map-editor.html. */
+*{box-sizing:border-box}
+body{margin:0;background:#20241c;color:#e8e4d4;font:13px system-ui;display:flex;flex-direction:column;height:100vh}
+#toolbar{display:flex;gap:10px;flex-wrap:wrap;padding:8px 10px;background:#2c3126;border-bottom:1px solid #4a5140}
+fieldset{border:1px solid #4a5140;border-radius:6px;padding:4px 8px 6px;display:flex;gap:8px;align-items:center;margin:0}
+legend{padding:0 4px;color:#a8b096;font-size:11px}
+label{display:flex;gap:4px;align-items:center;white-space:nowrap}
+input[type=number],input[type=text]{width:58px;background:#20241c;color:#e8e4d4;border:1px solid #4a5140;border-radius:4px;padding:2px 4px}
+input[type=range]{width:86px}
+#uRegionStats{white-space:normal}
+@media(max-width:900px){#panes{flex-direction:column}#paintPane,#previewPane{min-height:45vh;width:100%}#paintPane{border-right:0;border-bottom:1px solid #4a5140}}
+select{background:#20241c;color:#e8e4d4;border:1px solid #4a5140;border-radius:4px;padding:2px 4px}
+button{background:#3a4132;color:#e8e4d4;border:1px solid #5a6350;border-radius:4px;padding:3px 10px;cursor:pointer}
+button:hover{background:#4a5340}
+button:disabled{opacity:.45;cursor:default}
+.fileButton{background:#3a4132;border:1px solid #5a6350;border-radius:4px;padding:3px 10px;cursor:pointer}
+.fileButton input[type=file]{display:none}
+#panes{display:flex;flex:1;min-height:0}
+#paintPane,#previewPane{flex:1;min-width:0;position:relative;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:10px}
+#paintPane{background:#181b14;border-right:1px solid #4a5140}
+#previewPane{background:#11130e;overflow:hidden;padding:0}
+#paint{image-rendering:pixelated;cursor:crosshair;max-width:100%;height:auto;touch-action:none}
+#preview{width:100%;height:100%;display:block;touch-action:none}
+#statusBar{display:flex;gap:16px;padding:4px 10px;background:#2c3126;border-top:1px solid #4a5140;font-size:12px;min-height:24px}
+.status{color:#a8b096}
+.error{color:#e08c7a;white-space:pre-wrap}
+
+select:disabled{opacity:.35}
+
+/* Persistent toolbox: top-level authoring tabs reveal only controls relevant
+   to the active task. Map/history/preview remain available across tabs. */
+body{display:grid;grid-template-columns:350px minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
+#toolbar{grid-column:1;grid-row:1;display:flex;flex-direction:column;flex-wrap:nowrap;overflow:auto;border-right:1px solid #4a5140;border-bottom:0;padding:10px}
+#panes{grid-column:2;grid-row:1}
+#statusBar{grid-column:1/-1;grid-row:2}
+#toolbar fieldset{width:100%;align-items:flex-start;align-content:flex-start;flex-wrap:wrap;padding:8px}
+#paintPane,#previewPane{padding-top:10px}
+
+#authoringTabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;width:100%;margin-bottom:4px}
+#authoringTabs button{padding:7px 5px;text-transform:capitalize}
+body[data-authoring-panel="terrain"] #uTabTerrain,
+body[data-authoring-panel="objects"] #uTabObjects,
+body[data-authoring-panel="scatter"] #uTabScatter{background:#607a49;color:white;border-color:#91ad71}
+#brushControls .terrainMode,#brushControls .objectMode,#brushControls .scatterMode{display:none}
+.toolGroup{width:100%;padding:7px;border:1px solid #46503d;border-radius:5px;background:#262c22;gap:6px;align-items:center}
+.terrainToolGroup,.objectToolGroup,.shapeToolGroup{display:none}
+body[data-authoring-panel="terrain"] .terrainToolGroup,
+body[data-authoring-panel="terrain"] .shapeToolGroup,
+body[data-authoring-panel="objects"] .objectToolGroup{display:flex}
+body[data-authoring-panel="terrain"] #brushControls label.terrainMode,
+body[data-authoring-panel="objects"] #brushControls label.objectMode{display:flex;flex:1 1 0;font-size:14px;justify-content:center}
+body[data-authoring-panel="objects"] #brushControls select.objectMode{display:block;flex:1 0 100%}
+body[data-authoring-panel="objects"] .brushSizeControl{display:none}
+body[data-authoring-panel="scatter"] #brushControls .brushSizeControl,
+body[data-authoring-panel="scatter"] #brushControls .sampleRow{display:none}
+.shapeToolGroup .brushToolControl{display:flex;flex:1 1 0;justify-content:center}
+.sampleRow{flex:1 0 100%;padding-top:2px}
+#brushControls>label:has(input[type=radio]:checked){background:#607a49;color:white;border-radius:4px;padding:3px 6px;outline:1px solid #91ad71}
+#brushControls>label:has(input[type=radio]){padding:3px 6px}
+
+#scatterControls{display:none;flex-direction:column;gap:10px}
+body[data-authoring-panel="scatter"] #scatterControls{display:flex}
+#scatterCreateControls,#scatterRegionBrowser,#scatterSelectionControls{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;padding:2px}
+#scatterCreateControls strong,#scatterRegionBrowser strong,#scatterSelectionControls strong,#scatterCreateControls .hint,#scatterRegionBrowser .hint,#uRegionStats,.regionIdField{grid-column:1/-1}
+.regionIdField input{width:100%}
+#uRegionList{grid-column:1/-1;width:100%;min-height:104px;padding:3px}
+#uRegionList option{padding:4px 5px}
+#scatterCreateControls label:has(input[type=range]){grid-column:1/-1}
+#scatterCreateControls input[type=range]{flex:1}
+#scatterSelectionControls{border-top:1px solid #4a5140;padding-top:10px}
+body[data-region-selected="false"] #scatterSelectionControls{display:none}
+.hint{color:#a8b096;line-height:1.35}
+
+@media(max-width:1050px){body{grid-template-columns:290px minmax(0,1fr)}}

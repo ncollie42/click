@@ -60,7 +60,10 @@ initSkillTree(surface);
 // chain sees that press. Neither consumes anything while a modal is open or a digit is shifted.
 initHand();
 initDraft(surface);
-initInput(surface, {cameraChanged(){ syncViewInputs(); }});
+initInput(surface, {
+  cameraChanged(){syncViewInputs();},
+  uiVisibilityChanged(hidden){document.body.classList.toggle("ui-hidden",hidden);},
+});
 initViewDebugger({resizeView});
 // Initialize after adapters bind their authored defaults, so showcase camera/fixtures are the final
 // boot state; normal initialization remains a no-op and leaves production startup untouched.

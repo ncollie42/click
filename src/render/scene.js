@@ -1,4 +1,4 @@
-// Owns: the three.js renderer, cameras, lights, terrain, every mesh pool and ground mark, world
+// Owns: the three.js renderer, cameras, lights, terrain presentation, every mesh pool and ground mark, world
 // projection, resize and the per-frame scene draw. Read-only over simulation state.
 // ═══════════════════════════════════════════════════════════════════════════
 // 3D SCENE
@@ -27,14 +27,14 @@ import * as THREE from "three";
 import {PAL, css, TOWER_TOP} from "./palette.js";
 import {
   S,WU,HU,gx,gz, flat, meshOf, isOutline, disposeGroup, FLOOR_TOP,
-  makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeCorpse,
+  makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeCorpse, makeGrassTuftGeometry,
   makeChest, makeDamageDummy, makeShowcaseProp,
   makeMainBase, makePegWorker, makeKing, makeBuilding, makeBlueprint, handMeshFor,
   outlineMat, outlineMatPx
 } from "./models.js";
 import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,
-  CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
+  CELL,GRID_COLS,GRID_ROWS,
   FOOTPRINT_1x1,FOOTPRINT_3x3,
   RESOURCE_KINDS,
   WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_LEASH,
@@ -48,13 +48,16 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles,
+  trees, rocks, diamonds, grass, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles,
   badgeAction, hoveredBuilding,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
   heldWorker, heldBuilding, heldChest, heldProp, workerLoad,
-  vacuumRadius,
+  vacuumRadius,terrainAtRasterCell,terrainMetadata,terrainRaisedAtCell,vegetationMetadata,
   clamp, distance
 } from "../game/simulation.js";
+import {LAND} from "../game/authored-map.js";
+import {buildModuleCatalog,SHAPE_GEOMETRY,rotateShapePoint} from "../game/terrain-modules.js";
+import {solveTerrainWfc} from "../game/terrain-wfc.js";
 
 // ── host predicates ─────────────────────────────────────────────────────────
 // The one thing the scene cannot answer for itself: whether a modal owns input. Same shape as the
@@ -119,7 +122,7 @@ export function placeCamera(){
   const tx = gx(cam.x), tz = gz(cam.y);
   const p = THREE.MathUtils.degToRad(view.pitch), y = THREE.MathUtils.degToRad(view.yaw);
   // Ortho frustum matches the 2D game's coverage exactly, so clampCamera() and
-  // the .2-5 zoom range carry over unchanged.
+  // the .1-5 zoom range carry over unchanged.
   // halfW must come from the live canvas aspect. Hardcoding 16:9 here stretches
   // world-X against world-Y on any other shape, which reads as squashed models.
   const halfH = VIEW_H/(2*cam.zoom)*S, halfW = halfH*viewAspect;
@@ -198,72 +201,163 @@ sun.shadow.bias = -0.0006;
 sun.shadow.normalBias = 0.035;
 scene.add(sun, sun.target);
 
-// ─────────────────────────────────────────────────────────── ground
-// The original pixel-art ground generator, repainted in the prototype's palette.
-const groundLayer=document.createElement("canvas");groundLayer.width=W;groundLayer.height=H;
-(function bakeGround(){
-  const c=groundLayer.getContext("2d");c.imageSmoothingEnabled=false;
-  for(let y=0;y<H;y+=8)for(let x=0;x<W;x+=8){
-    const n=(x*13+y*7)%31;
-    c.fillStyle=n%3?css(PAL.grass):css(PAL.grassAlt);c.fillRect(x,y,8,8);
+// ─────────────────────────────────────────────────────────── terrain
+// Grass presentation is world-aligned and independent of topology. A 64px deterministic repeat
+// avoids maximum-texture-size coupling: RGBA backing is 64*64*4 = 16 KiB CPU and 16 KiB GPU
+// (mipmaps disabled), versus 150 MiB each for the former 7680*5120 sheet.
+const GRASS_TILE_PX=64,GRASS_TEXTURE_BYTES=GRASS_TILE_PX*GRASS_TILE_PX*4;
+const grassLayer=document.createElement("canvas");grassLayer.width=grassLayer.height=GRASS_TILE_PX;
+(function bakeGrass(){
+  const c=grassLayer.getContext("2d");c.imageSmoothingEnabled=false;
+  for(let y=0;y<GRASS_TILE_PX;y+=8)for(let x=0;x<GRASS_TILE_PX;x+=8){
+    const n=(x*13+y*7)%31;c.fillStyle=n%3?css(PAL.grass):css(PAL.grassAlt);c.fillRect(x,y,8,8);
     if(n<6){c.fillStyle=css(PAL.grassSpeck);c.fillRect(x+n,y+(n*3)%7,2,2);}
   }
-  // No dirt clearing under the base: it wears the same footprint pad as every other building.
 })();
-const groundTex = new THREE.CanvasTexture(groundLayer);
-groundTex.magFilter = THREE.NearestFilter;
-groundTex.colorSpace = THREE.SRGBColorSpace;
+const grassTex=new THREE.CanvasTexture(grassLayer);
+grassTex.wrapS=grassTex.wrapT=THREE.RepeatWrapping;grassTex.repeat.set(W/GRASS_TILE_PX,H/GRASS_TILE_PX);
+grassTex.magFilter=grassTex.minFilter=THREE.NearestFilter;grassTex.generateMipmaps=false;grassTex.colorSpace=THREE.SRGBColorSpace;
+const landMat=flat(0xffffff,{map:grassTex,vertexColors:true});
+const REGION_COLORS={forest:new THREE.Color(0x6f965c),rocky:new THREE.Color(0xa8a387),open:new THREE.Color(0xb3c98c),coast:new THREE.Color(PAL.cliff)};
+const shoreMat=flat(PAL.cliff,{side:THREE.DoubleSide});
 
-const ground = meshOf(new THREE.PlaneGeometry(WU,HU), flat(0xffffff,{map:groundTex}), false, true);
-ground.rotation.x = -Math.PI/2;
-ground.position.set(WU/2, 0, HU/2);
-scene.add(ground);
-
-// Slab sides so the map reads as an object rather than an infinite plane.
-// Its top must sit BELOW the ground plane — coincident faces z-fight and the
-// terrain turns into brown/green stripes.
-const slab = meshOf(new THREE.BoxGeometry(WU, 3.0, HU), flat(PAL.cliff), false, false);
-slab.position.set(WU/2, -1.53, HU/2);          // top face at y = -0.03
-scene.add(slab);
-
-// Water surrounds the slab, same as the prototype's island read.
-const water = meshOf(new THREE.PlaneGeometry(WU*5, HU*6), flat(PAL.water), false, false);
-water.rotation.x = -Math.PI/2;
-water.position.set(WU/2, -1.9, HU/2);
-scene.add(water);
+// One lower plane supplies both the surrounding ocean and every lake hole.
+const WATER_Y=-1.05,SHORE_BOTTOM=WATER_Y-.12,NO_RAYCAST=()=>{};
+const water=meshOf(new THREE.PlaneGeometry(WU*5,HU*6),flat(PAL.water),false,false);
+water.rotation.x=-Math.PI/2;water.position.set(WU/2,WATER_Y,HU/2);water.raycast=NO_RAYCAST;scene.add(water);
 
 // ─────────────────────────────────────────────────────────── placement grid
-// The simulation owns the lattice (CELL, GRID_ORIGIN_*, GRID_COLS/ROWS); this only draws it, so the
-// lines land on cell BOUNDARIES. Every square therefore encloses exactly one snap target — the same
-// cell centre snapToCellCenter() commits to and the same anchor seedWorld() gave each resource node.
-// Edge treatment: the half-clipped border cells put boundaries at -CELL/2 and past W/H. Those are
-// skipped rather than clamped — a clamped line would sit mid-cell and lie about where a cell ends.
-// Cost: (GRID_COLS-1) + (GRID_ROWS-1) = 80 segments in one LineSegments, a single draw call.
-const GRID_Y = .015;          // world units above the ground plane: enough to win the depth test
-const GRID_OPACITY = .24;     // deliberately faint; drawScene() fades it further at night
-const gridMat = new THREE.LineBasicMaterial({color:PAL.grid, transparent:true,
-                                             opacity:GRID_OPACITY, depthWrite:false});
-const terrainGrid = (function buildTerrainGrid(){
-  const v = [];
-  for(let cx=0; cx<=GRID_COLS; cx++){
-    const x = GRID_ORIGIN_X + cx*CELL;
-    if(x<0 || x>W) continue;
-    v.push(gx(x), GRID_Y, gz(0), gx(x), GRID_Y, gz(H));
+const GRID_Y=.015;           // world units above the land top: enough to win the depth test
+const GRID_OPACITY=.24;      // deliberately faint; drawScene() fades it further at night
+const gridMat=new THREE.LineBasicMaterial({color:PAL.grid,transparent:true,opacity:GRID_OPACITY,depthWrite:false});
+let terrainTop=null,shorelineSkirts=null,terrainGrid=null,builtTerrainRevision=-1,builtGridSignature="";
+const staticBuildStats={terrainBuilds:0,terrainDisposals:0,gridBuilds:0,gridDisposals:0};
+
+function geometryWith(positions,uvs=null,colors=null){
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute("position",new THREE.Float32BufferAttribute(positions,3));
+  if(uvs)geometry.setAttribute("uv",new THREE.Float32BufferAttribute(uvs,2));
+  if(colors)geometry.setAttribute("color",new THREE.Float32BufferAttribute(colors,3));
+  geometry.computeVertexNormals();geometry.computeBoundingSphere();
+  return geometry;
+}
+function removeTerrainObject(object,kind="terrain"){
+  if(!object)return;scene.remove(object);object.geometry.dispose();
+  if(kind==="grid")staticBuildStats.gridDisposals++;else staticBuildStats.terrainDisposals++;
+}
+function placementBlockerSignature(metadata){
+  // canPlace() deliberately computes occupancy from live arrays. Mirror only its invalidation inputs
+  // here, then run the authoritative query when one changes; this avoids 1,600 full scans per frame.
+  const keyed=(items,extra)=>items.map(item=>`${item.x},${item.y},${extra(item)}`).join(";");
+  return [metadata.revision,
+    keyed(trees,item=>item.stump<=0?1:0),keyed(rocks,item=>item.depleted<=0?1:0),keyed(diamonds,item=>item.depleted<=0?1:0),
+    keyed(buildings,item=>item.type),keyed(showcaseProps,item=>`${item.footprint.w}x${item.footprint.h}`),keyed(chests,item=>`${item.footprint.w}x${item.footprint.h}`)
+  ].join("|");
+}
+function rebuildPlacementGrid(metadata){
+  const signature=placementBlockerSignature(metadata);if(signature===builtGridSignature)return;
+  const eligible=Array(GRID_COLS*GRID_ROWS).fill(false),at=(x,y)=>x>=0&&y>=0&&x<GRID_COLS&&y<GRID_ROWS&&eligible[y*GRID_COLS+x];
+  for(let cy=0;cy<GRID_ROWS;cy++)for(let cx=0;cx<GRID_COLS;cx++){
+    const center=cellToWorld(cx,cy);eligible[cy*GRID_COLS+cx]=canPlace(center.x,center.y,null);
   }
-  for(let cy=0; cy<=GRID_ROWS; cy++){
-    const y = GRID_ORIGIN_Y + cy*CELL;
-    if(y<0 || y>H) continue;
-    v.push(gx(0), GRID_Y, gz(y), gx(W), GRID_Y, gz(y));
+  const grid=[],edge=(ax,az,bx,bz,lift)=>grid.push(gx(ax),GRID_Y+lift,gz(az),gx(bx),GRID_Y+lift,gz(bz));
+  for(let cy=0;cy<GRID_ROWS;cy++)for(let cx=0;cx<GRID_COLS;cx++){
+    if(!at(cx,cy))continue;
+    const lift=terrainRaisedAtCell(cx,cy)?RAISED_TOP:0;
+    const rect=footprintWorldRect(cx,cy,FOOTPRINT_1x1),x0=rect.x,x1=rect.x+rect.w,z0=rect.y,z1=rect.y+rect.h;
+    // North/west own shared interior edges; east/south close only exposed perimeters. Each line is
+    // therefore emitted once, avoiding doubled alpha where two eligible cells touch.
+    edge(x0,z0,x1,z0,lift);edge(x0,z0,x0,z1,lift);
+    if(!at(cx+1,cy))edge(x1,z0,x1,z1,lift);
+    if(!at(cx,cy+1))edge(x0,z1,x1,z1,lift);
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(v, 3));
-  const lines = new THREE.LineSegments(geo, gridMat);
-  // Not a mesh and not a shadow caster, so scanBlockers() cannot pick it up as an occluder.
-  lines.castShadow = lines.receiveShadow = false;
-  lines.renderOrder = -1;      // below rings, ghosts and every other transparent mark
-  return lines;
-})();
-scene.add(terrainGrid);
+  const geometry=new THREE.BufferGeometry();geometry.setAttribute("position",new THREE.Float32BufferAttribute(grid,3));
+  const nextGrid=new THREE.LineSegments(geometry,gridMat);nextGrid.castShadow=nextGrid.receiveShadow=false;nextGrid.renderOrder=-1;
+  removeTerrainObject(terrainGrid,"grid");terrainGrid=nextGrid;scene.add(terrainGrid);builtGridSignature=signature;staticBuildStats.gridBuilds++;
+}
+// ── WFC terrain presentation ──
+// The game renders the same dual-grid module terrain as the map editor preview:
+// authored 32px cells become chamfered marching-squares tops with shoreline and
+// cliff walls, selected by the shared WFC solver from the installed map seed.
+// Gameplay is untouched — placement/movement still query the flat 16px raster;
+// the raised layer is one fixed presentational elevation.
+const GROUND_CATALOG=buildModuleCatalog({layer:"ground"}),RAISED_CATALOG=buildModuleCatalog({layer:"raised"});
+const GROUND_SALT=0x970a11,RAISED_SALT=0x5a15ed;   // match the editor preview so looks agree
+export const RAISED_TOP=1.2;                       // world units above ground tops
+export function terrainLiftAt(x,y){const cell=worldToCell(x,y);return terrainRaisedAtCell(cell.cx,cell.cy)?RAISED_TOP:0;}
+
+// The solver reads authored-cell resolution: each placement cell's land bit comes from
+// the raster cell containing its center, so painted cells and modules agree 1:1.
+function authoredCellGrid(metadata){
+  const land=new Uint8Array(GRID_COLS*GRID_ROWS),raised=new Uint8Array(GRID_COLS*GRID_ROWS);
+  for(let cy=0;cy<GRID_ROWS;cy++)for(let cx=0;cx<GRID_COLS;cx++){
+    const tx=Math.min(2*cx,metadata.terrainCols-1),ty=Math.min(2*cy,metadata.terrainRows-1);
+    land[cy*GRID_COLS+cx]=terrainAtRasterCell(tx,ty)===LAND?1:0;
+    raised[cy*GRID_COLS+cx]=terrainRaisedAtCell(cx,cy)?1:0;
+  }
+  return {width:GRID_COLS,height:GRID_ROWS,land,raised};
+}
+
+function rebuildTerrainPresentation(){
+  const metadata=terrainMetadata();
+  if(metadata.revision!==builtTerrainRevision){
+    const grid=authoredCellGrid(metadata),seed=metadata.seed??0;
+    const solves=[
+      {solve:solveTerrainWfc({doc:grid,catalog:GROUND_CATALOG,layer:"ground",seed,salt:GROUND_SALT}),topY:0,bottomY:SHORE_BOTTOM},
+      {solve:solveTerrainWfc({doc:grid,catalog:RAISED_CATALOG,layer:"raised",seed,salt:RAISED_SALT}),topY:RAISED_TOP,bottomY:0},
+    ];
+    for(const {solve} of solves)if(solve.status!=="solved")throw new Error(`terrain WFC ${solve.layer} contradiction with the complete module catalog`);
+    const top=[],uv=[],colors=[],skirts=[],tint=new THREE.Color();
+    // Vertex tints multiply the shared grass texture, exactly like the old per-cell tinting:
+    // full-tile variants vary the meadow tone, edge modules keep the coast tint, raised reads lighter.
+    const tintFor=(layer,shape,variant)=>{
+      tint.setHex(PAL.grass);
+      if(shape!=="full")tint.lerp(REGION_COLORS.coast,layer==="raised"?.16:.28);
+      else if(variant==="mottled")tint.lerp(REGION_COLORS.forest,.16);
+      else if(variant==="scrub")tint.lerp(REGION_COLORS.open,.2);
+      else if(variant==="rocky")tint.lerp(REGION_COLORS.rocky,.18);
+      if(layer==="raised")tint.lerp(new THREE.Color(0xffffff),.12);
+      return tint;
+    };
+    const pushTopPolygon=(points,y,color)=>{
+      let area=0;
+      for(let i=0;i<points.length;i++){const [ax,az]=points[i],[bx,bz]=points[(i+1)%points.length];area+=ax*bz-bx*az;}
+      const ordered=area>0?[...points].reverse():points;
+      for(let i=1;i<ordered.length-1;i++)for(const [px,pz] of [ordered[0],ordered[i],ordered[i+1]]){
+        top.push(px,y,pz);uv.push(px/WU,1-pz/HU);colors.push(color.r,color.g,color.b);
+      }
+    };
+    const pushWallSegment=([[ax,az],[bx,bz]],yTop,yBottom)=>skirts.push(
+      ax,yTop,az,bx,yTop,bz,ax,yBottom,az,
+      bx,yTop,bz,bx,yBottom,bz,ax,yBottom,az
+    );
+    const tileUnits=gx(CELL);
+    for(const {solve,topY,bottomY} of solves)for(const cell of solve.cells){
+      if(cell.shape==="empty")continue;
+      const {tops,walls}=SHAPE_GEOMETRY[cell.shape];
+      // Dual cell (dx,dy) spans between the four surrounding placement-cell centers.
+      const originX=gx((cell.dx-1)*CELL),originZ=gz((cell.dy-1)*CELL);
+      const place=point=>{const [x,z]=rotateShapePoint(point,cell.rotation);return [originX+x*tileUnits,originZ+z*tileUnits];};
+      const color=tintFor(solve.layer,cell.shape,cell.variant);
+      for(const polygon of tops)pushTopPolygon(polygon.map(place),topY,color);
+      for(const segment of walls)pushWallSegment(segment.map(place),topY,bottomY);
+    }
+    // Revision is simulation-owned. Build replacements before disposing the visible old pair so a
+    // rebuild cannot leave a half-updated scene if a future producer violates the terrain contract.
+    const nextTop=meshOf(geometryWith(top,uv,colors),landMat,false,true),nextSkirts=meshOf(geometryWith(skirts),shoreMat,false,true);
+    nextTop.raycast=nextSkirts.raycast=NO_RAYCAST;
+    removeTerrainObject(terrainTop);removeTerrainObject(shorelineSkirts);
+    terrainTop=nextTop;shorelineSkirts=nextSkirts;scene.add(terrainTop,shorelineSkirts);builtTerrainRevision=metadata.revision;staticBuildStats.terrainBuilds++;
+  }
+  rebuildPlacementGrid(metadata);
+}
+rebuildTerrainPresentation();
+
+export function terrainRenderDiagnostics(){
+  return Object.freeze({...staticBuildStats,terrainRevision:builtTerrainRevision,
+    terrainTextureBytes:GRASS_TEXTURE_BYTES,placementGridVisible:terrainGrid?.visible===true,
+    drawCalls:renderer.info.render.calls,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures});
+}
 
 // ─────────────────────────────────────────────────────────── pooling
 /** Keeps one group per live entity; builds on first sight, disposes when gone. */
@@ -289,8 +383,27 @@ function makeLayer(build, update){
     }
   };
 }
-const setXZ = (g,e,y=0)=>g.position.set(gx(e.x), y, gz(e.y));
+// Every ground-anchored entity rides the presentational raised layer through this
+// one hook; the simulation's coordinates stay flat 2D.
+const setXZ = (g,e,y=0)=>g.position.set(gx(e.x), y+terrainLiftAt(e.x,e.y), gz(e.y));
 const shakeOf = e => e.shake ? Math.sin(e.shake*28)*.12 : 0;
+
+// Thousands of tufts remain one bounded draw object. Simulation revision is the only invalidation
+// input; camera frames never rebuild matrices, and removed tufts disappear on the next revision.
+let grassInstances=null,builtVegetationRevision=-1;
+const grassMatrix=new THREE.Matrix4(),grassPosition=new THREE.Vector3(),grassRotation=new THREE.Quaternion(),grassScale=new THREE.Vector3();
+function syncGrass(){
+  const metadata=vegetationMetadata();if(metadata.revision===builtVegetationRevision)return;
+  if(grassInstances){scene.remove(grassInstances);grassInstances.geometry.dispose();grassInstances.material.dispose();}
+  grassInstances=new THREE.InstancedMesh(makeGrassTuftGeometry(),new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true,side:THREE.DoubleSide}),grass.length);
+  grassInstances.name="destructible-grass";grassInstances.castShadow=true;grassInstances.receiveShadow=true;grassInstances.raycast=NO_RAYCAST;
+  grass.forEach((tuft,index)=>{
+    const variant=tuft.variant%PAL.grassTuft.length,scale=.8+variant*.07;
+    grassPosition.set(gx(tuft.x),terrainLiftAt(tuft.x,tuft.y)+.025,gz(tuft.y));grassRotation.setFromAxisAngle(_upY,((tuft.x*13+tuft.y*7)%628)/100);grassScale.set(scale,scale,scale);
+    grassMatrix.compose(grassPosition,grassRotation,grassScale);grassInstances.setMatrixAt(index,grassMatrix);grassInstances.setColorAt(index,new THREE.Color(PAL.grassTuft[variant]));
+  });
+  grassInstances.instanceMatrix.needsUpdate=true;if(grassInstances.instanceColor)grassInstances.instanceColor.needsUpdate=true;scene.add(grassInstances);builtVegetationRevision=metadata.revision;
+}
 
 const syncTrees = makeLayer(makeTree, (g,t)=>{
   setXZ(g,t);
@@ -516,7 +629,7 @@ function syncWorkers(){
   }
 }
 const syncCorpses = makeLayer(c=>makeCorpse(c.coat), (g,c)=>{
-  g.position.set(gx(c.x+c.pose), .1, gz(c.y+c.pose*.35));
+  g.position.set(gx(c.x+c.pose), .1+terrainLiftAt(c.x,c.y), gz(c.y+c.pose*.35));
   g.rotation.y = c.flip<0 ? Math.PI : 0;
 });
 
@@ -595,7 +708,7 @@ function ring(x, y, radiusPx, color=css(PAL.hint), opacity=.6){
   }
   ringUsed++;
   m.visible = true;
-  m.position.set(gx(x), .09, gz(y));
+  m.position.set(gx(x), .09+terrainLiftAt(x,y), gz(y));
   m.scale.setScalar(radiusPx*S);
   m.material.color.set(color);
   m.material.opacity = opacity;
@@ -642,7 +755,7 @@ function muzzle(x, y, h, size, color, alpha){
   }
   flashUsed++;
   m.visible = true;
-  m.position.set(gx(x), h, gz(y));
+  m.position.set(gx(x), h+terrainLiftAt(x,y), gz(y));
   m.scale.setScalar(size);
   m.material.color.set(color);
   m.material.opacity = clamp(alpha, 0, 1);
@@ -1445,6 +1558,7 @@ let lastDrawT = 0;
  * Returns true when orbit advanced the yaw, so the caller can push it back into its slider.
  */
 export function drawScene(){
+  rebuildTerrainPresentation();
   const orbited = view.orbit;
   if(orbited) view.yaw = (view.yaw + .25) % 360;
   placeCamera();
@@ -1459,9 +1573,13 @@ export function drawScene(){
   sun.color.setHex(night>.25 ? PAL.sunNight : PAL.sunDay);
   // The grid is unlit, so without this it would stay bright while the map darkens and end up the
   // loudest thing on screen at night. Fading it keeps it under the terrain and the combat marks.
-  gridMat.opacity = GRID_OPACITY * (1 - night*.55);
+  // Overview zoom suppresses the 32px lattice; normal/build zoom retains full precision.
+  const overviewFade=THREE.MathUtils.smoothstep(state.camera.zoom,.2,.58);
+  gridMat.opacity = GRID_OPACITY * overviewFade * (1 - night*.55);
+  // Fully transparent lines still cost a draw call; overview hides the object as well as fading it.
+  if(terrainGrid)terrainGrid.visible=gridMat.opacity>0;
 
-  syncTrees(trees); syncRocks(rocks); syncDiamonds(diamonds);
+  syncGrass();syncTrees(trees); syncRocks(rocks); syncDiamonds(diamonds);
   syncChests(heldChest()?[...chests,heldChest()]:chests);
   syncDrops(resourceDrops); syncCorpses(workerCorpses);
   syncEnemies(state.enemies); syncWorkers();
@@ -1472,7 +1590,7 @@ export function drawScene(){
   outlineMatPx.uniforms.thickness.value = outlineMat.uniforms.thickness.value / S;
   syncBase(performance.now()/1000);
   const king = state.king;
-  kingMesh.position.set(gx(king.x), 0, gz(king.y));
+  kingMesh.position.set(gx(king.x), terrainLiftAt(king.x,king.y), gz(king.y));
   kingMesh.scale.y = view.heightScale/100;
   kingMesh.userData.sword.rotation.z = king.swing>0 ? -1.2 : 0;
 
