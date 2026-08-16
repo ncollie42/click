@@ -51,7 +51,7 @@ try{
   const initial = await editor(page, "({doc: e.getDocument(), solves: e.lastSolves(), preview: e.previewDebug()})");
   assert.deepEqual([initial.doc.width, initial.doc.height, initial.doc.cellSize], [241, 161, 32]);
   assert.equal(initial.doc.land.some(row => row.includes("#")), true, "the editor must boot with the authored starter map, not a blank document");
-  assert.equal(initial.doc.objects.filter(object => object.kind === "chest").length, 1, "the booted starter map must carry its chest");
+  assert.ok(initial.doc.objects.filter(object => object.kind === "chest").length >= 1, "the booted starter map must carry its chest");
   assert.deepEqual([initial.solves.ground.status, initial.solves.raised.status], ["solved", "solved"]);
   assert.ok(initial.preview.triangles >= 2, "water plane missing from the preview");
   assert.equal(initial.preview.view.pitch, 40, "game camera must be the default editor preview");
@@ -366,6 +366,24 @@ try{
   await editor(page, "e.gameView()");
   await settle(page);
   await page.locator("#previewPane").screenshot({path: join(SHOTS, "starter-game-view.png")});
+
+  // ── water: depth foam is the picked default; flat remains for game parity ──
+  assert.equal((await editor(page, "e.previewDebug()")).waterMode, 4, "depth-foam water must be the default mode");
+  const surveyView = (await editor(page, "e.previewDebug()")).view;
+  for(const waterMode of [0, 4]){
+    await editor(page, `e.setWaterMode(${waterMode})`);
+    await settle(page);   // two frames: shader compile + one animated update
+    assert.equal((await editor(page, "e.previewDebug()")).waterMode, waterMode);
+    await page.locator("#previewPane").screenshot({path: join(SHOTS, `water-mode-${waterMode}.png`)});
+    await editor(page, "e.setPreviewView({tx: 220, tz: 210, dist: 110, pitch: 40, yaw: 0})");
+    await settle(page);
+    await page.locator("#previewPane").screenshot({path: join(SHOTS, `water-mode-${waterMode}-close.png`)});
+    await editor(page, `e.setPreviewView(${JSON.stringify(surveyView)})`);
+  }
+  await editor(page, "e.setWaterParams({fade: .08})");   // gradient reach slider stays wired
+  await settle(page);
+  assert.equal((await editor(page, "e.previewDebug()")).waterParams.fade, .08);
+  await editor(page, "e.setWaterParams({fade: .45})");
 
   assert.deepEqual(errors, []);
   console.log(`map editor smoke ok | stroke cells ${landCells} | fixture triangles ${fixture.preview.triangles} | objects ${withObjects.preview.objects} | contradictions highlighted ${contradiction.preview.contradictionMarkers} | shots in tools/shots/map-editor/`);

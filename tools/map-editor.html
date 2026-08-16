@@ -88,6 +88,16 @@
     <legend>preview</legend>
     <button id="uResetCamera" type="button">top-down</button>
     <button id="uGameView" type="button" title="match the in-game camera angle">game view</button>
+    <label title="depth foam is the picked water treatment; flat is what the game ships today">water <select id="uWaterMode">
+      <option value="4" selected>4 depth foam</option>
+      <option value="0">0 flat</option>
+    </select></label>
+    <div id="waterTuning">
+      <label title="wave height">height <input id="uWaterAmp" type="range" min="0" max="0.45" step="0.01" value="0.16"></label>
+      <label title="foam amount at shorelines">foam <input id="uWaterFoam" type="range" min="0" max="2" step="0.05" value="1"></label>
+      <label title="depth falloff — lower carries the shallow gradient deeper into the water">fade <input id="uWaterFade" type="range" min="0.05" max="0.8" step="0.01" value="0.45"></label>
+      <label title="how far shore walls and the lake floor drop below ground — sets how far the gradient can run (game walls use 0.9)">shore depth <input id="uWaterShoreDepth" type="range" min="0.9" max="8" step="0.1" value="5"></label>
+    </div>
     <span id="uSolveStatus" class="status"></span>
   </fieldset>
 </header>

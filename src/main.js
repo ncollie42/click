@@ -13,7 +13,9 @@ import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
 import {initHand, renderHand, syncHandTargeting, syncHandPeek, debugHoldFlights} from "./ui/hand.js";
 import {DRAFT_EFFECTS, initDraft, syncLevelHud} from "./ui/draft.js";
 import {initInput} from "./input.js";
-import {initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, drainScans} from "./debug/view-debugger.js";
+import {
+  initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, tickPerformance, drainScans
+} from "./debug/view-debugger.js";
 import {initShowcaseUi, updateShowcaseUi} from "./ui/showcase.js";
 
 // The overlay canvas is the input surface, the 2D overlay and the raycast target all at once.
@@ -95,6 +97,9 @@ function frame(now){
   // would let enemies skip past melee range and break contact-damage checks.
   for(let i=0;i<TUNE.gameSpeed;i++)update(dt);
   draw();
+  // Sample after rendering so the perf pane reads this frame's renderer counters. RAF cadence stays
+  // independent of game speed because extra simulation steps happen inside this one frame.
+  tickPerformance(now);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

@@ -11,7 +11,8 @@
 //   gameplay — the deliberate exception: it drives the simulation. Its switches
 //              write DBG (see that object's rule: never authored data) and its
 //              buttons call the same entry points play does. Its bindings are the
-//              last group in this file, under the GAMEPLAY PANE banner.
+//              last control group in this file, under the GAMEPLAY PANE banner.
+//   perf — read-only frame cadence and renderer resource counts.
 // bindV() covers range / checkbox / select; bindBtn() covers plain buttons.
 //
 // Ownership / data flow
@@ -32,9 +33,11 @@
 //   Supplies: syncViewInputs() — push programmatic camera changes back into the sliders. Called by
 //             main.js's frame (auto-orbit advanced the yaw) and, through main.js's hook wiring, by
 //             src/input.js's wheel handler.
-//             tickVisibility() / drainScans() — the two per-frame taps main.js's draw() makes. The
-//             counters behind them (frameTick, scanPending, scanTimer, scanData) are module-private
-//             on purpose: an imported binding cannot be reassigned by its importer.
+//             tickVisibility() / drainScans() — the two per-frame taps main.js's draw() makes.
+//             tickPerformance() — receives each RAF timestamp after rendering; it owns the rolling
+//             cadence window and reads renderer counters without affecting simulation timing.
+//             All counters are module-private on purpose: an imported binding cannot be reassigned
+//             by its importer.
 //
 // localStorage: "wd3d.tab" stores the selected top pane; "wd3d.subtabs" defensively stores one
 // object mapping grouped pane names to their selected contextual subgroup. Footer utilities and
@@ -59,7 +62,8 @@ import {
 import {
   view, VIEW_TUNE, IND,
   placeCamera, setOrthoCamera, setShadows, setSelectorPreview,
-  setPins, scanSubjects, scanBlockers, countVisible, updateWorldMatrices
+  setPins, scanSubjects, scanBlockers, countVisible, updateWorldMatrices,
+  terrainRenderDiagnostics
 } from "../render/scene.js";
 import {setOutlines, outlineMat} from "../render/models.js";
 import {BARS, BADGE, BADGE_ICON_RATIO, DAMAGE_TEXT} from "../render/overlay.js";
@@ -75,6 +79,7 @@ const $v = id => document.getElementById(id);
 // Module-private orchestration state. None of it is exported: an importer cannot reassign an
 // imported binding, so every one of these would have to become a holder the moment it left.
 let scanData = [], scanTimer = 0, scanPending = false, frameTick = 0;
+let perfFrames = [], perfLastReadout = 0;
 let vPanes = [], subtabState = {};
 const boundDefaults = new Map();
 
@@ -482,7 +487,7 @@ function updateReadout(){
     (clean ? "clean from "+clean.p+"° up" : "never fully clean");
 }
 
-// ── the two per-frame taps main.js's draw() makes ───────────────────────────
+// ── per-frame taps owned by the debugger ───────────────────────────────────
 /**
  * Visibility stat + occluded pins, driven from draw() so the pins track moving things. Throttled:
  * it raycasts every clickable thing. Must land BEFORE the draw call — it adds pins to the scene.
@@ -493,6 +498,34 @@ export function tickVisibility(){
 /** Drain a scan a slider scheduled. Runs after the frame is on screen, never during it. */
 export function drainScans(){
   if(scanPending){ scanPending=false; runScan(); }
+}
+
+/**
+ * Record browser-delivered RAF cadence, not simulation steps: game-speed runs multiple updates per
+ * frame and must not inflate this number. DOM and renderer diagnostics refresh at 4 Hz; the frame
+ * timestamps retain only the rolling one-second window.
+ */
+export function tickPerformance(now){
+  perfFrames.push(now);
+  const cutoff=now-1000;
+  while(perfFrames.length>1&&perfFrames[0]<cutoff)perfFrames.shift();
+  if(now-perfLastReadout<250)return;
+  perfLastReadout=now;
+
+  const intervals=[];
+  for(let i=1;i<perfFrames.length;i++)intervals.push(perfFrames[i]-perfFrames[i-1]);
+  if(intervals.length){
+    const elapsed=perfFrames.at(-1)-perfFrames[0];
+    const sorted=[...intervals].sort((a,b)=>a-b);
+    const p95=sorted[Math.ceil(sorted.length*.95)-1];
+    $v("vPerfFps").textContent=(intervals.length*1000/elapsed).toFixed(0);
+    $v("vPerfAverage").textContent=(elapsed/intervals.length).toFixed(1)+" ms";
+    $v("vPerfP95").textContent=p95.toFixed(1)+" ms";
+  }
+  const diagnostics=terrainRenderDiagnostics();
+  $v("vPerfDrawCalls").textContent=diagnostics.drawCalls;
+  $v("vPerfGeometries").textContent=diagnostics.geometries;
+  $v("vPerfTextures").textContent=diagnostics.textures;
 }
 
 // ── registration ────────────────────────────────────────────────────────────

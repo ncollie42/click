@@ -34,13 +34,14 @@
                           and the card dealer.
                           Its flags live in DBG and its buttons call the same
                           entry points play does; it authors nothing itself.
+             perf       — rolling RAF cadence and renderer resource readouts.
              Contextual subgroup order: visibility scan/readability; input
              hand/click/projectiles; overlays damage/bars/badge; gameplay
-             economy/builders/time/combat/population/cards. Camera and selectors
+             economy/builders/time/combat/population/cards. Camera, selectors, and perf
              intentionally have no subgroups.
-             Ownership is one-way and exclusive: the five view panes write only
+             Ownership is one-way and exclusive: non-gameplay panes only read diagnostics or write
              their own presentation bag (selectors -> IND / SEL_PREVIEW,
-             overlays -> BARS / DAMAGE_TEXT / BADGE, and so on) and never a simulation value;
+             overlays -> BARS / DAMAGE_TEXT / BADGE, and so on), never a simulation value;
              gameplay is the deliberate exception and is confined to DBG plus
              the documented entry-point calls. The bindV()/bindBtn() calls are
              grouped in the same order and carry the matching comments; see
@@ -261,6 +262,18 @@
           </div>
           <div id="vCardDealer"></div>
           </div>
+        </section>
+
+        <section class="pane" data-tab="perf">
+          <h4>frame</h4>
+          <div id="vPerfHero"><b id="vPerfFps">&mdash;</b><span>fps</span></div>
+          <div class="row"><span>average interval</span><span id="vPerfAverage">&mdash;</span></div>
+          <div class="row"><span>p95 interval</span><span id="vPerfP95">&mdash;</span></div>
+          <div class="vPerfNote">rolling 1s RAF cadence</div>
+          <h4>renderer</h4>
+          <div class="row"><span>draw calls</span><span id="vPerfDrawCalls">&mdash;</span></div>
+          <div class="row"><span>geometries</span><span id="vPerfGeometries">&mdash;</span></div>
+          <div class="row"><span>textures</span><span id="vPerfTextures">&mdash;</span></div>
         </section>
 
       </div>

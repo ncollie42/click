@@ -11,6 +11,7 @@ import {buildObjectModel, disposeGroup, S} from "./object-catalog.js";
 import {makeGrassTuftGeometry} from "../../src/render/models.js";
 import {PAL} from "../../src/render/palette.js";
 import {resolveAuthoredMapScatter} from "../../src/game/authored-map.js";
+import {createWaterModes} from "./water-modes.js";
 
 // Fixed authored elevations in world units (1 unit = 16 game px, matching models.js).
 export const GROUND_TOP = 0;
@@ -60,7 +61,9 @@ export function createTerrainPreview({canvas}){
     }
     return materialCache.get(key);
   }
-  const waterMaterial = new THREE.MeshLambertMaterial({color: 0x4d7fc0, flatShading: true});
+  // Water is owned by the mode system (see water-modes.js): mode 0 reproduces
+  // the game's flat plane; 1-5 are candidate shader treatments swappable live.
+  const water = createWaterModes({renderer, surfaceY: WATER_SURFACE, tileOf: doc => doc.cellSize * S, floorYOf: () => shoreBottom});
   const contradictionMaterial = new THREE.MeshBasicMaterial({color: 0xe03a2a, transparent: true, opacity: .55, depthTest: false});
 
   // Everything rebuild() creates, torn down symmetrically before the next build.
@@ -115,20 +118,6 @@ export function createTerrainPreview({canvas}){
       built.meshes.push(mesh);
       built.geometries.push(geometry);
     }
-  }
-
-  function buildWater(doc){
-    const tile = doc.cellSize * S;
-    const width = (doc.width + 6) * tile, depth = (doc.height + 6) * tile;
-    const geometry = new THREE.PlaneGeometry(width, depth);
-    const water = new THREE.Mesh(geometry, waterMaterial);
-    water.rotation.x = -Math.PI / 2;
-    water.position.set(doc.width * tile / 2, WATER_SURFACE, doc.height * tile / 2);
-    water.receiveShadow = true;
-    water.name = "water";
-    scene.add(water);
-    built.meshes.push(water);
-    built.geometries.push(geometry);
   }
 
   function markContradictions(doc, solve, topY, bottomY){
@@ -196,6 +185,10 @@ export function createTerrainPreview({canvas}){
 
   const view = {yaw: 0, pitch: 88, dist: 60, tx: 0, tz: 0};
   let lastDoc = null, lastSolves = null;
+  // How far shore walls extend below ground tops. Only visible through the
+  // transparent depth-foam water (mode 4), where deeper walls widen the
+  // shoreline gradient; the game's own walls stop at SHORE_BOTTOM.
+  let shoreBottom = WATER_BOTTOM;
   let resourceCounts = {explicitObjects: 0, generatedTrees: 0, generatedRocks: 0, generatedGrass: 0};
   // Debug/test hook: a reduced shape set makes real contradictions reachable
   // in the browser (e.g. no saddle) without touching authored terrain.
@@ -231,10 +224,10 @@ export function createTerrainPreview({canvas}){
       const ground = solveTerrainWfc({doc, catalog: groundCatalog, layer: "ground", salt: GROUND_SALT});
       const raised = solveTerrainWfc({doc, catalog: raisedCatalog, layer: "raised", salt: RAISED_SALT});
       disposeBuilt();
-      buildWater(doc);
-      buildLayer(doc, ground, "ground", GROUND_TOP, WATER_BOTTOM);
+      water.build(scene, doc);
+      buildLayer(doc, ground, "ground", GROUND_TOP, shoreBottom);
       buildLayer(doc, raised, "raised", RAISED_TOP, GROUND_TOP);
-      markContradictions(doc, ground, GROUND_TOP, WATER_BOTTOM);
+      markContradictions(doc, ground, GROUND_TOP, shoreBottom);
       markContradictions(doc, raised, RAISED_TOP, GROUND_TOP);
       const scatter = resolveAuthoredMapScatter(doc);
       resourceCounts = buildObjects(doc, scatter);
@@ -255,6 +248,14 @@ export function createTerrainPreview({canvas}){
     // The in-game perspective: same pitch/yaw as the game's default view state
     // (scene.js view = {pitch:40, yaw:0, fov:38}); distance/target are kept.
     gameView(){ view.pitch = 40; view.yaw = 0; },
+    // Water candidates 0-5; rebuilds only the water, terrain is untouched.
+    setWaterMode(next){ water.setMode(next); if(lastDoc) water.build(scene, lastDoc); },
+    setWaterParams(partial){ water.setParams(partial); },
+    setShoreDepth(next){
+      if(!(next > 0)) throw new Error(`shore depth must be a positive drop below ground, got ${next}`);
+      shoreBottom = -next;
+      if(lastDoc) preview.rebuild(lastDoc);
+    },
     setShapeFilter({ground = null, raised = null} = {}){
       groundCatalog = ground ? buildModuleCatalog({layer: "ground", shapes: ground}) : GROUND_CATALOG;
       raisedCatalog = raised ? buildModuleCatalog({layer: "raised", shapes: raised}) : RAISED_CATALOG;
@@ -274,7 +275,10 @@ export function createTerrainPreview({canvas}){
         triangles += (geometry.getIndex() ? geometry.getIndex().count : geometry.getAttribute("position").count) / 3;
       return {
         terrainMeshes: built.meshes.length,
-        triangles,
+        triangles: triangles + water.triangleCount(),
+        waterMode: water.mode(),
+        waterParams: water.params(),
+        shoreBottom,
         objects: resourceCounts.explicitObjects,
         ...resourceCounts,
         contradictionMarkers: built.meshes.filter(mesh => mesh.name.startsWith("contradiction:")).length,
@@ -291,13 +295,14 @@ export function createTerrainPreview({canvas}){
         camera.updateProjectionMatrix();
       }
       applyCamera();
+      water.update(camera);   // animates waves; modes 4/5 run their pre-pass here
       renderer.render(scene, camera);
     },
     dispose(){
       disposeBuilt();
       for(const material of materialCache.values()) material.dispose();
       materialCache.clear();
-      waterMaterial.dispose();
+      water.dispose();
       contradictionMaterial.dispose();
       renderer.dispose();
     },

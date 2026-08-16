@@ -221,10 +221,115 @@ const landMat=flat(0xffffff,{map:grassTex,vertexColors:true});
 const REGION_COLORS={forest:new THREE.Color(0x6f965c),rocky:new THREE.Color(0xa8a387),open:new THREE.Color(0xb3c98c),coast:new THREE.Color(PAL.cliff)};
 const shoreMat=flat(PAL.cliff,{side:THREE.DoubleSide});
 
-// One lower plane supplies both the surrounding ocean and every lake hole.
-const WATER_Y=-1.05,SHORE_BOTTOM=WATER_Y-.12,NO_RAYCAST=()=>{};
-const water=meshOf(new THREE.PlaneGeometry(WU*5,HU*6),flat(PAL.water),false,false);
+// ── water: depth-foam shader (winner of the map-editor audition; see tools/map-editor water select) ──
+// A per-frame depth pre-pass of terrain-only geometry measures water thickness per
+// pixel: animated foam where water meets shore, an exp() shallow→deep gradient below,
+// small vertex waves on top. Shore walls drop to SHORE_BOTTOM and a sand floor sits at
+// the same depth so thickness stays finite and the gradient runs continuously — without
+// the floor, view rays escaping past wall bottoms snap the color to full deep in a hard
+// line. Only meshes on WATER_DEPTH_LAYER feed the pre-pass, so props, drops, and UI
+// overlays can never smudge foam into the water.
+const WATER_Y=-1.05,SHORE_BOTTOM=WATER_Y-4.6,NO_RAYCAST=()=>{};
+const WATER_DEPTH_LAYER=1;
+const WATER_MARGIN=60;               // detailed water mesh reaches this far beyond the map
+const waterUniforms={
+  uTime:{value:0},uLight:{value:1},
+  uAmp:{value:.16},uFoamMul:{value:1},uFade:{value:.45},   // slider values locked in the editor audition
+  uDepth:{value:null},uResolution:{value:new THREE.Vector2(1,1)},
+  uNear:{value:.5},uFar:{value:600},uOrtho:{value:0},
+  uShallow:{value:new THREE.Color(0x6fb0dd)},uDeep:{value:new THREE.Color(0x22558f)},
+  uFoam:{value:new THREE.Color(0xecf6f8)},uSun:{value:new THREE.Vector3(.35,.85,.3).normalize()},
+};
+const waterMat=new THREE.ShaderMaterial({
+  transparent:true,depthWrite:false,uniforms:waterUniforms,
+  vertexShader:`
+    uniform float uTime,uAmp;
+    varying vec3 vWorld;
+    varying float vViewZ;
+    float waveHeight(vec2 p,float t){
+      return uAmp*(.45*sin(p.x*.16+t*1.2)
+        +.3*sin(p.x*.11+p.y*.13-t*.8)
+        +.25*sin(-.42*p.x+.38*p.y+t*2.0)
+        +.3*sin(p.x*.9+p.y*.75+t*2.4));
+    }
+    void main(){
+      vec4 world=modelMatrix*vec4(position,1.0);
+      world.y+=waveHeight(world.xz,uTime);
+      vWorld=world.xyz;
+      vec4 view=viewMatrix*world;
+      vViewZ=view.z;
+      gl_Position=projectionMatrix*view;
+    }`,
+  fragmentShader:`
+    #include <packing>
+    uniform sampler2D uDepth;
+    uniform vec2 uResolution;
+    uniform float uNear,uFar,uTime,uFoamMul,uFade,uLight,uOrtho;
+    uniform vec3 uShallow,uDeep,uFoam,uSun;
+    varying vec3 vWorld;
+    varying float vViewZ;
+    void main(){
+      float sceneDepth=texture2D(uDepth,gl_FragCoord.xy/uResolution).x;
+      float sceneViewZ=uOrtho>.5
+        ? orthographicDepthToViewZ(sceneDepth,uNear,uFar)
+        : perspectiveDepthToViewZ(sceneDepth,uNear,uFar);
+      float thickness=max(vViewZ-sceneViewZ,0.0);
+      vec3 facetNormal=normalize(cross(dFdx(vWorld),dFdy(vWorld)));
+      if(facetNormal.y<0.0)facetNormal=-facetNormal;
+      float light=.5+.6*clamp(dot(facetNormal,uSun),0.0,1.0);
+      vec3 color=mix(uShallow,uDeep,1.0-exp(-thickness*uFade))*light;
+      float ripple=.5+.5*sin(thickness*6.0-uTime*2.2+(vWorld.x+vWorld.z)*.4);
+      float foam=(smoothstep(1.8,.08,thickness)*smoothstep(.3,.8,ripple)
+        +smoothstep(.45,.04,thickness))*uFoamMul;
+      color=mix(color,uFoam,clamp(foam,0.0,1.0));
+      gl_FragColor=vec4(color*uLight,clamp(.6+thickness*.12,0.0,.93));
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`,
+});
+const WATER_SEGS_X=200,WATER_SEGS_Y=Math.round(WATER_SEGS_X*(HU+2*WATER_MARGIN)/(WU+2*WATER_MARGIN));
+const water=new THREE.Mesh(new THREE.PlaneGeometry(WU+2*WATER_MARGIN,HU+2*WATER_MARGIN,WATER_SEGS_X,WATER_SEGS_Y),waterMat);
 water.rotation.x=-Math.PI/2;water.position.set(WU/2,WATER_Y,HU/2);water.raycast=NO_RAYCAST;scene.add(water);
+// Sand floor at shore-wall depth: read through the shallows, keeps thickness finite.
+const waterFloor=meshOf(new THREE.PlaneGeometry(WU+2*WATER_MARGIN,HU+2*WATER_MARGIN),flat(0x8f855e),false,false);
+waterFloor.rotation.x=-Math.PI/2;waterFloor.position.set(WU/2,SHORE_BOTTOM,HU/2);
+waterFloor.raycast=NO_RAYCAST;waterFloor.layers.enable(WATER_DEPTH_LAYER);scene.add(waterFloor);
+// Horizon fill beyond the detailed mesh; sits under the floor and reads as deep water.
+const waterFar=meshOf(new THREE.PlaneGeometry(WU*5,HU*6),flat(0x24568c),false,false);
+waterFar.rotation.x=-Math.PI/2;waterFar.position.set(WU/2,SHORE_BOTTOM-1,HU/2);
+waterFar.raycast=NO_RAYCAST;waterFar.layers.enable(WATER_DEPTH_LAYER);scene.add(waterFar);
+
+// Live tuning/debug surface (view-debugger + headless harnesses).
+export const waterDebug={
+  uniforms:waterUniforms,
+  layerMasks:()=>({top:terrainTop?.layers.mask,skirts:shorelineSkirts?.layers.mask,floor:waterFloor.layers.mask,far:waterFar.layers.mask,camera:camera3.layers.mask}),
+};
+
+let waterDepthTarget=null;
+const waterDepthOverride=new THREE.MeshBasicMaterial();
+const _waterBufSize=new THREE.Vector2();
+function waterPrePass(){
+  const size=renderer.getDrawingBufferSize(_waterBufSize);
+  if(!waterDepthTarget||waterDepthTarget.width!==size.x||waterDepthTarget.height!==size.y){
+    waterDepthTarget?.depthTexture?.dispose();waterDepthTarget?.dispose();
+    waterDepthTarget=new THREE.WebGLRenderTarget(size.x,size.y,{depthTexture:new THREE.DepthTexture(size.x,size.y)});
+    waterUniforms.uDepth.value=waterDepthTarget.depthTexture;
+  }
+  waterUniforms.uResolution.value.copy(size);
+  waterUniforms.uNear.value=camera3.near;waterUniforms.uFar.value=camera3.far;
+  waterUniforms.uOrtho.value=camera3.isOrthographicCamera?1:0;
+  waterUniforms.uTime.value=(performance.now()/1000)%100000;
+  const layerMask=camera3.layers.mask,shadowAuto=renderer.shadowMap.autoUpdate;
+  renderer.shadowMap.autoUpdate=false;
+  camera3.layers.set(WATER_DEPTH_LAYER);
+  scene.overrideMaterial=waterDepthOverride;
+  renderer.setRenderTarget(waterDepthTarget);
+  renderer.render(scene,camera3);
+  renderer.setRenderTarget(null);
+  scene.overrideMaterial=null;
+  camera3.layers.mask=layerMask;
+  renderer.shadowMap.autoUpdate=shadowAuto;
+}
 
 // ─────────────────────────────────────────────────────────── placement grid
 const GRID_Y=.015;           // world units above the land top: enough to win the depth test
@@ -346,6 +451,8 @@ function rebuildTerrainPresentation(){
     // rebuild cannot leave a half-updated scene if a future producer violates the terrain contract.
     const nextTop=meshOf(geometryWith(top,uv,colors),landMat,false,true),nextSkirts=meshOf(geometryWith(skirts),shoreMat,false,true);
     nextTop.raycast=nextSkirts.raycast=NO_RAYCAST;
+    // Terrain is what the water shader measures thickness against.
+    nextTop.layers.enable(WATER_DEPTH_LAYER);nextSkirts.layers.enable(WATER_DEPTH_LAYER);
     removeTerrainObject(terrainTop);removeTerrainObject(shorelineSkirts);
     terrainTop=nextTop;shorelineSkirts=nextSkirts;scene.add(terrainTop,shorelineSkirts);builtTerrainRevision=metadata.revision;staticBuildStats.terrainBuilds++;
   }
@@ -1571,6 +1678,8 @@ export function drawScene(){
   const night = state.clock.light;
   sun.intensity = 1.1 - night*.75;
   sun.color.setHex(night>.25 ? PAL.sunNight : PAL.sunDay);
+  // The water shader ignores scene lights, so it tracks the night dim explicitly.
+  waterUniforms.uLight.value = 1 - night*.6;
   // The grid is unlit, so without this it would stay bright while the map darkens and end up the
   // loudest thing on screen at night. Fading it keeps it under the terrain and the combat marks.
   // Overview zoom suppresses the 32px lattice; normal/build zoom retains full precision.
@@ -1609,7 +1718,7 @@ export function drawScene(){
   return orbited;
 }
 /** The draw call itself, split from drawScene() so pins land in the scene before it runs. */
-export function renderScene(){ renderer.render(scene, camera3); }
+export function renderScene(){ waterPrePass(); renderer.render(scene, camera3); }
 
 // ─────────────────────────────────────────────── visibility measurement (scene half)
 // The debugger owns the readouts and the pitch sweep; these three are the parts that need the scene

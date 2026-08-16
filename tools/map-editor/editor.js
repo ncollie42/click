@@ -609,6 +609,17 @@ query("uUndo").onclick = undo;
 query("uRedo").onclick = redo;
 query("uResetCamera").onclick = () => preview.resetCamera();
 query("uGameView").onclick = () => preview.gameView();
+query("uWaterMode").onchange = event => preview.setWaterMode(Number(event.target.value));
+for(const [sliderId, param] of Object.entries({uWaterAmp: "amp", uWaterFoam: "foam", uWaterFade: "fade"}))
+  query(sliderId).oninput = event => preview.setWaterParams({[param]: Number(event.target.value)});
+query("uWaterShoreDepth").onchange = event => preview.setShoreDepth(Number(event.target.value));  // rebuilds terrain: on release, not per-tick
+// Sliders are the source of truth on boot so UI and preview state always agree.
+preview.setWaterParams({
+  amp: Number(query("uWaterAmp").value),
+  foam: Number(query("uWaterFoam").value),
+  fade: Number(query("uWaterFade").value),
+});
+preview.setShoreDepth(Number(query("uWaterShoreDepth").value));
 
 query("uNew").onclick = () => {
   try{
@@ -723,6 +734,9 @@ window.__mapEditor = {
   setPreviewView: next => preview.setView(next),
   resetCamera: () => preview.resetCamera(),
   gameView: () => preview.gameView(),
+  setWaterMode: next => { query("uWaterMode").value = String(next); preview.setWaterMode(next); },
+  setWaterParams: partial => preview.setWaterParams(partial),
+  setShoreDepth: next => { query("uWaterShoreDepth").value = String(next); preview.setShoreDepth(next); },
   // Reduced module sets make real WFC contradictions reachable in tests.
   setShapeFilter: filter => { preview.setShapeFilter(filter ?? {}); afterDocumentChange(); },
 };

@@ -205,6 +205,12 @@ The chest never respawns, stores no pre-rolled contents, accepts no worker assig
 by enemies. Only unopened chests are movable. Chest rarity and rarity telegraphing are explicitly
 deferred; there is no rarity system yet.
 
+## Drop Animations
+
+**Tags:** `Game Feel / Juice`, `Immersion`
+
+Add a short landing animation after successfully dropping a carried entity, especially workers and chests. Communicate weight and confirm placement: workers briefly brace or bounce; chests land with a heavier impact. Invalid or cancelled drops should keep their existing origin-restoration behavior rather than playing a landing animation.
+
 ## Ground Clutter
 
 **Question:** If the ground is the only place loose resources live, how do we keep it readable?
@@ -219,6 +225,12 @@ These are not exclusive; merging is about density, clustering is about placement
 ## Towers
 
 - Add towers.
+
+### Water Usage
+
+**Tags:** `Core Gameplay`, `Immersion`
+
+Give water a gameplay purpose beyond blocking placement. Explore either a water monster that makes shorelines dangerous, or a water tower that draws from nearby water for attacks or utility. Decide whether these ideas should interact or remain alternatives before defining mechanics.
 
 ### Resource-Fed Towers
 
