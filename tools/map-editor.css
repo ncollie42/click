@@ -54,6 +54,7 @@ body[data-authoring-panel="objects"] .brushSizeControl{display:none}
 body[data-authoring-panel="scatter"] #brushControls .brushSizeControl,
 body[data-authoring-panel="scatter"] #brushControls .sampleRow{display:none}
 .shapeToolGroup .brushToolControl{display:flex;flex:1 1 0;justify-content:center}
+.shapeToolGroup .brushSizeControl{display:flex;flex:0 0 auto;align-items:center;gap:4px}
 .sampleRow{flex:1 0 100%;padding-top:2px}
 #brushControls>label:has(input[type=radio]:checked){background:#607a49;color:white;border-radius:4px;padding:3px 6px;outline:1px solid #91ad71}
 #brushControls>label:has(input[type=radio]){padding:3px 6px}

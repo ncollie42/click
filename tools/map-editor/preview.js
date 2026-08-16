@@ -159,6 +159,11 @@ export function createTerrainPreview({canvas}){
 
   function buildObjects(doc, scatter){
     for(const object of doc.objects) placeObjectModel(doc, object, `object:${object.kind}:${object.cx},${object.cy}`);
+    // The game always spawns the main base at the map's center cell; preview it
+    // unless the author already placed an explicit base there.
+    const baseCx = Math.floor(doc.width / 2), baseCy = Math.floor(doc.height / 2);
+    if(!doc.objects.some(object => object.kind === "base" && object.cx === baseCx && object.cy === baseCy))
+      placeObjectModel(doc, {kind: "base", cx: baseCx, cy: baseCy}, "baseMarker");
     for(const cell of scatter.trees) placeObjectModel(doc, cell, `generated:tree:${cell.cx},${cell.cy}`);
     for(const cell of scatter.rocks) placeObjectModel(doc, cell, `generated:rock:${cell.cx},${cell.cy}`);
     if(scatter.grass.length > 0){

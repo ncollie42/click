@@ -1,6 +1,7 @@
 <!doctype html>
 <!-- Map editor — standalone authored-map tool host.
-     Serve from REPO ROOT (e.g. `python3 -m http.server 8000`), open /tools/map-editor.html.
+     Serve from REPO ROOT (`node tools/serve.mjs`; python3 -m http.server works too but
+     disables "save to game"), open /tools/map-editor.html.
      Authored cells/regions define what exists; WFC decides terrain appearance.
      src/game/map-document.js is authoritative; everything else is derived.
      window.__mapEditorReady === true once the editor is interactive; window.__mapEditor
@@ -22,6 +23,7 @@
     <button id="uNew" type="button">new map</button>
     <button id="uSave" type="button">download JSON</button>
     <label class="fileButton">load JSON<input id="uLoad" type="file" accept=".json,application/json"></label>
+    <button id="uSaveLive" type="button" title="write src/game/maps/starter.map.json in place (requires node tools/serve.mjs)">save to game</button>
   </fieldset>
   <fieldset id="brushControls">
     <legend>author</legend>
@@ -41,15 +43,15 @@
     </div>
     <label class="scatterMode"><input type="radio" name="brush" value="scatter" id="uBrushScatter">scatter</label>
     <select id="uObjectKind" class="objectMode" disabled></select>
+    <div class="sampleRow"><button id="uSample" class="sampleControl" type="button" title="or hold Alt and click">sample</button></div>
     <div class="toolGroup shapeToolGroup" aria-label="Paint shape">
       <label class="brushToolControl"><input type="radio" name="tool" value="paint" id="uToolPaint">brush</label>
       <label class="brushToolControl"><input type="radio" name="tool" value="rect" id="uToolRect" checked>rect</label>
+      <label class="brushSizeControl">size <select id="uBrushSize">
+        <option value="1" selected>1</option><option value="2">2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select></label>
     </div>
-    <label class="brushSizeControl">size <select id="uBrushSize">
-      <option value="1" selected>1</option><option value="2">2</option>
-      <option value="3">3</option><option value="4">4</option>
-    </select></label>
-    <div class="sampleRow"><button id="uSample" class="sampleControl" type="button" title="or hold Alt and click">sample</button></div>
   </fieldset>
   <fieldset id="scatterControls">
     <legend>scatter regions</legend>

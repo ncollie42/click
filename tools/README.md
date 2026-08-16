@@ -3,8 +3,13 @@
 Serve the repository root so browser ES-module imports resolve:
 
 ```sh
-python3 -m http.server 8000
+node tools/serve.mjs        # port 8000; also enables the map editor's "save to game" button
+python3 -m http.server 8000 # read-only alternative (live save unavailable)
 ```
+
+`tools/serve.mjs` additionally accepts `PUT /src/game/maps/starter.map.json` from the editor,
+validating the body with the real game loader (`parseMapDocument` + `buildWorldFromMapData`)
+before writing — an invalid map is rejected with a 400 and nothing changes on disk.
 
 - Terrain render screenshots/smoke: `node tools/terrain-render-snap.mjs`. Boots the game on the authored starter map and captures fixed full-map, base, coast, and showcase views under ignored `tools/shots/terrain/`. It checks browser/pointer behavior, base-ring enemy spawns, authored resource counts, terrain revision rebuild-disposal symmetry, bounded renderer resources, overview grid suppression, cold startup, 120 forced frames, and representative RAF timing. Screenshots are review artifacts, never pixel-perfect assertions.
 - Model viewer: open `http://localhost:8000/tools/model-viewer.html`.

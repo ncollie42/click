@@ -44,7 +44,7 @@ import {
   closeUpgradeMenu, selectUpgrade, acceptUpgrade, openSkillTree,
   // queries — pure reads
   hoverTarget, costText, upgradeList,
-  xp, skillPoints, livingActiveWaveEnemies, clamp
+  skillPoints, livingActiveWaveEnemies, clamp
 } from "../game/simulation.js";
 
 // The pointer surface (<canvas id="overlay">) — handed in by main.js at init. The HUD touches
@@ -116,11 +116,7 @@ export function syncPhaseHud(){
   const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber,living=isDay?0:livingActiveWaveEnemies();
   setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",isDay?Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"elapsed "+formatDuration(wave.elapsed));
   setText("runTime",formatDuration(clock.elapsed));
-  // The run's ONE progress bar is the level bar in #xpHud, and src/ui/draft.js owns it — this row
-  // carries the other number, the lifetime total fed, beside the skill-point badge it shares a line
-  // with. The tier thresholds this used to walk are gone; the level curve replaced them.
   const points=skillPoints(),badge=document.getElementById("skillPointBadge");
-  setText("xpReadout","xp "+xp()+" fed");
   setText("skillPointCount",String(points));badge.hidden=points===0;
   panel.classList.toggle("night",!isDay);
   // During night, spawning merely transfers work from the schedule to the battlefield. Only an
@@ -132,7 +128,6 @@ export function syncPhaseHud(){
   const signature=[clock.phase,recipe?.id].join("|");
   if(panel.dataset.forecast!==signature){
     panel.dataset.forecast=signature;
-    setText("forecastSides",recipe?"from all around the base":"no attack scheduled");
     const summary=document.getElementById("recipeSummary");summary.replaceChildren();
     if(recipe){const counts={};for(const spawn of recipe.spawns)counts[spawn]=(counts[spawn]||0)+1;for(const [type,count] of Object.entries(counts)){const item=document.createElement("li");item.textContent=count+"× "+type;summary.appendChild(item);}}
   }

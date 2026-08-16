@@ -17,7 +17,7 @@
     <!-- tabindex=-1: never a tab stop, but a real focus target, so a modal closing over a
          vanished opener has somewhere to put focus other than a stranded <body>. -->
     <canvas id="overlay" width="960" height="540" tabindex="-1"></canvas>
-    <section id="viewPanel" aria-label="3d view debugger" aria-keyshortcuts="T">
+    <section id="viewPanel" aria-label="3d view debugger" aria-keyshortcuts="T" hidden>
       <button id="vToggle" type="button">view &#9662;</button>
       <nav id="vTabs"></nav>
       <div id="vPanes">
@@ -283,9 +283,8 @@
       <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
       <div id="phaseProgress"><i id="phaseProgressFill"></i></div>
       <div id="runTimeRow"><span>run time</span><span id="runTime">0:00</span></div>
-      <div id="xpRow"><span id="xpReadout">xp 0 → 40</span><button id="skillPointBadge" type="button" hidden aria-label="open skill tree"><span id="skillPointCount">0</span> ✦</button></div>
+      <button id="skillPointBadge" type="button" hidden aria-label="open skill tree"><span id="skillPointCount">0</span> ✦</button>
       <div id="forecastLabel">next attack</div>
-      <div id="forecastSides"></div>
       <div id="forecastRemaining"></div>
       <ul id="recipeSummary"></ul>
     </section>

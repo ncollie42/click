@@ -331,6 +331,19 @@ function drawPaint(){
     paintContext.fillStyle = "#f3efe2";
     paintContext.fillText(object.kind[0].toUpperCase(), (object.cx + .5) * px, (object.cy + .55) * px);
   }
+  {
+    // The game always spawns the main base at the map's center cell (3×3 footprint);
+    // mark that reserved footprint so authors keep it on land.
+    const baseCx = Math.floor(doc.width / 2), baseCy = Math.floor(doc.height / 2);
+    paintContext.fillStyle = "rgba(255,214,90,0.25)";
+    paintContext.fillRect((baseCx - 1) * px, (baseCy - 1) * px, 3 * px, 3 * px);
+    paintContext.strokeStyle = "#ffd65a";
+    paintContext.lineWidth = 2;
+    paintContext.strokeRect((baseCx - 1) * px + 1, (baseCy - 1) * px + 1, 3 * px - 2, 3 * px - 2);
+    paintContext.fillStyle = "#ffd65a";
+    paintContext.font = `bold ${px - 2}px system-ui`;
+    paintContext.fillText("B", (baseCx + .5) * px, (baseCy + .55) * px);
+  }
   if(rectAnchor && hover){
     const x0 = Math.min(rectAnchor.cx, hover.cx), x1 = Math.max(rectAnchor.cx, hover.cx);
     const y0 = Math.min(rectAnchor.cy, hover.cy), y1 = Math.max(rectAnchor.cy, hover.cy);
@@ -618,6 +631,27 @@ query("uSave").onclick = () => {
   URL.revokeObjectURL(link.href);
 };
 
+query("uSaveLive").onclick = async () => {
+  const button = query("uSaveLive");
+  try{
+    showError(null);
+    const response = await fetch("../src/game/maps/starter.map.json", {
+      method: "PUT",
+      headers: {"content-type": "application/json"},
+      body: stringifyMapDocument(doc),
+    });
+    if(!response.ok){
+      // python3 -m http.server answers PUT with 501; point at the writable server.
+      const detail = response.status === 501 || response.status === 405
+        ? "live save needs the node dev server — restart serving with: node tools/serve.mjs"
+        : await response.text() || `save failed (${response.status})`;
+      throw new Error(detail);
+    }
+    button.textContent = "saved ✓";
+    setTimeout(() => { button.textContent = "save to game"; }, 1600);
+  }catch(error){ showError(error); }
+};
+
 query("uLoad").onchange = async event => {
   const file = event.target.files[0];
   event.target.value = "";
@@ -696,4 +730,13 @@ window.__mapEditor = {
 replaceDocument(doc);
 syncBrushControls();
 syncRegionControls();
-window.__mapEditorReady = true;
+// Boot with the game's authored starter map when served from the repo root; the
+// blank document remains the fallback (file://, fetch failure). The ready flag
+// flips only after the attempt so nothing observes a half-loaded default.
+(async () => {
+  try{
+    const response = await fetch("../src/game/maps/starter.map.json", {cache: "no-store"});
+    if(response.ok) replaceDocument(parseMapDocument(await response.text()));
+  }catch{ /* keep the blank document */ }
+  window.__mapEditorReady = true;
+})();

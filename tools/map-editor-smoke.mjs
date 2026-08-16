@@ -47,12 +47,13 @@ try{
   await page.click("#uTabScatter"); assert.equal(await editor(page, "e.getAuthoringPanel()"), "scatter");
   await page.click("#uTabTerrain"); assert.equal(await editor(page, "e.getAuthoringPanel()"), "terrain");
 
-  // ── initial document and solve state: defaults are the game grid ──
+  // ── initial document and solve state: the editor boots with the authored starter map ──
   const initial = await editor(page, "({doc: e.getDocument(), solves: e.lastSolves(), preview: e.previewDebug()})");
-  assert.deepEqual([initial.doc.width, initial.doc.height, initial.doc.cellSize, initial.doc.seed], [241, 161, 32, 1]);
-  assert.equal(initial.doc.land.every(row => row === "~".repeat(241)), true, "a new map must be all water");
+  assert.deepEqual([initial.doc.width, initial.doc.height, initial.doc.cellSize], [241, 161, 32]);
+  assert.equal(initial.doc.land.some(row => row.includes("#")), true, "the editor must boot with the authored starter map, not a blank document");
+  assert.equal(initial.doc.objects.filter(object => object.kind === "chest").length, 1, "the booted starter map must carry its chest");
   assert.deepEqual([initial.solves.ground.status, initial.solves.raised.status], ["solved", "solved"]);
-  assert.ok(initial.preview.triangles >= 2, "water plane missing from the empty preview");
+  assert.ok(initial.preview.triangles >= 2, "water plane missing from the preview");
   assert.equal(initial.preview.view.pitch, 40, "game camera must be the default editor preview");
 
   // Interactive painting runs on a smaller map so screen cells stay comfortably clickable.

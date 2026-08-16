@@ -67,10 +67,10 @@ try{
     const baseCell=grid.worldToCell(data.BASE.x,data.BASE.y);
     assert.equal(am.placementFootprintOnLand(authoredWorld,baseCell.cx,baseCell.cy,data.BASE.footprint,placementGrid),true,"base footprint is not entirely on authored land");
     assert.deepEqual([authoredWorld.trees.length,authoredWorld.rocks.length,authoredWorld.diamonds.length,authoredWorld.chests.length,authoredWorld.grass.length],[authoredWorld.targets.treeCount,authoredWorld.targets.rockCount,authoredWorld.targets.diamondCount,authoredWorld.targets.chestCount,authoredWorld.targets.grassCount]);
-    assert.deepEqual(authoredWorld.targets,{treeCount:173,rockCount:36,diamondCount:2,chestCount:1,grassCount:1596},"intentional starter scatter targets changed; review distribution before updating");
+    assert.deepEqual(authoredWorld.targets,{treeCount:166,rockCount:50,diamondCount:2,chestCount:1,grassCount:4200},"intentional starter scatter targets changed; review distribution before updating");
     for(const landmark of starterDoc.objects.filter(object=>object.kind==="tree"||object.kind==="rock")){const loaded=authoredWorld[`${landmark.kind}s`].find(cell=>cell.cx===landmark.cx&&cell.cy===landmark.cy);assert.ok(loaded,"explicit landmark was not loaded");assert.equal(loaded.variant,landmark.variant,"explicit landmark variant drifted");}
     const starterScatter=am.resolveAuthoredMapScatter(starterDoc);
-    assert.deepEqual(starterScatter.totals,{tree:170,rock:34,grass:1596});
+    assert.deepEqual(starterScatter.totals,{tree:163,rock:48,grass:4200});
     const reordered=mapdoc.cloneMapDocument(starterDoc);reordered.scatterRegions.reverse();assert.deepEqual(am.resolveAuthoredMapScatter(reordered),starterScatter,"JSON region order changed resolved resources");
     const rerolled=mapdoc.cloneMapDocument(starterDoc),west=rerolled.scatterRegions.find(region=>region.id==="forest-west");west.seed=(west.seed+1)>>>0;const rerolledScatter=am.resolveAuthoredMapScatter(rerolled);
     assert.deepEqual(rerolledScatter.trees.filter(cell=>cell.regionId==="forest-east"),starterScatter.trees.filter(cell=>cell.regionId==="forest-east"),"local reroll perturbed a disjoint region");
