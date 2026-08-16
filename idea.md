@@ -296,6 +296,12 @@ Fog cells are hard nodes, chipped at exactly like trees and rocks: hold-click to
 
 Open: does fog regrow at night? Regrowth would make frontier posts a holding action and pair well with hunger-scaled nights.
 
+### Clouds at Extreme Zoom-Out
+
+**Tags:** `Immersion`, `Game Feel / Juice`
+
+When the camera zooms out beyond the normal play range, clouds drift over the world and increasingly obscure the ground. This makes the distant overview feel atmospheric while visually masking detail the game no longer needs to present clearly.
+
 ## Deferred: Glow Radius Stage-Up
 
 **Tags:** `Game Feel / Juice`, `Immersion`

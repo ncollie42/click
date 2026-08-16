@@ -30,9 +30,9 @@ import {cardFace, cardBox, expectArrival, playArrival} from "./hand.js";
 import {syncModalUi} from "./hud.js";
 
 const TITLE = {level:"level up",dawn:"dawn spoils — the night paid out"};
-// Where a taken card goes, which is the ONE rule difference between the categories a player can
-// see. A buff is spent on the spot; everything else — consumable, aura, blueprint — is held.
-const destination = category => category==="buff" ? "→ applied the moment you take it" : "→ into your hand";
+// Only the surprising destination needs copy: buffs apply immediately. Ordinary cards entering the
+// hand is already communicated by the selection flight and needs no label under every card.
+const destination = category => category==="buff" ? "→ applied the moment you take it" : null;
 const goesToHand = category => category!=="buff";
 
 let surface=null;      // <canvas id="overlay"> — the focus target of last resort
@@ -98,9 +98,8 @@ export function render(){
     slot.className="pick";
     slot.dataset.index=String(i);
     slot.appendChild(cardFace(id,{key:String(i+1)}));
-    const tag=document.createElement("p");
-    tag.className="pick-dest";tag.textContent=destination(card?.category);
-    slot.appendChild(tag);
+    const destinationText=destination(card?.category);
+    if(destinationText){const tag=document.createElement("p");tag.className="pick-dest";tag.textContent=destinationText;slot.appendChild(tag);}
     slot.style.setProperty("--deal",(i*70)+"ms");
     slot.addEventListener("pointerenter",()=>{cursor=i;paintCursor();});
     slot.addEventListener("click",()=>choose(i));

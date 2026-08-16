@@ -24,8 +24,9 @@
 //
 // Layout note — the hand owns the bottom band. placeCards() measures #handDock, keeps a fixed gap,
 // shrinks cards only from 150px to 96px, then lets the dock scroll rather than overlap cards. Layout
-// writes final positions directly; pose changes are separate, named Web Animations. The row drops
-// to a PEEK sliver while a night wave is live. The toast lane steps up while a card is raised.
+// writes final positions directly; pose changes are separate, named Web Animations. Under night
+// pressure the row lowers but keeps each card's identity visible. The toast lane steps up while a
+// card is raised.
 // ═══════════════════════════════════════════════════════════════════════════
 import {cardById} from "../game/cards.js";
 import {hand, playCard, state} from "../game/simulation.js";
@@ -59,7 +60,7 @@ const poseAnimations=new WeakMap();
 let focus=-1;        // keyboard browse cursor
 let hover=-1;        // pointer hover
 let reduced=false;
-let peekOverride=null;  // the h key: null follows the night-wave rule, true forces the sliver, false forces it open
+let peekOverride=null;  // the h key: null follows night pressure, true lowers the row, false keeps it open
 let peeking=null;       // last painted peek answer, so the frame tap only touches the DOM on a change
 let playedOnce=false;   // the legend fades after the first successful play; runtime only, nothing stored
 let spendWatch=null;    // id of a card mid-placement; renderHand() flies it out when it leaves the hand
@@ -122,26 +123,12 @@ function cardText(card){
   const [kind,name]=String(card.ref||"").split(":");
   return card.category==="blueprint"&&kind==="tower"&&TOWER_VARIANTS[name]?.description||card.text;
 }
-/**
- * The note line under the effect text: rarity, then whatever ELSE the catalog fields say outright.
- * Composed rather than quoted, because `notes` in the registry is a design/feature-tracker field
- * written for the people building the game ("layered over TUNE.clickDamage at read time"), not a
- * line to put in front of a player. Every branch below reads one authored field and states it.
- */
-function cardNote(card){
-  const detail=card.category==="blueprint"?(refName(card.ref)?"one site · you supply the materials":"a plan for something unbuilt")
-    :card.category==="aura"?"one placement · "+card.durationSeconds+"s"
-    :card.charges>1?card.charges+" placements"
-    :card.category==="buff"&&card.stacks>1?"stacks to "+card.stacks
-    :"";
-  return [card.rarity,detail].filter(Boolean).join(" · ");
-}
-
 // ── the card face ───────────────────────────────────────────────────────────
 // One anatomy, two sizes. Everything inside is em-based off the card's own font-size, which
-// styles.css derives from --cw, so a 150px hand card and a 236px draft pick are the same
-// drawing at two scales rather than two drawings. Category eyebrow, glyph, name, rule,
-// effect text, notes line, then the footer that carries charge pips and the count badge.
+// styles.css derives from --cw, so a 150px hand card and a 236px draft pick are the same drawing
+// at two scales rather than two drawings. Category eyebrow, glyph, name, rule, effect text, then
+// the footer that carries charge pips and the count badge. Rarity stays visual in the frame rather
+// than being repeated as secondary copy.
 export function cardFace(id,{key=null,count=1,charges=null}={}){
   // An id with no catalog row cannot happen through hand() or draftPending(), but the face is the
   // last thing between a catalog bug and a blank rectangle on screen, so it draws one anyway.
@@ -156,7 +143,6 @@ export function cardFace(id,{key=null,count=1,charges=null}={}){
   add("h4","card-name",cardTitle(def));
   add("div","card-rule");
   add("p","card-text",cardText(def));
-  add("p","card-note",cardNote(def));
   const foot=add("footer","card-foot");
   // Charge pips: the kit's authored total, filled to whatever is left. A card with no charge
   // track draws no pips at all, so the row only ever appears on something that can be spent
@@ -304,8 +290,8 @@ export function syncHandTargeting(){
 
 // ── peek / collapse ─────────────────────────────────────────────────────────
 // The judge's condition for keeping the hand bottom-centre: during a live night wave the bottom of
-// the battlefield is where the fighting is, so the hand gets out of the way. It drops to a sliver
-// (styles.css owns the transform) and rises again on hover, or on the h key at any time.
+// the battlefield is where the fighting is, so the hand lowers while retaining each card's category,
+// icon, and name (styles.css owns the transform). It rises on hover, or on the h key at any time.
 // Called once per frame by main.js's draw(), because the two things it reads — the clock phase and
 // whether any enemy is alive — move inside update() without a single card changing, so no
 // simulation effect can raise it. It writes the DOM only when the answer actually flips.
@@ -435,7 +421,7 @@ function fadeHint(){
 // ── keyboard ────────────────────────────────────────────────────────────────
 // 1-9 play the card at that position outright (the number is printed on the card).
 // Q and E walk a browse cursor along the row, which raises exactly what hover raises;
-// enter or space plays whatever it is on; H lowers the hand to its peek sliver (and back);
+// enter or space plays whatever it is on; H lowers the hand to its identity strip (and back);
 // escape drops the cursor. Registered ahead of
 // src/input.js so escape can clear the cursor before the pause chain sees it, and every
 // branch bails while a modal owns the screen or a digit is shifted (shift+digit is the

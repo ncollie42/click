@@ -262,7 +262,10 @@ const waterMat=new THREE.ShaderMaterial({
     }`,
   fragmentShader:`
     #include <packing>
-    uniform sampler2D uDepth;
+    // highp is load-bearing: samplers default to lowp, and ANGLE (Chrome) honors that on
+    // depth reads, quantizing thickness into visible contour bands. Firefox's GL happens
+    // to give fp32 either way, which is why the banding was Chrome-only.
+    uniform highp sampler2D uDepth;
     uniform vec2 uResolution;
     uniform float uNear,uFar,uTime,uFoamMul,uFade,uLight,uOrtho;
     uniform vec3 uShallow,uDeep,uFoam,uSun;
