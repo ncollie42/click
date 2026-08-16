@@ -43,7 +43,7 @@ connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...DRAFT_EFFECTS,
   handChanged(){renderHand();},
   phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();},
   // Arming and cancelling a card's placement is a BUILD-hud move in the simulation's eyes: only
-  // which card owns the cursor changed, not the hand itself. The fan listens too, so the lifted,
+  // which card owns the cursor changed, not the hand itself. The hand listens too, so the lifted,
   // rarity-lit card settles back the instant a right-click stows a part-spent kit.
   buildHudChanged(){SIM_EFFECTS.buildHudChanged();syncHandTargeting();}
 });
@@ -79,7 +79,7 @@ function draw(){
   tickVisibility();
   renderScene();
   drawOverlay();
-  // The fan's peek/collapse state is the one card thing no simulation effect can raise: it depends
+  // The hand's peek/collapse state is the one card thing no simulation effect can raise: it depends
   // on the clock phase AND on enemies being alive, which move inside update() without any card
   // changing. One cheap read per frame; the call only touches the DOM when the answer changes.
   syncHandPeek();

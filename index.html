@@ -5,12 +5,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>wooddrop</title>
+<link rel="stylesheet" href="./src/ui/motion.css">
 <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
 <div id="game">
   <!-- No build dock. Building is 100% card-driven: every construction site on the map comes out of
-       the fanned hand at the bottom of the stage (src/ui/hand.js), and the simulation's placement
+       the hand row at the bottom of the stage (src/ui/hand.js), and the simulation's placement
        machinery has exactly one entry point, placeCardCharge(). -->
   <main id="stage">
     <canvas id="scene"></canvas>
@@ -303,11 +304,9 @@
     </section>
     <div id="prompt"><kbd>release right</kbd><span></span></div>
     <div id="toast"></div>
-    <!-- The fanned hand. Empty root: src/ui/hand.js exclusively owns #handCards' children and
-         every listener on them; the cards are placed by four CSS variables it writes per card,
-         so the arc, the hover lift and the neighbours parting are all one repaint.
-         #handDock is pointer-transparent and only its cards take the pointer, so the strip
-         never eats a click meant for the ground behind the gaps in the fan. -->
+    <!-- The hand row. src/ui/hand.js owns #handCards' children, fitted no-overlap geometry, and
+         authored pose animations. #handDock scrolls only after cards reach their readable minimum;
+         it is pointer-transparent and only cards take pointer hits, preserving battlefield gaps. -->
     <section id="handDock" aria-label="card hand"><div id="handCards"></div></section>
     <!-- The key legend. One ROW per line — a flex column with a gap, so no chip can ever land on
          top of the line above it however the frame is sized. It takes the bottom-LEFT corner the

@@ -1,5 +1,5 @@
-// Owns: the fanned hand strip at the bottom of the stage, the card face that the draft
-// overlay reuses, and every card animation (consume flights, arrivals, the active lift).
+// Owns: the bottom-centred hand row, the card face that the draft overlay reuses, and every
+// card animation (pose changes, consume flights, arrivals, and the active lift).
 // ═══════════════════════════════════════════════════════════════════════════
 // HAND ADAPTER
 //
@@ -22,57 +22,40 @@
 // change it. The one thing it authors is the card's PICTURE — glyph, name casing, category word —
 // because src/game/cards.js is a design catalog and holds no presentation.
 //
-// Layout note — the fan owns the bottom band. The build dock is GONE (building is card-driven now),
-// so the fan no longer has to share the bottom of the stage with a 244px rail. styles.css widened
-// #handDock accordingly and moved the keyboard legend into the corner the dock left; placeCards()
-// still fits the fan inside THAT measured box, so the guarantee that nothing collides comes from
-// one measurement rather than constants in two files that could drift. Three things the fan now
-// does for itself, all in placeCards(): it writes its own BASELINE so a tilted outermost card is
-// never cropped by the frame, it thins its own body text past a density threshold so a neighbour
-// cannot cover a sentence, and it drops to a PEEK sliver while a night wave is live.
-// The toast lane rides above the fan and steps up again while a card is raised.
+// Layout note — the hand owns the bottom band. placeCards() measures #handDock, keeps a fixed gap,
+// shrinks cards only from 150px to 96px, then lets the dock scroll rather than overlap cards. Layout
+// writes final positions directly; pose changes are separate, named Web Animations. The row drops
+// to a PEEK sliver while a night wave is live. The toast lane steps up while a card is raised.
 // ═══════════════════════════════════════════════════════════════════════════
 import {cardById} from "../game/cards.js";
 import {hand, playCard, state} from "../game/simulation.js";
 import {BASE, TOWER_VARIANTS, UPGRADES, BUILDING_TYPES} from "../game/data.js";
 import {project} from "../render/scene.js";
+import {motionTiming, prefersReducedMotion, watchReducedMotion} from "./motion.js";
 
 // ── tuning ──────────────────────────────────────────────────────────────────
-// One record so the fan's geometry is readable as a table rather than scattered constants.
-const FAN = {
-  // Fraction of a card's width between neighbouring centres when the hand is small — which is
-  // also how much of each card the fan leaves uncovered, since every card is painted over by
-  // its right-hand neighbour. At .83 a card keeps its number, eyebrow, glyph and whole name in
-  // the clear and only its right margin goes under. A relative figure, so it survives the
-  // card shrinking at narrow frame sizes.
-  step:.83,
-  widthMax:640,    // px the whole fan may span; a big hand tightens its overlap instead
-  edgePad:26,      // px of frame the OUTERMOST card must still leave, tilt included
-  tiltPerCard:4.4, // degrees added to the spread per extra card
-  tiltMax:13,      // degrees from the centre card to an outermost one
-  arc:14,          // px the outermost card sits below the centre one
-  // px of clear frame under the LOWEST point of the fan. placeCards() adds the dip and the drop a
-  // tilted card's bottom corner makes on top of this, and writes the sum as #handCards' `bottom` —
-  // so the card that used to lose its charge pips off the bottom of the letterbox cannot, at any
-  // hand size, tilt, or card width. It is a floor, not the baseline itself.
-  floor:22,
-  lift:52,         // px a hovered or focused card rises
-  scale:1.6,       // how far it grows — enough that the effect text reads at a glance
-  part:20,         // px the neighbours step aside to let it through
-  activeLift:40,   // px the card currently running a placement holds itself up
-  activeScale:1.1, // and how far it grows while it does — a lift, not a takeover
-  // Hand size at which a card's right-hand neighbour starts covering its effect text. Past it the
-  // fan goes DENSE: body text is suppressed on every unraised card (styles.css owns the rule) and
-  // the name, glyph and pips carry the card on their own.
-  denseFrom:6,
+const HAND_LAYOUT={
+  preferredWidth:150,
+  narrowPreferredWidth:120,
+  narrowFrameWidth:800,
+  minimumWidth:96,
+  gap:14,
+  edgePad:14,      // room for the 15% hover growth at each end of the row
+  hoverLift:54,
+  hoverScale:1.15,
+  activeLift:40,
+  activeScale:1.1,
 };
+const POSES={rest:{y:0,scale:1},hover:{y:-HAND_LAYOUT.hoverLift,scale:HAND_LAYOUT.hoverScale},
+  active:{y:-HAND_LAYOUT.activeLift,scale:HAND_LAYOUT.activeScale}};
 const MAX_KEY = 9;
 // Cards whose whole effect happens AT THE BASE — they feed it, heal it, or land in its stores. A
 // spent one flies there; everything else burns off straight up out of the frame. Read by
 // spendFlight() and nothing else; a card missing from this set simply takes the default exit.
 const BASE_BOUND = new Set(["woodBundle","stoneBundle","dustBundle","healBase","baseHp","handCarry"]);
 
-let root=null,list=null,flights=null,hint=null;
+let root=null,list=null,flights=null,hint=null,layoutObserver=null;
+const poseAnimations=new WeakMap();
 let focus=-1;        // keyboard browse cursor
 let hover=-1;        // pointer hover
 let reduced=false;
@@ -156,7 +139,7 @@ function cardNote(card){
 
 // ── the card face ───────────────────────────────────────────────────────────
 // One anatomy, two sizes. Everything inside is em-based off the card's own font-size, which
-// styles.css derives from --cw, so a 104px hand card and a 236px draft pick are the same
+// styles.css derives from --cw, so a 150px hand card and a 236px draft pick are the same
 // drawing at two scales rather than two drawings. Category eyebrow, glyph, name, rule,
 // effect text, notes line, then the footer that carries charge pips and the count badge.
 export function cardFace(id,{key=null,count=1,charges=null}={}){
@@ -194,58 +177,82 @@ export function cardFace(id,{key=null,count=1,charges=null}={}){
   return el;
 }
 
-// ── the fan ─────────────────────────────────────────────────────────────────
-// Every card is absolutely positioned on one origin point and placed by four CSS variables,
-// so a repaint and a hover are the same code path and the transition between them is CSS's
-// problem. Cards tilt about their own bottom edge, which is what keeps the bottoms on a
-// shallow curve instead of swinging them off it.
+// ── row layout and authored poses ───────────────────────────────────────────
 /** Which held card is running the simulation's placement flow, or -1. state.cardTargeting names
  *  the card by id and the hand holds one entry per id, so the two cannot disagree. */
 function activeIndex(){
   const id=state.cardTargeting?.id;
   return id?hand().findIndex(entry=>entry.id===id):-1;
 }
+function transformAt(x,pose){return `translate3d(${x.toFixed(1)}px,${pose.y}px,0) scale(${pose.scale})`;}
+/** Layout is already at its destination when this runs. WAAPI owns only the temporary pose path,
+ *  so resize/reflow never becomes coupled to hover animation. */
+function animatePose(el,fromName,toName,x,kind){
+  const previous=poseAnimations.get(el);if(previous)previous.cancel();
+  const from=POSES[fromName]||POSES.rest,to=POSES[toName];
+  el.style.setProperty("--y",to.y+"px");el.style.setProperty("--scale",String(to.scale));
+  if(reduced||fromName===toName||!el.animate)return;
+  let frames,timing;
+  if(toName==="hover"&&kind==="pointer"){
+    frames=[{transform:transformAt(x,from)},{transform:transformAt(x,{y:4,scale:.99}),offset:.12},
+      {transform:transformAt(x,{y:-59,scale:1.18}),offset:.7},{transform:transformAt(x,to)}];
+    timing=motionTiming("lift","slow",{element:root,reduced:false});
+  }else if(toName==="hover"){
+    frames=[{transform:transformAt(x,from)},{transform:transformAt(x,{y:-57,scale:1.17}),offset:.72},
+      {transform:transformAt(x,to)}];
+    timing=motionTiming("lift","medium",{element:root,reduced:false});
+  }else if(toName==="active"){
+    frames=[{transform:transformAt(x,from)},{transform:transformAt(x,{y:3,scale:.99}),offset:.12},
+      {transform:transformAt(x,{y:-44,scale:1.12}),offset:.72},{transform:transformAt(x,to)}];
+    timing=motionTiming("lift","slow",{element:root,reduced:false});
+  }else{
+    frames=[{transform:transformAt(x,from)},{transform:transformAt(x,{y:3,scale:.985}),offset:.72},
+      {transform:transformAt(x,to)}];
+    timing=motionTiming("settle","medium",{element:root,reduced:false});
+  }
+  const animation=el.animate(frames,timing);
+  poseAnimations.set(el,animation);
+  animation.finished.then(()=>{if(poseAnimations.get(el)===animation)poseAnimations.delete(el);},()=>{});
+}
+function revealCard(index,cardW){
+  if(index<0||!root.classList.contains("overflow"))return;
+  const left=HAND_LAYOUT.edgePad+index*(cardW+HAND_LAYOUT.gap),right=left+cardW;
+  let target=root.scrollLeft;
+  if(left<target)target=left-HAND_LAYOUT.edgePad;
+  else if(right>target+root.clientWidth)target=right-root.clientWidth+HAND_LAYOUT.edgePad;
+  if(target!==root.scrollLeft)root.scrollTo({left:target,behavior:reduced?"auto":"smooth"});
+}
 function placeCards(){
   const cards=[...list.children],n=cards.length;
-  if(!n)return;
-  // The fan is fitted to #handDock's measured box, minus the room a hovered card needs to grow
-  // sideways and the edge lane an outermost tilted card must still leave — that box is what
-  // styles.css sizes against the frame, so the whole no-collision guarantee comes from one
-  // measurement rather than constants in two files that could drift apart.
-  const cardW=cards[0].offsetWidth;
-  const span=Math.max(0,Math.min(FAN.widthMax,root.clientWidth-cardW*FAN.scale-FAN.edgePad*2));
-  const step=n<2?0:Math.min(cardW*FAN.step,span/(n-1));
-  const tilt=Math.min(FAN.tiltPerCard*(n-1),FAN.tiltMax);
-  // THE anti-crop rule. A card is tilted about its own bottom CENTRE, so the corner that swings
-  // down clears (cardW/2)·sin(tilt) below the pivot, and the arc has already pushed an outermost
-  // card FAN.arc further down. Raising the whole strip by that sum plus the floor is what keeps
-  // the outermost card of a nine-card fan — pips, stack shadow and all — inside the frame.
-  const drop=FAN.arc+(cardW/2)*Math.sin(tilt*Math.PI/180);
-  list.style.bottom=(FAN.floor+drop).toFixed(1)+"px";
-  // Past the density threshold a neighbour covers the card's effect text; styles.css hides it on
-  // everything that is not raised, so what is on screen is either whole or absent, never half.
-  list.classList.toggle("dense",n>=FAN.denseFrom);
-  const raised=hover>=0?hover:focus;
-  const active=activeIndex();
+  if(!n){list.style.width="0px";root.classList.remove("overflow");return;}
+  const available=Math.max(0,root.clientWidth-HAND_LAYOUT.edgePad*2);
+  const fitWidth=(available-HAND_LAYOUT.gap*(n-1))/n;
+  const preferred=root.clientWidth<HAND_LAYOUT.narrowFrameWidth
+    ?HAND_LAYOUT.narrowPreferredWidth:HAND_LAYOUT.preferredWidth;
+  const cardW=Math.min(preferred,Math.max(HAND_LAYOUT.minimumWidth,fitWidth));
+  const rowW=HAND_LAYOUT.edgePad*2+n*cardW+(n-1)*HAND_LAYOUT.gap;
+  const overflowing=rowW>root.clientWidth+.5;
+  list.style.setProperty("--cw",cardW.toFixed(2)+"px");
+  list.style.width=rowW.toFixed(1)+"px";
+  list.style.left=(overflowing?0:(root.clientWidth-rowW)/2).toFixed(1)+"px";
+  root.classList.toggle("overflow",overflowing);
+  if(!overflowing)root.scrollLeft=0;
+
+  const raised=hover>=0?hover:focus,active=activeIndex();
   cards.forEach((el,i)=>{
-    const t=n<2?0:(i-(n-1)/2)/((n-1)/2);   // -1 .. 1 across the fan
-    let x=(i-(n-1)/2)*step,y=FAN.arc*t*t,rot=t*tilt,scale=1;
-    if(i===raised){rot=0;y=-FAN.lift;scale=FAN.scale;}
-    else if(raised>=0)x+=i<raised?-FAN.part:FAN.part;
-    else if(i===active){rot*=.35;y=-FAN.activeLift;scale=FAN.activeScale;}
+    const x=HAND_LAYOUT.edgePad+i*(cardW+HAND_LAYOUT.gap);
+    const pose=i===raised?"hover":i===active?"active":"rest";
+    const oldPose=el.dataset.pose;
     el.style.setProperty("--x",x.toFixed(1)+"px");
-    el.style.setProperty("--y",y.toFixed(1)+"px");
-    el.style.setProperty("--rot",rot.toFixed(2)+"deg");
-    el.style.setProperty("--scale",scale.toFixed(3));
-    // Raised card on top, then the active one, then left-to-right so the fan overlaps the way
-    // a held hand does; the arriving card needs the top of the stack while it lands.
-    el.style.zIndex=String(i===raised?90:i===active?80:10+i);
+    if(oldPose===undefined){const value=POSES[pose];el.style.setProperty("--y",value.y+"px");el.style.setProperty("--scale",String(value.scale));}
+    else animatePose(el,oldPose,pose,x,raised===i&&hover===i?"pointer":"keyboard");
+    el.dataset.pose=pose;
+    el.style.zIndex=String(i===raised?90:i===active?80:10);
     el.classList.toggle("raised",i===raised);
     el.classList.toggle("active",i===active&&i!==raised);
   });
   root.classList.toggle("targeting",active>=0);
-  // A raised card is tall enough to reach the notification lane, so the lane steps up out of
-  // its way. #toast already transitions `bottom`, so this costs one class and no new motion.
+  if(focus>=0)revealCard(focus,cardW);
   document.getElementById("game").classList.toggle("hand-raised",raised>=0);
 }
 
@@ -254,7 +261,7 @@ export function renderHand(){
   if(!list)return;
   const cards=hand();
   // A card spent by PLACEMENT leaves the hand out on the map, not under the cursor — the last
-  // charge lands on a click the fan never sees, and the only signal is this repaint arriving with
+  // charge lands on a click the hand never sees, and the only signal is this repaint arriving with
   // one fewer card. So the box of the watched card is measured while it is still on screen, and
   // the flight is launched from it the moment it is gone. (An "applied" play flies from play()
   // itself, which can measure before the simulation moves.)
@@ -284,7 +291,7 @@ export function renderHand(){
 /**
  * The buildHudChanged sink. Cancelling a placement (right-click, escape) clears
  * state.cardTargeting and raises buildHudChanged, not handChanged — nothing about the cards
- * themselves moved, only which one owns the cursor. Re-placing the fan is the whole response:
+ * themselves moved, only which one owns the cursor. Re-placing the row is the whole response:
  * the lifted card settles back and its glow goes out. Cheap, and it keeps hover alive, which
  * a full repaint would not.
  */
@@ -296,7 +303,7 @@ export function syncHandTargeting(){
 }
 
 // ── peek / collapse ─────────────────────────────────────────────────────────
-// The judge's condition for keeping the fan bottom-centre: during a live night wave the bottom of
+// The judge's condition for keeping the hand bottom-centre: during a live night wave the bottom of
 // the battlefield is where the fighting is, so the hand gets out of the way. It drops to a sliver
 // (styles.css owns the transform) and rises again on hover, or on the h key at any time.
 // Called once per frame by main.js's draw(), because the two things it reads — the clock phase and
@@ -323,21 +330,20 @@ function play(index){
   const result=playCard(index);
   if(result==="applied"||result==="targeting")fadeHint();
   // "applied" already repainted the hand through handChanged, but it did so while this card was
-  // still the raised one — drop the cursor and re-place, or the fan settles around a gap.
+  // still raised — drop the cursor and re-place so the row settles consistently.
   if(result==="applied"){hover=-1;focus=-1;placeCards();spendFlight(id,before);}
   // "targeting" spends nothing YET: the card stays in hand, one charge lighter per placement, and
   // leaves on the click that empties it. renderHand() watches for exactly that and flies it then.
-  else if(result==="targeting"){spendWatch=id;hover=-1;focus=index;placeCards();}
+  else if(result==="targeting"){spendWatch=id;hover=-1;focus=-1;placeCards();}
   // Refused (the simulation said no and announced why): a short shudder on the card that was
-  // asked for, as a class rather than a keyframe list, so it composes with the fan transform
-  // the card is already wearing instead of fighting it.
+  // asked for, as a class rather than a keyframe list, so it composes with the card pose.
   else{el.classList.remove("refused");void el.offsetWidth;el.classList.add("refused");}
 }
 
 const CARD_RATIO=1.54;  // the one place the card's shape is written down outside styles.css
 /**
- * A card's VISUAL box: its centre from the live rectangle (correct through any fan rotation or
- * hover scale) and the width a flight clone must be built at. Exported because the draft
+ * A card's VISUAL box: its centre from the live rectangle (correct through hover scale) and the
+ * width a flight clone must be built at. Exported because the draft
  * overlay measures its own pick with it and hands the result straight back to playArrival().
  */
 export function cardBox(el,scale=1){
@@ -387,7 +393,7 @@ function spendFlight(id,from){
     {transform:"translate(0,0) rotate(0deg) scale(1)",opacity:1,filter:"brightness(1)"},
     {transform:"translate(0,-58px) rotate(-4deg) scale(1.12)",opacity:1,offset:.34,filter:"brightness(1.5)"},
     {transform:"translate(0,-260px) rotate(7deg) scale(.72)",opacity:0,filter:"brightness(2.2)"}];
-  const run=ghost.animate(frames,{duration:reduced?180:toBase?560:480,easing:reduced?"linear":"cubic-bezier(.4,0,.7,.45)"});
+  const run=ghost.animate(frames,motionTiming("exit",toBase?"travel":"flight",{element:root,reduced}));
   run.finished.then(()=>ghost.remove(),()=>ghost.remove());
 }
 
@@ -406,7 +412,7 @@ export function playArrival(from){
     {transform:"translate(0,0) rotate(0deg) scale(1)",opacity:1},
     {transform:"translate("+(dx*.55).toFixed(0)+"px,"+(dy*.32).toFixed(0)+"px) rotate(-6deg) scale("+(scale+(1-scale)*.5).toFixed(3)+")",opacity:1,offset:.55},
     {transform:"translate("+dx.toFixed(0)+"px,"+dy.toFixed(0)+"px) rotate(0deg) scale("+scale.toFixed(3)+")",opacity:1}];
-  const run=ghost.animate(frames,{duration:reduced?200:620,easing:reduced?"linear":"cubic-bezier(.34,.72,.32,1)"});
+  const run=ghost.animate(frames,motionTiming("enter","arrival",{element:root,reduced}));
   return run.finished.catch(()=>{}).then(()=>{
     ghost.remove();
     el.classList.remove("arriving");
@@ -428,8 +434,8 @@ function fadeHint(){
 
 // ── keyboard ────────────────────────────────────────────────────────────────
 // 1-9 play the card at that position outright (the number is printed on the card).
-// Q and E walk a browse cursor along the fan, which raises exactly what hover raises;
-// enter or space plays whatever it is on; H lowers the fan to its peek sliver (and back);
+// Q and E walk a browse cursor along the row, which raises exactly what hover raises;
+// enter or space plays whatever it is on; H lowers the hand to its peek sliver (and back);
 // escape drops the cursor. Registered ahead of
 // src/input.js so escape can clear the cursor before the pause chain sees it, and every
 // branch bails while a modal owns the screen or a digit is shifted (shift+digit is the
@@ -439,7 +445,7 @@ function onKeyDown(event){
   if(document.getElementById("game").classList.contains("modal-open"))return;
   const n=list.children.length;
   if(!n)return;
-  // H is the manual half of the peek rule: it stows or raises the fan whatever the clock says.
+  // H is the manual half of the peek rule: it stows or raises the hand whatever the clock says.
   // Nothing else in the game binds it (see src/input.js).
   // It flips whatever is on screen right now, so one press always changes something: stowed goes
   // up, raised goes down, and the night-wave rule takes over again at the next phase boundary.
@@ -468,10 +474,17 @@ export function initHand(){
   list=document.getElementById("handCards");
   flights=document.getElementById("cardFlights");
   hint=document.getElementById("handHint");
-  const motion=window.matchMedia("(prefers-reduced-motion:reduce)");
-  reduced=motion.matches;
-  motion.addEventListener?.("change",event=>{reduced=event.matches;});
+  reduced=prefersReducedMotion();
+  watchReducedMotion(value=>{reduced=value;});
   window.addEventListener("keydown",onKeyDown);
+  // Wheel-to-horizontal conversion is scoped to events originating on cards; empty dock space
+  // remains pointer-transparent to battlefield input.
+  list.addEventListener("wheel",event=>{
+    if(!root.classList.contains("overflow")||Math.abs(event.deltaX)>=Math.abs(event.deltaY))return;
+    root.scrollLeft+=event.deltaY;event.preventDefault();
+  },{passive:false});
+  if("ResizeObserver" in window){layoutObserver=new ResizeObserver(()=>placeCards());layoutObserver.observe(root);}
+  else window.addEventListener("resize",placeCards);
   renderHand();
   syncHandPeek();
 }

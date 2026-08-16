@@ -1,0 +1,28 @@
+/* Owns Wooddrop's shared motion vocabulary; components continue to own their keyframes. */
+:root{
+  --ease-lift:cubic-bezier(.16,1.25,.32,1);
+  --ease-settle:cubic-bezier(.22,.8,.28,1);
+  --ease-enter:cubic-bezier(.2,.9,.3,1);
+  --ease-exit:cubic-bezier(.4,0,.7,.45);
+  --ease-refuse:cubic-bezier(.36,.07,.19,.97);
+
+  --duration-instant:120ms;
+  --duration-fast:170ms;
+  --duration-medium:260ms;
+  --duration-slow:360ms;
+  --duration-flight:480ms;
+  --duration-travel:560ms;
+  --duration-arrival:620ms;
+  --duration-reduced:120ms;
+}
+@media (prefers-reduced-motion:reduce){
+  :root{
+    --duration-instant:0ms;
+    --duration-fast:var(--duration-reduced);
+    --duration-medium:var(--duration-reduced);
+    --duration-slow:var(--duration-reduced);
+    --duration-flight:var(--duration-reduced);
+    --duration-travel:var(--duration-reduced);
+    --duration-arrival:var(--duration-reduced);
+  }
+}
