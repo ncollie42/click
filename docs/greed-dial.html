@@ -198,7 +198,7 @@
 
   <p class="footnote">Grounded in authored data: XP tiers <code>[40,100,200,350]</code>, wave
   <code>12 + 3·tier</code> spawns, tower cost <code>16</code>, house cost <code>14 + 7·houses</code>
-  (<code>HOUSE_COST_ESCALATION</code>), 2 workers per house. Caricatures: a worker gathers
+  (<code>HOUSE_COST_ESCALATION</code>), 4 workers per house. Caricatures: a worker gathers
   ~12 units/day (75&nbsp;s day ÷ 2.35&nbsp;s per chop, heavily taxed by walking), a tower kills ~5
   spawns/night, a worker ~1. Those two kill numbers are pure guesses — the first thing a headless
   sim of the real <code>simulation.js</code> would replace.</p>
@@ -535,11 +535,11 @@ function runHandoff(){
     // auto side: greedy marginal chooser between house and worker-fuel
     for(let guard=0; guard<12; guard++){
       const houseCost=14+7*houses, fuelCost=17*Math.pow(2,fuelJ);
-      const houseGain=2*12*fuelMult;             // two workers at current fuel
+      const houseGain=4*12*fuelMult;             // four workers at current fuel
       const fuelGain=W*12*fuelMult*0.25;         // +25% on the existing crew
       const houseEff=houseGain/houseCost, fuelEff=W>0 ? fuelGain/fuelCost : 0;
       if(autoPool>=houseCost && (houseEff>=fuelEff || autoPool<fuelCost)){
-        autoPool-=houseCost; houses++; W+=2;
+        autoPool-=houseCost; houses++; W+=4;
         events.push({d:day, t:`house ${houses} — crew of ${W}`});
       } else if(autoPool>=fuelCost && fuelEff>houseEff && W>0){
         autoPool-=fuelCost; fuelMult*=1.25; fuelJ++;

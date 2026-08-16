@@ -82,7 +82,7 @@ export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay
 export const FIREBALL={damage:6,radius:135};
 
 // ── houses and workers ──────────────────────────────────────────────────────
-export const HOUSE_SLOTS=2,HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
+export const HOUSE_SLOTS=4,HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
 // Worker capacities are authored here; future upgrades may modify their effective values at runtime.
 export const RESOURCE_NODE_JOB_SLOTS=1,BLUEPRINT_JOB_SLOTS=2;
 export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;

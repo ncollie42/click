@@ -391,14 +391,14 @@ try{
       const cost=level=>LEVEL_CURVE.base*LEVEL_CURVE.growth**level;
       // Draining must not disturb the wave checks below, so the two schedule-bending cards are avoided.
       const skip=new Set(["calmNight","longDay"]);
-      const drain=()=>{let taken=0;while(sim.draftPending()){const offer=sim.draftPending(),kind=sim.draftKind();assert.ok(offer.length>0&&offer.length<=3);assert.equal(new Set(offer).size,offer.length,"draft offered a duplicate card");assert.equal(offer.every(id=>cardById[id].inPool&&cardById[id].implemented),true,"draft offered a card that is not in the pool");assert.equal(offer.every(id=>kind==="level"?cardById[id].category==="buff":["consumable","blueprint"].includes(cardById[id].category)),true,"draft mixed progression and wave-loot pools");assert.equal(sim.chooseDraft(Math.max(0,offer.findIndex(id=>!skip.has(id)))),true);taken++;}return taken;};
+      const drain=()=>{let taken=0;while(sim.draftPending()){const offer=sim.draftPending(),kind=sim.draftKind();assert.ok(offer.length>0&&offer.length<=3);assert.equal(new Set(offer).size,offer.length,"draft offered a duplicate card");assert.equal(offer.every(id=>cardById[id].inPool&&cardById[id].implemented),true,"draft offered a card that is not in the pool");assert.equal(offer.every(id=>kind==="level"?cardById[id].category==="blueprint":cardById[id].category==="buff"),true,"draft mixed building and permanent-upgrade pools");assert.equal(sim.chooseDraft(Math.max(0,offer.findIndex(id=>!skip.has(id)))),true);taken++;}return taken;};
       sim.initializeRunMode("normal");assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);assert.equal(sim.waveTier(),0);
       assert.deepEqual(sim.levelState(),{level:0,xp:0,next:cost(0)});assert.equal(sim.draftPending(),null);assert.equal(sim.chooseDraft(0),false);
       sim.state.carried.wood=5;sim.setPointerWorld(BASE.x,BASE.y);sim.secondaryRelease();assert.equal(sim.xp(),5);assert.equal(sim.state.carried.wood,0);assert.equal(sim.state.level,0);assert.equal(sim.draftPending(),null,"a partial level must not deal a draft");
       // 12 xp in one deposit crosses levels 1 AND 2; the first offer is live and the rest are queued.
       const hauler=worker({diamond:1});sim.state.workers.push(hauler);sim.update(1/60);assert.equal(sim.xp(),5+FEED_XP.diamond);assert.equal(hauler.carried.diamond,0);
       assert.equal(sim.state.level,2);assert.equal(sim.state.draft.queue,1);assert.equal(sim.levelState().xp,17-cost(0)-cost(1));assert.equal(sim.levelState().next,cost(2));
-      const firstOffer=sim.draftPending();assert.equal(firstOffer.length,3);assert.equal(new Set(firstOffer).size,3);assert.equal(firstOffer.every(id=>cardById[id].inPool&&cardById[id].category==="buff"),true,"level-up offered something other than a permanent buff");
+      const firstOffer=sim.draftPending();assert.equal(firstOffer.length,3);assert.equal(new Set(firstOffer).size,3);assert.equal(firstOffer.every(id=>cardById[id].inPool&&cardById[id].category==="blueprint"),true,"level-up offered something other than a building blueprint");
       assert.equal(sim.chooseDraft(3),false);assert.equal(sim.chooseDraft(-1),false);assert.equal(sim.draftPending(),firstOffer,"a rejected pick must not consume the offer");
       // The world is frozen while an offer pends, and only the queue drain lets time move again.
       const frozen=sim.state.clock.elapsed;for(let i=0;i<60;i++)sim.update(1/60);assert.equal(sim.state.clock.elapsed,frozen,"the world advanced under a pending draft");
@@ -433,19 +433,10 @@ try{
       let seed=0x0ca1;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       try{
         sim.initializeRunMode("normal");
-        // Dawn loot enters the hand and applies only when played.
-        const drainOffers=()=>{while(sim.draftPending())sim.chooseDraft(Math.max(0,sim.draftPending().findIndex(id=>!["calmNight","longDay"].includes(id))));};
-        const queueDawn=()=>{if(sim.state.clock.phase==="day")sim.transitionPhase();sim.transitionPhase();};
-        let taken=false,guard=0;
-        while(!taken&&guard++<600){
-          if(!sim.draftPending())queueDawn();
-          const offer=sim.draftPending();if(!offer)continue;
-          assert.equal(sim.draftKind(),"dawn");
-          const at=offer.indexOf("calmNight");sim.chooseDraft(at>=0?at:Math.max(0,offer.findIndex(id=>id!=="longDay")));taken=at>=0;
-        }
-        assert.equal(taken,true,"calmNight never appeared in a draft");
-        drainOffers();
-        assert.ok(sim.hand().some(entry=>entry.id==="calmNight"),"a drafted calmNight must land in the hand");
+        // Consumables currently enter only through explicit/debug deals; their play semantics remain intact.
+        const drainOffers=()=>{while(sim.draftPending())sim.chooseDraft(0);};
+        assert.equal(sim.debugDealCard("calmNight"),true);
+        assert.ok(sim.hand().some(entry=>entry.id==="calmNight"));
         assert.equal(sim.state.draft.calmNight,false,"a card in hand must not have applied itself");
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="calmNight")),"applied");
         assert.equal(sim.state.draft.calmNight,true);
@@ -527,11 +518,12 @@ try{
         // Hold the same chop for a tenth of a second: the bar's fill IS the buffed rate.
         const fill=()=>{sim.setPointerWorld(tree.x,tree.y);sim.primaryPress();sim.update(.1);const progress=sim.chopProgress();sim.primaryRelease();return progress;};
         const before=fill(),baseRadius=sim.vacuumRadius();
+        const queueDawn=()=>{if(sim.state.clock.phase==="day")sim.transitionPhase();sim.transitionPhase();};
         let guard=0;
         while(sim.buffStacks("clickSpeed")<2&&guard++<600){
-          if(!sim.draftPending())sim.debugGrantXp(400);
-          const offer=sim.draftPending();if(!offer)continue;
-          const at=offer.indexOf("clickSpeed");sim.chooseDraft(at>=0?at:offer.findIndex(id=>!["calmNight","longDay"].includes(id)));
+          if(!sim.draftPending())queueDawn();
+          const offer=sim.draftPending();if(!offer)continue;assert.equal(sim.draftKind(),"dawn");
+          const at=offer.indexOf("clickSpeed");sim.chooseDraft(at>=0?at:Math.max(0,offer.findIndex(id=>id!=="clickSpeed")));
         }
         assert.equal(sim.buffStacks("clickSpeed"),2,"clickSpeed never appeared twice in a draft");
         // The queued offers must not sneak in a third stack, or the measurement below would drift.
@@ -542,9 +534,9 @@ try{
         assert.equal(sim.vacuumRadius(),baseRadius+CARD_BUFFS.vacuumRadius*sim.buffStacks("vacuumRadius"));
         assert.equal(sim.TUNE.vacuumRadius,45,"a card must never write the authored tuning value");
         while(sim.buffStacks("critClicks")<1&&guard++<1200){
-          if(!sim.draftPending())sim.debugGrantXp(400);
-          const offer=sim.draftPending();if(!offer)continue;
-          const at=offer.indexOf("critClicks");sim.chooseDraft(at>=0?at:Math.max(0,offer.findIndex(id=>!["calmNight","longDay"].includes(id))));
+          if(!sim.draftPending())queueDawn();
+          const offer=sim.draftPending();if(!offer)continue;assert.equal(sim.draftKind(),"dawn");
+          const at=offer.indexOf("critClicks");sim.chooseDraft(at>=0?at:Math.max(0,offer.findIndex(id=>id!=="critClicks")));
         }
         assert.equal(sim.buffStacks("critClicks"),1,"critClicks never appeared in a draft");
         while(sim.draftPending())sim.chooseDraft(0);
@@ -590,16 +582,16 @@ try{
         assert.equal(sim.draftKind(),null);
         assert.equal(sim.playCard(0),false,"an empty hand plays nothing");assert.equal(sim.playCard(-1),false);assert.equal(sim.playCard(.5),false);
 
-        // 1 · level-up rewards are permanent buffs, applied immediately and never put in the hand
+        // 1 · level-up rewards are building blueprints that enter the hand
         sim.debugGrantXp(400);
         const levelOffer=sim.draftPending();assert.ok(levelOffer);assert.equal(sim.draftKind(),"level");
-        assert.equal(levelOffer.every(id=>cardById[id].category==="buff"),true,"level-up offered non-buff loot");
-        const drafted=levelOffer[0],eventsBeforeBuff=handEvents,stacksBefore=sim.buffStacks(drafted);
-        assert.equal(sim.chooseDraft(0),true);assert.equal(sim.buffStacks(drafted),stacksBefore+1);
-        assert.equal(handEvents,eventsBeforeBuff,"a permanent buff should not enter the hand");
+        assert.equal(levelOffer.every(id=>cardById[id].category==="blueprint"),true,"level-up offered non-building loot");
+        const drafted=levelOffer[0],eventsBeforeBlueprint=handEvents;
+        assert.equal(sim.chooseDraft(0),true);assert.ok(held(drafted));
+        assert.ok(handEvents>eventsBeforeBlueprint,"a level blueprint should enter the hand");
         drain();assert.equal(sim.state.draftPaused,false);
 
-        // 2 · dawn pays its own pick-3, consumables and blueprints only
+        // 2 · dawn pays one permanent-buff pick-3 after the wave
         if(sim.state.clock.phase!=="night")sim.transitionPhase();
         assert.equal(sim.state.clock.phase,"night");
         sim.transitionPhase();
@@ -607,10 +599,11 @@ try{
         assert.ok(dawnOffer,"the night ended and paid no dawn reward");
         assert.equal(sim.draftKind(),"dawn");assert.equal(sim.state.draftPaused,true);
         assert.equal(dawnOffer.length,3);assert.equal(new Set(dawnOffer).size,3,"the dawn offer repeated a card");
-        assert.equal(dawnOffer.every(id=>["consumable","blueprint"].includes(cardById[id].category)&&cardById[id].inPool),true,"a dawn offer may only deal consumables and blueprints");
+        assert.equal(dawnOffer.every(id=>cardById[id].category==="buff"&&cardById[id].inPool),true,"a dawn offer may only deal permanent buffs");
         assert.equal(sim.playCard(0),false,"a frozen world must not play cards");
-        assert.equal(sim.chooseDraft(0),true);
-        const dawnCard=dawnOffer[0];assert.ok(held(dawnCard),"the dawn pick never reached hand()");
+        const dawnCard=dawnOffer[0],eventsBeforeDawn=handEvents,stacksBefore=sim.buffStacks(dawnCard);
+        assert.equal(sim.chooseDraft(0),true);assert.equal(sim.buffStacks(dawnCard),stacksBefore+1);
+        assert.equal(handEvents,eventsBeforeDawn,"a dawn buff should not enter the hand");
         assert.equal(sim.draftKind(),null);assert.equal(sim.state.draftPaused,false);
 
         // 3 · an untargeted consumable applies on play and leaves the hand
@@ -731,9 +724,9 @@ try{
           const before=sim.hand().length;
           let repeats=0,guardPool=0,seen=null;
           while(repeats<2&&guardPool++<900){
-            if(!sim.draftPending()){if(sim.state.clock.phase==="day")sim.transitionPhase();sim.transitionPhase();}
+            if(!sim.draftPending())sim.debugGrantXp(400);
             const offer=sim.draftPending();if(!offer)continue;
-            assert.equal(sim.draftKind(),"dawn","blueprints must come from wave loot");
+            assert.equal(sim.draftKind(),"level","blueprints must come from XP rewards");
             const at=seen===null?offer.findIndex(id=>cardById[id].category==="blueprint"):offer.indexOf(seen);
             if(at<0){sim.chooseDraft(0);continue;}
             if(seen===null)seen=offer[at];
@@ -818,7 +811,7 @@ try{
     assert.ok(debuggerSource.includes("function buildCardDealer()"),"the dealer grid must be generated from the registry");
     assert.ok(debuggerSource.includes('bindBtn("vClearHand"'),"clear hand is unbound");
   }
-  assert.match(html,/id="vGroundSourcing" checked/);assert.match(html,/id="vBuilderSelfSupply" checked/);assert.match(html,/id="vBuilderRadius" min="60" max="400" step="10" value="300"/);assert.match(html,/id="vBlueprintRecruiting" checked/);assert.match(html,/id="vIdleSeeksWork" checked/);assert.match(html,/id="vRecruitRadius" min="100" max="500" step="20" value="200"/);assert.ok(debuggerSource.includes('bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });'));assert.ok(debuggerSource.includes('bindV("vBlueprintRecruiting", v => { DBG.blueprintRecruiting = v; });'));assert.ok(debuggerSource.includes('bindV("vIdleSeeksWork", v => { DBG.idleSeeksWork = v; });'));assert.ok(debuggerSource.includes('bindV("vRecruitRadius", v => { TUNE.recruitRadius = v; }, v => v + "px")'));assert.ok(overlay.includes("workerOccupancyStatus(target)"));assert.ok(overlay.includes("workerOccupancyAt(state.mouse.x,state.mouse.y)"));assert.ok(overlay.includes("drawWorkerSlots(target,height,status)"));assert.ok(overlay.includes("state.workers.length>0||!!heldWorker()"));assert.match(overlay,/hollow circles are vacancies/);assert.match(overlay,/! vacant/);assert.ok(overlay.includes("const BUILD_JOB_ACCENT=css(PAL.jobBuild)"));assert.ok(overlay.includes("workerIsLoaned(worker)"));assert.equal(overlay.includes("worker.homePost"),false);assert.ok(overlay.includes('hovered?.kind==="building"&&!hovered.object.complete'));assert.ok(overlay.includes('worker.job==="build"&&worker.jobTarget===site'));assert.equal(overlay.match(/if\(state\.runMode!=="normal"\)return/g)?.length,2);
+  assert.match(html,/id="vGroundSourcing" checked/);assert.match(html,/id="vBuilderSelfSupply" checked/);assert.match(html,/id="vBuilderRadius" min="60" max="1000" step="10" value="400"/);assert.match(html,/id="vBlueprintRecruiting" checked/);assert.match(html,/id="vIdleSeeksWork" checked/);assert.match(html,/id="vRecruitRadius" min="100" max="1000" step="20" value="500"/);assert.ok(debuggerSource.includes('bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });'));assert.ok(debuggerSource.includes('bindV("vBlueprintRecruiting", v => { DBG.blueprintRecruiting = v; });'));assert.ok(debuggerSource.includes('bindV("vIdleSeeksWork", v => { DBG.idleSeeksWork = v; });'));assert.ok(debuggerSource.includes('bindV("vRecruitRadius", v => { TUNE.recruitRadius = v; }, v => v + "px")'));assert.ok(overlay.includes("workerOccupancyStatus(target)"));assert.ok(overlay.includes("workerOccupancyAt(state.mouse.x,state.mouse.y)"));assert.ok(overlay.includes("drawWorkerSlots(target,height,status)"));assert.ok(overlay.includes("state.workers.length>0||!!heldWorker()"));assert.match(overlay,/hollow circles are vacancies/);assert.match(overlay,/! vacant/);assert.ok(overlay.includes("const BUILD_JOB_ACCENT=css(PAL.jobBuild)"));assert.ok(overlay.includes("workerIsLoaned(worker)"));assert.equal(overlay.includes("worker.homePost"),false);assert.ok(overlay.includes('hovered?.kind==="building"&&!hovered.object.complete'));assert.ok(overlay.includes('worker.job==="build"&&worker.jobTarget===site'));assert.equal(overlay.match(/if\(state\.runMode!=="normal"\)return/g)?.length,2);
 
   const normalSteps=12000,dt=1/60;
   sim.DBG.invulnBase=true;
@@ -834,8 +827,8 @@ try{
     if(sim.state.clock.phase==="night"&&sim.state.nightWave.remainingSpawns===0&&sim.livingActiveWaveEnemies()>0)sim.debugClearEnemies();
     while(sim.draftPending()){
       const kind=sim.draftKind();assert.ok(["level","dawn"].includes(kind),"a pending offer must name its kind");
-      if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>["consumable","blueprint"].includes(cardCatalog.cardById[id].category)),true,"a dawn offer dealt something other than a consumable or blueprint");}
-      else assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="buff"),true,"a level offer dealt something other than a permanent buff");
+      if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="buff"),true,"a dawn offer dealt something other than a permanent buff");}
+      else assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="blueprint"),true,"a level offer dealt something other than a building blueprint");
       assert.equal(sim.chooseDraft(0),true);
     }
     if(i%120===0)sim.validateSimulationInvariants();

@@ -54,8 +54,8 @@ export const TUNE = {
   chopYield:1,       // drops spawned per completed player chop      [slider vYield]
   clickDamage:1,     // hp removed per completed player swing        [slider vDamage]
   gameSpeed:1,       // whole simulation steps per rendered frame    [slider vSpeed]
-  builderSourceRadius:300, // blueprint-centered loose-drop scan [slider vBuilderRadius]
-  recruitRadius:200, // blueprint guard recruitment radius           [slider vRecruitRadius]
+  builderSourceRadius:400, // blueprint-centered loose-drop scan [slider vBuilderRadius]
+  recruitRadius:500, // blueprint guard recruitment radius           [slider vRecruitRadius]
   fleeHpThreshold:1, // worker hp that triggers the survival interrupt
 };
 
@@ -196,7 +196,7 @@ const carriedTotal=()=>RESOURCE_KINDS.reduce((total,kind)=>total+state.carried[k
 const DBG={
   freeCosts:false,          // blueprints + accepted upgrades finish on placement/accept
   invulnBase:false,         // enemy hits on the base subtract nothing
-  instantWorkers:false,     // houses ignore their spawn timer
+  instantWorkers:true,      // houses ignore their spawn timer by default
   groundSourcing:true,      // builders prefer loose drops before covered storage
   builderSelfSupply:true,   // starved builders mine one bounded, needed resource at a time
   blueprintRecruiting:true, // incomplete buildings borrow nearby idle guards
@@ -315,9 +315,9 @@ function buildShowcaseFixtures(){
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
 function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
 // ── STRAWMAN, for owner tuning ──────────────────────────────────────────────
-// With the build shop gone, cards are the ONLY way to put a building on the ground, while level-ups
-// deliberately offer buffs rather than blueprints. This list prevents a fresh run from waiting for
-// its first cleared wave to build: one house (workers), one lumber camp and one quarry
+// With the build shop gone, cards are the ONLY way to put a building on the ground. XP will offer
+// later blueprints, but the first economy and wave need a seed kit: one house (workers), one lumber
+// camp and one quarry
 // (income), one basic tower chassis (the first night). It is a DESIGN GUESS — change the ids, the
 // counts, or delete the line entirely; nothing else reads it.
 const STARTING_HAND=["bpHouse","bpLumber","bpQuarry","bpTower"];
@@ -1000,15 +1000,15 @@ function gainLevel(){
 }
 
 // ── the draft ───────────────────────────────────────────────────────────────
-// Two reward loops share this machinery but never share a pool: LEVEL-UP offers permanent buffs;
-// DAWN — the moment a cleared night rolls into day — offers hand-bound consumables and blueprints.
-// This separation makes progression choices strategic and wave loot tactical. Each offer contains
+// Two reward loops share this machinery but never share a pool: LEVEL-UP offers hand-bound
+// building blueprints; DAWN — the moment a cleared night rolls into day — offers permanent buffs.
+// This separation makes XP expand the village while surviving a wave strengthens the run. Each offer contains
 // up to three DISTINCT eligible cards drawn by rarity weight. Exactly one offer is live at a time,
 // the rest wait in their queues, and the world is halted while one pends via state.draftPaused.
 // The choice arrives through chooseDraft(); nothing else may write state.draft. What a taken card
 // DOES is routed by takeCard() below, not by the dealer.
 const DRAFT_KINDS=["level","dawn"];
-const DRAFT_CATEGORIES=Object.freeze({level:Object.freeze(["buff"]),dawn:Object.freeze(["consumable","blueprint"])});
+const DRAFT_CATEGORIES=Object.freeze({level:Object.freeze(["blueprint"]),dawn:Object.freeze(["buff"])});
 function levelCost(level){return LEVEL_CURVE.base*LEVEL_CURVE.growth**level;}
 function buffStacks(id){return state.draft.buffs[id]||0;}
 // Consumables and blueprints carry no `stacks`, so the same test lets them repeat forever and caps
@@ -1039,7 +1039,7 @@ function refillDraft(){
   if(state.draftPaused){stopGameplayInput();closeUpgradeMenu();}
   effects.draftChanged();
 }
-/** Dawn's own reward, queued by transitionPhase() when a night ends. */
+/** Dawn's permanent-upgrade reward, queued by transitionPhase() when a night ends. */
 function queueDawnReward(){
   if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
   state.draft.dawnQueue++;refillDraft();
