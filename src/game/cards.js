@@ -5,8 +5,8 @@
 //   inPool      — the draft can actually offer it
 // Workflow: add an entry here (implemented:false), point Claude at it, it gets
 // built, the flag flips.
-// Routing: a drafted BUFF applies the moment it is picked. A drafted CONSUMABLE or
-// BLUEPRINT is not applied at all — it goes into the run's HAND (simulation.js) and
+// Reward pools: level-ups offer BUFFS only; cleared waves offer CONSUMABLES and BLUEPRINTS only.
+// A chosen buff applies immediately. Chosen wave loot enters the run's HAND (simulation.js) and
 // only becomes an effect when the player plays it. docs/cards.html renders this file as a browsable
 // catalog; docs/progression-model.js reads `model` to simulate income
 // compounding; scripts/validate.mjs keeps every ref honest.

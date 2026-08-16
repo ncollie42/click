@@ -391,14 +391,14 @@ try{
       const cost=level=>LEVEL_CURVE.base*LEVEL_CURVE.growth**level;
       // Draining must not disturb the wave checks below, so the two schedule-bending cards are avoided.
       const skip=new Set(["calmNight","longDay"]);
-      const drain=()=>{let taken=0;while(sim.draftPending()){const offer=sim.draftPending();assert.equal(offer.length,3);assert.equal(new Set(offer).size,3,"draft offered a duplicate card");assert.equal(offer.every(id=>cardById[id].inPool&&cardById[id].implemented),true,"draft offered a card that is not in the pool");assert.equal(sim.chooseDraft(Math.max(0,offer.findIndex(id=>!skip.has(id)))),true);taken++;}return taken;};
+      const drain=()=>{let taken=0;while(sim.draftPending()){const offer=sim.draftPending(),kind=sim.draftKind();assert.ok(offer.length>0&&offer.length<=3);assert.equal(new Set(offer).size,offer.length,"draft offered a duplicate card");assert.equal(offer.every(id=>cardById[id].inPool&&cardById[id].implemented),true,"draft offered a card that is not in the pool");assert.equal(offer.every(id=>kind==="level"?cardById[id].category==="buff":["consumable","blueprint"].includes(cardById[id].category)),true,"draft mixed progression and wave-loot pools");assert.equal(sim.chooseDraft(Math.max(0,offer.findIndex(id=>!skip.has(id)))),true);taken++;}return taken;};
       sim.initializeRunMode("normal");assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);assert.equal(sim.waveTier(),0);
       assert.deepEqual(sim.levelState(),{level:0,xp:0,next:cost(0)});assert.equal(sim.draftPending(),null);assert.equal(sim.chooseDraft(0),false);
       sim.state.carried.wood=5;sim.setPointerWorld(BASE.x,BASE.y);sim.secondaryRelease();assert.equal(sim.xp(),5);assert.equal(sim.state.carried.wood,0);assert.equal(sim.state.level,0);assert.equal(sim.draftPending(),null,"a partial level must not deal a draft");
       // 12 xp in one deposit crosses levels 1 AND 2; the first offer is live and the rest are queued.
       const hauler=worker({diamond:1});sim.state.workers.push(hauler);sim.update(1/60);assert.equal(sim.xp(),5+FEED_XP.diamond);assert.equal(hauler.carried.diamond,0);
       assert.equal(sim.state.level,2);assert.equal(sim.state.draft.queue,1);assert.equal(sim.levelState().xp,17-cost(0)-cost(1));assert.equal(sim.levelState().next,cost(2));
-      const firstOffer=sim.draftPending();assert.equal(firstOffer.length,3);assert.equal(new Set(firstOffer).size,3);assert.equal(firstOffer.every(id=>cardById[id].inPool),true);
+      const firstOffer=sim.draftPending();assert.equal(firstOffer.length,3);assert.equal(new Set(firstOffer).size,3);assert.equal(firstOffer.every(id=>cardById[id].inPool&&cardById[id].category==="buff"),true,"level-up offered something other than a permanent buff");
       assert.equal(sim.chooseDraft(3),false);assert.equal(sim.chooseDraft(-1),false);assert.equal(sim.draftPending(),firstOffer,"a rejected pick must not consume the offer");
       // The world is frozen while an offer pends, and only the queue drain lets time move again.
       const frozen=sim.state.clock.elapsed;for(let i=0;i<60;i++)sim.update(1/60);assert.equal(sim.state.clock.elapsed,frozen,"the world advanced under a pending draft");
@@ -433,14 +433,15 @@ try{
       let seed=0x0ca1;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       try{
         sim.initializeRunMode("normal");
-        // Drafting a consumable no longer applies it: the card is drawn into the hand, and the
-        // discount exists only once the player PLAYS it.
-        const drainOffers=()=>{while(sim.draftPending())sim.chooseDraft(sim.draftPending().findIndex(id=>!["calmNight","longDay"].includes(id)));};
+        // Dawn loot enters the hand and applies only when played.
+        const drainOffers=()=>{while(sim.draftPending())sim.chooseDraft(Math.max(0,sim.draftPending().findIndex(id=>!["calmNight","longDay"].includes(id))));};
+        const queueDawn=()=>{if(sim.state.clock.phase==="day")sim.transitionPhase();sim.transitionPhase();};
         let taken=false,guard=0;
         while(!taken&&guard++<600){
-          if(!sim.draftPending())sim.debugGrantXp(400);
+          if(!sim.draftPending())queueDawn();
           const offer=sim.draftPending();if(!offer)continue;
-          const at=offer.indexOf("calmNight");sim.chooseDraft(at>=0?at:offer.findIndex(id=>id!=="longDay"));taken=at>=0;
+          assert.equal(sim.draftKind(),"dawn");
+          const at=offer.indexOf("calmNight");sim.chooseDraft(at>=0?at:Math.max(0,offer.findIndex(id=>id!=="longDay")));taken=at>=0;
         }
         assert.equal(taken,true,"calmNight never appeared in a draft");
         drainOffers();
@@ -589,21 +590,13 @@ try{
         assert.equal(sim.draftKind(),null);
         assert.equal(sim.playCard(0),false,"an empty hand plays nothing");assert.equal(sim.playCard(-1),false);assert.equal(sim.playCard(.5),false);
 
-        // 1 · a drafted consumable is DRAWN, not fired
-        let guard=0,drafted=null;
-        while(!drafted&&guard++<600){
-          if(!sim.draftPending())sim.debugGrantXp(400);
-          const offer=sim.draftPending();if(!offer)continue;
-          assert.equal(sim.draftKind(),"level","a level-up must deal a level offer");
-          const at=offer.findIndex(id=>cardById[id].category==="consumable"),eventsBefore=handEvents,storedBefore=JSON.stringify(sim.state.stored);
-          assert.equal(sim.chooseDraft(at>=0?at:0),true);
-          if(at<0)continue;
-          drafted=offer[at];
-          assert.ok(handEvents>eventsBefore,"a card entering the hand must raise handChanged()");
-          assert.ok(held(drafted),"the drafted consumable never reached hand()");
-          if(["woodBundle","stoneBundle","dustBundle"].includes(drafted))assert.equal(JSON.stringify(sim.state.stored),storedBefore,"a drafted bundle must not deliver until it is played");
-        }
-        assert.ok(drafted,"no consumable was ever offered");
+        // 1 · level-up rewards are permanent buffs, applied immediately and never put in the hand
+        sim.debugGrantXp(400);
+        const levelOffer=sim.draftPending();assert.ok(levelOffer);assert.equal(sim.draftKind(),"level");
+        assert.equal(levelOffer.every(id=>cardById[id].category==="buff"),true,"level-up offered non-buff loot");
+        const drafted=levelOffer[0],eventsBeforeBuff=handEvents,stacksBefore=sim.buffStacks(drafted);
+        assert.equal(sim.chooseDraft(0),true);assert.equal(sim.buffStacks(drafted),stacksBefore+1);
+        assert.equal(handEvents,eventsBeforeBuff,"a permanent buff should not enter the hand");
         drain();assert.equal(sim.state.draftPaused,false);
 
         // 2 · dawn pays its own pick-3, consumables and blueprints only
@@ -738,8 +731,9 @@ try{
           const before=sim.hand().length;
           let repeats=0,guardPool=0,seen=null;
           while(repeats<2&&guardPool++<900){
-            if(!sim.draftPending())sim.debugGrantXp(400);
+            if(!sim.draftPending()){if(sim.state.clock.phase==="day")sim.transitionPhase();sim.transitionPhase();}
             const offer=sim.draftPending();if(!offer)continue;
+            assert.equal(sim.draftKind(),"dawn","blueprints must come from wave loot");
             const at=seen===null?offer.findIndex(id=>cardById[id].category==="blueprint"):offer.indexOf(seen);
             if(at<0){sim.chooseDraft(0);continue;}
             if(seen===null)seen=offer[at];
@@ -841,6 +835,7 @@ try{
     while(sim.draftPending()){
       const kind=sim.draftKind();assert.ok(["level","dawn"].includes(kind),"a pending offer must name its kind");
       if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>["consumable","blueprint"].includes(cardCatalog.cardById[id].category)),true,"a dawn offer dealt something other than a consumable or blueprint");}
+      else assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="buff"),true,"a level offer dealt something other than a permanent buff");
       assert.equal(sim.chooseDraft(0),true);
     }
     if(i%120===0)sim.validateSimulationInvariants();

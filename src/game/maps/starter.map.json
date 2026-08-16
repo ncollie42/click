@@ -355,15 +355,8 @@
     },
     {
       "kind": "chest",
-      "cx": 127,
-      "cy": 80,
-      "rotation": 0,
-      "variant": null
-    },
-    {
-      "kind": "chest",
-      "cx": 117,
-      "cy": 81,
+      "cx": 134,
+      "cy": 78,
       "rotation": 0,
       "variant": null
     },
@@ -1966,6 +1959,16 @@
       "height": 161,
       "density": 0.1322616841644049,
       "seed": 31
+    },
+    {
+      "id": "rock-1",
+      "kind": "rock",
+      "cx": 118,
+      "cy": 62,
+      "width": 16,
+      "height": 9,
+      "density": 0.125,
+      "seed": 1
     },
     {
       "id": "rock-farwest",

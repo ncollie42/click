@@ -3,10 +3,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // DRAFT ADAPTER
 //
-// One overlay, two headings. draftKind() decides which: "level" is a level crossing and deals from
-// the whole eligible catalog, so a buff that fires on the spot may be among the three; "dawn" is
-// the night's payout and deals consumables and blueprints only, every one of which ends up in the
-// hand. Nothing here knows those rules — it reads the kind and titles itself.
+// One overlay, two reward loops. draftKind() decides which: "level" deals permanent buffs that
+// apply immediately; "dawn" pays out consumables and blueprints that enter the hand. The simulation
+// owns those disjoint pools; this adapter only titles and presents the resulting offer.
 //
 // Ownership / data flow
 //   Reads:    src/game/simulation.js — draftPending(), draftKind(), chooseDraft(), levelState().
@@ -30,9 +29,6 @@ import {cardFace, cardBox, expectArrival, playArrival} from "./hand.js";
 import {syncModalUi} from "./hud.js";
 
 const TITLE = {level:"level up",dawn:"dawn spoils — the night paid out"};
-// Only the surprising destination needs copy: buffs apply immediately. Ordinary cards entering the
-// hand is already communicated by the selection flight and needs no label under every card.
-const destination = category => category==="buff" ? "→ applied the moment you take it" : null;
 const goesToHand = category => category!=="buff";
 
 let surface=null;      // <canvas id="overlay"> — the focus target of last resort
@@ -98,8 +94,6 @@ export function render(){
     slot.className="pick";
     slot.dataset.index=String(i);
     slot.appendChild(cardFace(id,{key:String(i+1)}));
-    const destinationText=destination(card?.category);
-    if(destinationText){const tag=document.createElement("p");tag.className="pick-dest";tag.textContent=destinationText;slot.appendChild(tag);}
     slot.style.setProperty("--deal",(i*70)+"ms");
     slot.addEventListener("pointerenter",()=>{cursor=i;paintCursor();});
     slot.addEventListener("click",()=>choose(i));

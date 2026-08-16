@@ -315,9 +315,9 @@ function buildShowcaseFixtures(){
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
 function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
 // ── STRAWMAN, for owner tuning ──────────────────────────────────────────────
-// With the build shop gone, cards are the ONLY way to put a building on the ground, so a fresh run
-// that opens with nothing in hand cannot build at all until its first level-up deals an offer. This
-// list is the opening kit that closes that gap: one house (workers), one lumber camp and one quarry
+// With the build shop gone, cards are the ONLY way to put a building on the ground, while level-ups
+// deliberately offer buffs rather than blueprints. This list prevents a fresh run from waiting for
+// its first cleared wave to build: one house (workers), one lumber camp and one quarry
 // (income), one basic tower chassis (the first night). It is a DESIGN GUESS — change the ids, the
 // counts, or delete the line entirely; nothing else reads it.
 const STARTING_HAND=["bpHouse","bpLumber","bpQuarry","bpTower"];
@@ -358,7 +358,7 @@ export function validateSimulationInvariants(){
   const offer=state.draft.offer;
   invariant(offer===null||(Array.isArray(offer)&&offer.length>0&&offer.length<=3&&new Set(offer).size===offer.length&&offer.every(id=>cardById[id]?.inPool)),"illegal draft offer");
   invariant(offer===null?state.draft.offerKind===null:DRAFT_KINDS.includes(state.draft.offerKind),"draft offer kind disagrees with the pending offer");
-  invariant(state.draft.offerKind!=="dawn"||offer.every(id=>DAWN_CATEGORIES.includes(cardById[id].category)),"a dawn offer may only hold consumables and blueprints");
+  invariant(offer===null||offer.every(id=>DRAFT_CATEGORIES[state.draft.offerKind].includes(cardById[id].category)),"draft offer category disagrees with its kind");
   invariant(state.draftPaused===!!offer,"draft pause flag disagrees with the pending offer");
   // The hand: one stack per id, every id authored, every count real, partial kits mid-spend only.
   invariant(new Set(state.hand.map(entry=>entry.id)).size===state.hand.length,"the hand holds two stacks of one card");
@@ -1000,15 +1000,15 @@ function gainLevel(){
 }
 
 // ── the draft ───────────────────────────────────────────────────────────────
-// Two things deal offers now, and both use this one machinery: a LEVEL-UP deals three cards from the
-// whole eligible catalog, and DAWN — the moment a night rolls into a day — deals three from the
-// consumable/blueprint half of it. Each offer is three DISTINCT eligible cards drawn by rarity
-// weight. Exactly one offer is live at a time (whichever kind it is), the rest wait in their queues,
-// and the world is halted while one pends — via state.draftPaused, a flag of its own, so a player
-// pause can be on or off underneath it. The choice arrives through chooseDraft(); nothing else may
-// write state.draft. What a taken card DOES is routed by takeCard() below, not by the dealer.
+// Two reward loops share this machinery but never share a pool: LEVEL-UP offers permanent buffs;
+// DAWN — the moment a cleared night rolls into day — offers hand-bound consumables and blueprints.
+// This separation makes progression choices strategic and wave loot tactical. Each offer contains
+// up to three DISTINCT eligible cards drawn by rarity weight. Exactly one offer is live at a time,
+// the rest wait in their queues, and the world is halted while one pends via state.draftPaused.
+// The choice arrives through chooseDraft(); nothing else may write state.draft. What a taken card
+// DOES is routed by takeCard() below, not by the dealer.
 const DRAFT_KINDS=["level","dawn"];
-const DAWN_CATEGORIES=["consumable","blueprint"];
+const DRAFT_CATEGORIES=Object.freeze({level:Object.freeze(["buff"]),dawn:Object.freeze(["consumable","blueprint"])});
 function levelCost(level){return LEVEL_CURVE.base*LEVEL_CURVE.growth**level;}
 function buffStacks(id){return state.draft.buffs[id]||0;}
 // Consumables and blueprints carry no `stacks`, so the same test lets them repeat forever and caps
@@ -1032,7 +1032,7 @@ function refillDraft(){
   while(!draft.offer&&(draft.queue>0||draft.dawnQueue>0)){
     const kind=draft.queue>0?"level":"dawn";
     if(kind==="level")draft.queue--;else draft.dawnQueue--;
-    draft.offer=drawDraftOffer(kind==="dawn"?DAWN_CATEGORIES:null);
+    draft.offer=drawDraftOffer(DRAFT_CATEGORIES[kind]);
     draft.offerKind=draft.offer?kind:null;
   }
   state.draftPaused=!!draft.offer;

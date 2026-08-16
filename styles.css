@@ -466,9 +466,10 @@
   #draftOverlay[data-kind="dawn"]{--accent:#f0b45f;--band:#7a4a24;
     background:radial-gradient(112% 82% at 50% 42%,#c97a3a3d,#4c22107a 58%,#26100694)}
   #draftOverlay[hidden]{display:none}
-  /* The level bar and draft title share the top-centre lane; only the modal title is relevant while
-     choosing, so do not let the translucent overlay composite both labels on top of each other. */
-  #game:has(#draftOverlay:not([hidden])) #xpHud{visibility:hidden}
+  /* The level bar, action prompt, and draft title share the top-centre lane. Only the modal title
+     is relevant while choosing; hide the underlying labels instead of compositing them together. */
+  #game:has(#draftOverlay:not([hidden])) #xpHud,
+  #game:has(#draftOverlay:not([hidden])) #prompt{visibility:hidden}
   #draftOverlay.resolving{opacity:.26;pointer-events:none;transition:opacity var(--duration-slow) var(--ease-exit)}
   #draftHeader{flex:0 0 auto;text-align:center;padding-top:20px}
   #draftTitle{width:fit-content;margin:0 auto;padding:0 26px 7px;font-size:23px;letter-spacing:.05em;
@@ -476,7 +477,7 @@
   #draftOverlay[data-kind="dawn"] #draftTitle{filter:drop-shadow(0 1px 8px #f0b45f99)}
   #draftSub{margin:9px 0 0;font-size:11px;color:#c9b894}
   #draftPicks{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;gap:42px}
-  .pick{--cw:236px;display:flex;flex-direction:column;align-items:center;gap:13px;cursor:pointer;
+  .pick{--cw:236px;display:flex;flex-direction:column;align-items:center;cursor:pointer;
     animation:pickDeal var(--duration-slow) var(--ease-enter) var(--deal,0ms) backwards}
   .pick .card{transition:transform var(--duration-fast) var(--ease-lift),box-shadow var(--duration-fast) var(--ease-settle)}
   /* The cursor state has to carry from across the room: it lifts, grows, takes a rim in the
@@ -485,10 +486,8 @@
     box-shadow:inset 0 0 0 .17em var(--rarity),inset 0 .05em .9em #fffbe8b0,
       inset 0 -1.1em 1.5em #97724026,0 .7em 2em #000d,0 0 0 .15em var(--accent),
       0 0 3.2em .3em color-mix(in srgb,var(--accent) 45%,transparent)}
-  .pick-dest{font-size:11px;letter-spacing:.06em;color:#a0906f;transition:color var(--duration-fast) var(--ease-settle),opacity var(--duration-fast) var(--ease-settle)}
-  .pick.on .pick-dest{color:var(--accent)}
   .pick.rejected{animation:pickReject var(--duration-slow) var(--ease-exit) forwards}
-  .pick.chosen .card,.pick.chosen .pick-dest{opacity:0}
+  .pick.chosen .card{opacity:0}
   @keyframes pickDeal{from{opacity:0;transform:translateY(38px) rotate(-4deg) scale(.9)}}
   @keyframes pickReject{to{opacity:0;transform:translateY(20px) scale(.94)}}
   #draftBar{flex:0 0 auto;display:flex;justify-content:center;padding:11px;font-size:10px;
@@ -505,7 +504,7 @@
     #handCards .card{transition:opacity var(--duration-reduced) linear}
     #handCards .card.active,#handCards .card.landed,#handCards .card.refused,
     .pick,.pick.rejected{animation:none}
-    .pick .card,.pick-dest{transition:none}
+    .pick .card{transition:none}
     .pick.rejected{opacity:0}
     #draftOverlay.resolving{transition:none}
     #handHint,#toast{transition:opacity var(--duration-reduced) linear}
@@ -518,7 +517,7 @@
     #stage{--toast-lane:250px}#game.hand-raised #stage{--toast-lane:320px}
     #draftTitle{font-size:16px;padding-bottom:5px;border-bottom-width:2px}
     #draftSub{font-size:10px;margin-top:6px}
-    #draftPicks{gap:16px}.pick{--cw:150px;gap:7px}.pick-dest{font-size:9px}
+    #draftPicks{gap:16px}.pick{--cw:150px}
     #draftBar{padding:7px;font-size:9px}
     #handHint{font-size:8px;left:6px;bottom:6px;max-width:200px}#handHint kbd{font-size:8px}
   }
