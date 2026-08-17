@@ -153,9 +153,6 @@ const damageNumbers = [];
 // `seed` keeps a bolt's jitter stable while it fades.
 const lightningArcs = [];
 let damageNumberSequence=0;
-// Deterministic validation/debug seam: only the next outcome tag is held, never resource contents.
-// Destruction consumes and clears it before rolling the authored weighted payout.
-let forcedChestOutcome=null;
 const state = {
   runMode:"normal",
   mouse:{x:W/2,y:H/2,inside:false},
@@ -163,11 +160,11 @@ const state = {
   // xp is the run TOTAL ever fed; levelXp is only the progress into the current level, so the two
   // never have to be reconstructed from each other. Both are written by feedBase() alone.
   xp:0,levelXp:0,level:0,skillPoints:0,
-  // The draft's whole run ledger: queued level-ups, queued dawn rewards, the live 3-card offer and
-  // which kind of offer it is, buff stacks taken, and the two banked consumable effects. Blueprints
+  // The draft's whole run ledger: queued level/build, dawn/buff, and chest-or-wave consumable
+  // rewards; the live 3-card offer and kind; buff stacks; and two banked consumable effects. Blueprints
   // keep no ledger at all — a plan is not an unlock, so the pool may offer the same one again.
   // Authored tables stay untouched.
-  draft:{queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0},
+  draft:{queue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0},
   // ── the hand ──
   // Every card the player is HOLDING, oldest first. One entry per id: {id, count, charges} where
   // count is how many copies are held and charges is the partially-spent kit's remaining placements
@@ -313,9 +310,10 @@ function replaceGrass(cells){
 function materializeWorld(blueprint){
   installTerrain(blueprint.terrain,blueprint);
   trees.length=rocks.length=diamonds.length=chests.length=0;replaceGrass(blueprint.grass||[]);
-  blueprint.trees.forEach((cell,index)=>{const {x,y}=cellToWorld(cell.cx,cell.cy);trees.push({x,y,hp:100,max:100,stump:0,shake:0,variant:cell.variant??index%3,footprint:RESOURCE_FOOTPRINT});});
-  blueprint.rocks.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);rocks.push({x,y,hp:70,max:70,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
-  blueprint.diamonds.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);diamonds.push({x,y,hp:25,max:25,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
+  // One HP produces one drop, so node health is also its total resource yield.
+  blueprint.trees.forEach((cell,index)=>{const {x,y}=cellToWorld(cell.cx,cell.cy);trees.push({x,y,hp:50,max:50,stump:0,shake:0,variant:cell.variant??index%3,footprint:RESOURCE_FOOTPRINT});});
+  blueprint.rocks.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);rocks.push({x,y,hp:35,max:35,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
+  blueprint.diamonds.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);diamonds.push({x,y,hp:13,max:13,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
   blueprint.chests.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);chests.push({x,y,hp:CHEST.maxHp,max:CHEST.maxHp,shake:0,footprint:CHEST.footprint});});
 }
 function terrainAtRasterCell(terrainX,terrainY){return queryTerrainAtRasterCell(terrainRuntime,terrainX,terrainY);}
@@ -380,7 +378,7 @@ function buildShowcaseFixtures(){
 }
 // First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
-function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
+function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
 // ── STRAWMAN, for owner tuning ──────────────────────────────────────────────
 // With the build shop gone, cards are the ONLY way to put a building on the ground. XP will offer
 // later blueprints, but the first economy and wave need a seed kit: one house (workers), one lumber
@@ -427,6 +425,7 @@ export function validateSimulationInvariants(){
   invariant(["day","night"].includes(state.clock.phase),"illegal phase "+state.clock.phase);
   invariant(Number.isFinite(state.clock.remaining)&&state.clock.remaining>=0,"illegal phase countdown");
   const offer=state.draft.offer;
+  for(const key of ["queue","dawnQueue","consumableQueue"])invariant(Number.isInteger(state.draft[key])&&state.draft[key]>=0,"illegal draft queue: "+key);
   invariant(offer===null||(Array.isArray(offer)&&offer.length>0&&offer.length<=3&&new Set(offer).size===offer.length&&offer.every(id=>cardById[id]?.inPool)),"illegal draft offer");
   invariant(offer===null?state.draft.offerKind===null:DRAFT_KINDS.includes(state.draft.offerKind),"draft offer kind disagrees with the pending offer");
   invariant(offer===null||offer.every(id=>DRAFT_CATEGORIES[state.draft.offerKind].includes(cardById[id].category)),"draft offer category disagrees with its kind");
@@ -1026,16 +1025,6 @@ function leftClick(){
   beginChop(action);
 }
 
-function rollChestResource(){
-  const total=RESOURCE_KINDS.reduce((sum,kind)=>sum+CHEST.weights[kind],0);
-  let roll=Math.random()*total;
-  for(const kind of RESOURCE_KINDS){roll-=CHEST.weights[kind];if(roll<0)return kind;}
-  return RESOURCE_KINDS.at(-1);
-}
-function scatterChestReward(kind,x,y,wide,index=0,count=1){
-  const angle=(index/count)*Math.PI*2+rand(-.28,.28),radius=wide?rand(52,126):rand(8,24);
-  spawnResource(kind,clamp(x+Math.cos(angle)*radius,35,W-35),clamp(y+Math.sin(angle)*radius,35,H-35),null);
-}
 function destroyChest(chest){
   const at=chests.indexOf(chest);if(at<0)return false;
   chests.splice(at,1);if(chopState.target===chest)resetChop();
@@ -1043,18 +1032,9 @@ function destroyChest(chest){
     const labelAt=showcaseLabelRecords.findIndex(record=>record.entity===chest);
     if(labelAt>=0){showcaseLabelRecords.splice(labelAt,1);showcaseRevision++;}
   }
-  const outcome=forcedChestOutcome||(Math.random()<CHEST.outcomeOdds.cache?"cache":"pinata");forcedChestOutcome=null;
-  const pinata=outcome==="pinata",payout=pinata?CHEST.pinataPayout:CHEST.cachePayout;
-  const rewards=Array.from({length:payout},rollChestResource);
-  if(pinata){
-    rewards.forEach((kind,index)=>scatterChestReward(kind,chest.x,chest.y,true,index,rewards.length));
-    burst(chest.x,chest.y,"#e3b445",34);burst(chest.x,chest.y,"#b98a4e",22);
-    toast("loot piñata — "+payout+" resources burst free!");sound(880,.3);
-  }else{
-    rewards.forEach((kind,index)=>scatterChestReward(kind,chest.x,chest.y,false,index,rewards.length));
-    burst(chest.x,chest.y,"#d8c47c",18);
-    toast("chest cache — "+payout+" resources dropped nearby");sound(540,.22);
-  }
+  burst(chest.x,chest.y,"#e3b445",34);burst(chest.x,chest.y,"#b98a4e",18);
+  toast("chest opened — choose a consumable");sound(880,.3);
+  queueConsumableReward();
   return true;
 }
 function hitChest(chest,quiet=false){
@@ -1257,15 +1237,15 @@ function gainLevel(){
 }
 
 // ── the draft ───────────────────────────────────────────────────────────────
-// Two reward loops share this machinery but never share a pool: LEVEL-UP offers hand-bound
-// builds; DAWN — the moment a cleared night rolls into day — offers permanent buffs.
-// This separation makes XP expand the village while surviving a wave strengthens the run. Each offer contains
+// Three reward sources share this machinery but never mix pools: LEVEL-UP offers hand-bound builds;
+// DAWN offers a permanent buff followed immediately by a consumable; CHESTS offer a consumable.
+// This separation makes XP expand the village while survival and exploration strengthen the run. Each offer contains
 // up to three DISTINCT eligible cards drawn by rarity weight. Exactly one offer is live at a time,
 // the rest wait in their queues, and the world is halted while one pends via state.draftPaused.
 // The choice arrives through chooseDraft(); nothing else may write state.draft. What a taken card
 // DOES is routed by takeCard() below, not by the dealer.
-const DRAFT_KINDS=["level","dawn"];
-const DRAFT_CATEGORIES=Object.freeze({level:Object.freeze(["build"]),dawn:Object.freeze(["buff"])});
+const DRAFT_KINDS=["level","dawn","consumable"];
+const DRAFT_CATEGORIES=Object.freeze({level:Object.freeze(["build"]),dawn:Object.freeze(["buff"]),consumable:Object.freeze(["consumable"])});
 function levelCost(level){return LEVEL_CURVE.base*LEVEL_CURVE.growth**level;}
 function buffStacks(id){return state.draft.buffs[id]||0;}
 // Consumables and builds carry no `stacks`, so the same test lets them repeat forever and caps
@@ -1285,13 +1265,13 @@ function drawDraftOffer(categories=null){
   return picks.length?picks:null;
 }
 // An empty pool consumes its queued reward silently, so a run with nothing left to offer never
-// stalls. Level-ups are served before dawn rewards, so a dawn that lands on a pending level offer
-// queues behind it rather than jumping it.
+// stalls. Existing level-ups resolve first; dawn's buff then consumable are queued atomically, so
+// selecting the buff immediately deals the wave's second reward.
 function refillDraft(){
   const draft=state.draft;
-  while(!draft.offer&&(draft.queue>0||draft.dawnQueue>0)){
-    const kind=draft.queue>0?"level":"dawn";
-    if(kind==="level")draft.queue--;else draft.dawnQueue--;
+  while(!draft.offer&&(draft.queue>0||draft.dawnQueue>0||draft.consumableQueue>0)){
+    const kind=draft.queue>0?"level":draft.dawnQueue>0?"dawn":"consumable";
+    if(kind==="level")draft.queue--;else if(kind==="dawn")draft.dawnQueue--;else draft.consumableQueue--;
     draft.offer=drawDraftOffer(DRAFT_CATEGORIES[kind]);
     draft.offerKind=draft.offer?kind:null;
   }
@@ -1299,10 +1279,15 @@ function refillDraft(){
   if(state.draftPaused){stopGameplayInput();closeUpgradeMenu();}
   effects.draftChanged();
 }
-/** Dawn's permanent-upgrade reward, queued by transitionPhase() when a night ends. */
-function queueDawnReward(){
+/** Chest reward. Showcase fixtures break normally but never enter production progression. */
+function queueConsumableReward(){
+  if(state.runMode!=="normal")return;
+  state.draft.consumableQueue++;refillDraft();
+}
+/** Wave-clear rewards are one permanent buff, then one hand-bound consumable. */
+function queueWaveClearRewards(){
   if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
-  state.draft.dawnQueue++;refillDraft();
+  state.draft.dawnQueue++;state.draft.consumableQueue++;refillDraft();
 }
 // Screen spells snapshot the renderer's actual active-camera frustum answer before damage starts;
 // kills and chain movement during iteration cannot change membership or ordering.
@@ -1592,6 +1577,8 @@ function updateWorkerSpawns(dt){
 }
 
 function resourceIsActive(node,kind){return kind==="wood"?node.stump<=0:node.depleted<=0;}
+// Dust is player-only for now. Every worker path gates loose-drop claims through this predicate.
+function workerCanPickupDrop(drop){return drop.kind!=="dust";}
 function workerLoad(worker){return RESOURCE_KINDS.reduce((total,kind)=>total+worker.carried[kind],0);}
 function clearWorkerTask(worker){if(worker.taskTarget?.claimedBy===worker)delete worker.taskTarget.claimedBy;worker.taskTarget=null;}
 function clearWorkerSelfSupply(worker){clearWorkerTask(worker);worker.selfSupply=null;}
@@ -1637,7 +1624,7 @@ function haulDestinationFor(drop){
 function freeWorkerHaulCandidate(worker,radius){
   let choice=null,best=Infinity;
   for(const drop of resourceDrops){
-    if(drop.target||!drop.ground||targetIsClaimed(drop))continue;
+    if(!workerCanPickupDrop(drop)||drop.target||!drop.ground||targetIsClaimed(drop))continue;
     const d=distance(worker.x,worker.y,drop.x,drop.y);
     if(d>radius||d>=best)continue;
     const storage=haulDestinationFor(drop);
@@ -1833,7 +1820,7 @@ function resolveBuildingCompletionWorkers(building){
 }
 function nearestBuildDrop(building,worker){
   let nearest=null,best=Infinity;
-  for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>TUNE.builderSourceRadius)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
+  for(const resource of resourceDrops){if(!workerCanPickupDrop(resource)||resource.target||targetIsClaimed(resource)||!resource.ground||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>TUNE.builderSourceRadius)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
   return nearest;
 }
 function claimBuildDrop(worker,resource){if(!resource)return false;worker.starved=false;worker.taskTarget=resource;resource.claimedBy=worker;return true;}
@@ -1861,7 +1848,7 @@ function updateBuilderSelfSupply(worker,building,dt){
   }
   if(worker.taskTarget){
     const drop=worker.taskTarget;
-    if(!resourceDrops.includes(drop)||drop.target||drop.claimedBy!==worker){clearWorkerTask(worker);return true;}
+    if(!workerCanPickupDrop(drop)||!resourceDrops.includes(drop)||drop.target||drop.claimedBy!==worker){clearWorkerTask(worker);return true;}
     worker.starved=false;
     if(drop.ground&&moveWorker(worker,drop.x,drop.y,dt,10)){
       const at=resourceDrops.indexOf(drop);if(at>=0){worker.carried[drop.kind]++;resourceDrops.splice(at,1);}
@@ -1887,7 +1874,7 @@ function updateBuilder(worker,dt){
     building.pulse=1;if(constructionComplete(building))completeBuilding(building);return;
   }
   if(worker.selfSupply&&updateBuilderSelfSupply(worker,building,dt))return;
-  if(worker.taskTarget&&(!resourceDrops.includes(worker.taskTarget)||worker.taskTarget.target||worker.taskTarget.claimedBy!==worker))clearWorkerTask(worker);
+  if(worker.taskTarget&&(!workerCanPickupDrop(worker.taskTarget)||!resourceDrops.includes(worker.taskTarget)||worker.taskTarget.target||worker.taskTarget.claimedBy!==worker))clearWorkerTask(worker);
   if(worker.taskTarget){
     worker.starved=false;const resource=worker.taskTarget;if(moveWorker(worker,resource.x,resource.y,dt,10)){const at=resourceDrops.indexOf(resource);if(at>=0){worker.carried[resource.kind]++;resourceDrops.splice(at,1);}delete resource.claimedBy;worker.taskTarget=null;}return;
   }
@@ -2132,11 +2119,11 @@ function updateHauler(worker,dt){
   if(storage!==BASE&&!buildings.includes(storage)){releaseWorkerToFree(worker);return;}
   const task=worker.taskTarget;
   // Stale claims release the moment a target disappears, is vacuumed away, or lifts off the ground.
-  if(task&&(!resourceDrops.includes(task)||task.target||task.claimedBy!==worker))clearWorkerTask(worker);
+  if(task&&(!workerCanPickupDrop(task)||!resourceDrops.includes(task)||task.target||task.claimedBy!==worker))clearWorkerTask(worker);
   if(workerLoad(worker)>=workerCarry())worker.returning=true;
   if(!worker.returning&&!worker.taskTarget){
     let nearest=null,best=Infinity;
-    for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||distance(storage.x,storage.y,resource.x,resource.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
+    for(const resource of resourceDrops){if(!workerCanPickupDrop(resource)||resource.target||targetIsClaimed(resource)||!resource.ground||distance(storage.x,storage.y,resource.x,resource.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
     if(nearest){worker.taskTarget=nearest;nearest.claimedBy=worker;}
     else if(workerLoad(worker)>0)worker.returning=true;
     // One deposited batch is the whole autonomous job: with nothing claimed, nothing carried and
@@ -2246,9 +2233,9 @@ function transitionPhase(){
     wave.activePlan=null;wave.threatBudget=0;wave.spawnedThreat=0;wave.remainingSpawns=0;wave.activeNightNumber=null;
     // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
     chooseUpcomingNight();
-    // Surviving the night earns one permanent-buff pick. It queues behind a building offer that is
-    // somehow already live rather than replacing it.
-    queueDawnReward();
+    // Surviving the night earns two back-to-back picks: permanent buff, then consumable. Existing
+    // level rewards stay ahead of both rather than being replaced.
+    queueWaveClearRewards();
   }
 }
 function updateClock(dt){
@@ -2772,10 +2759,6 @@ export function closeSkillTree(){
 
 // ── debug-owned writes into ordinary state (view panel > gameplay) ──
 export function setCapacity(value){ state.capacity=value; }
-function debugForceNextChestOutcome(outcome=null){
-  invariant(outcome===null||outcome==="cache"||outcome==="pinata","invalid forced chest outcome "+outcome);
-  forcedChestOutcome=outcome;return true;
-}
 export function resetDamageDummies(){if(state.runMode!=="showcase")return false;for(const d of damageDummies){d.x=d.homeX;d.y=d.homeY;d.hp=d.max;d.flash=0;d.defeatedTimer=0;d.status={burn:null,slow:null};d.recentDamage=0;d.recentTimer=0;d.hitCount=0;}state.showcaseFocus=damageDummies[0]||null;validateSimulationInvariants();return true;}
 export function resetShowcaseProps(){if(state.runMode!=="showcase")return false;if(heldProp())cancelHeldObject();for(const p of showcaseProps){p.x=p.homeX;p.y=p.homeY;}validateSimulationInvariants();return true;}
 export function showcaseSections(){return SHOWCASE_MANIFEST.sections;}
@@ -2805,7 +2788,7 @@ export function simulationEntityDiagnostics(){
 export function levelState(){return {level:state.level,xp:state.levelXp,next:levelCost(state.level)};}
 /** The live offer as three card ids, or null when no draft is pending. Never mutate the array. */
 export function draftPending(){return state.draft.offer;}
-/** Why the pending offer exists — "level" or "dawn" — or null when none is. Same offer, same pick. */
+/** Pending pool — "level", "dawn", or "consumable" — or null. Same offer, same pick. */
 export function draftKind(){return state.draft.offer?state.draft.offerKind:null;}
 /**
  * Take card `index` (0-2) of the pending offer. Routes the card through takeCard() — a buff applies,
@@ -2903,5 +2886,5 @@ export {
   spawnEnemy, transitionPhase,
   // debug commands (view panel > gameplay)
   debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase, setWaveThreatCurve,
-  debugStartWave, debugClearEnemies, debugHealAll, debugForceNextChestOutcome, debugDealCard, debugApplyBuff, debugClearHand,
+  debugStartWave, debugClearEnemies, debugHealAll, debugDealCard, debugApplyBuff, debugClearHand,
 };

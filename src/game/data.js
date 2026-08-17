@@ -26,7 +26,7 @@ export const W=1536*MAP_TILES,H=1024*MAP_TILES;
 // exactly like a placed building - no keep-out circle, no special case in canPlace().
 // `footprint` is attached below, once FOOTPRINT_3x3 exists; nothing else ever writes this object.
 export const BASE = {x:W/2,y:H/2,r:43};
-export const BASE_ZONE=240;
+export const BASE_ZONE=600;
 // Buildable world = the map inset by this much on every side. Read by canPlace() in simulation.js.
 export const BUILD_MARGIN=45;
 
@@ -62,22 +62,18 @@ BASE.footprint=FOOTPRINT_3x3;
 // upgrade costs) is keyed by these names, and iteration order here is the order
 // costs, tallies and grants are read in.
 export const RESOURCE_KINDS=["wood","stone","dust","coin","diamond"];
-// One unopened chest is seeded with the world. Rewards stay authored by existing resource kind;
-// runtime contents are deliberately absent until destruction resolves this table.
+// One nearby unopened chest is seeded with the world. Breaking any chest opens a pick-1-of-3
+// consumable draft; chests hold no pre-rolled runtime contents.
 export const CHEST=Object.freeze({
   startingCount:1,
   maxHp:4,
   footprint:FOOTPRINT_1x1,
-  outcomeOdds:Object.freeze({cache:.5,pinata:.5}),
-  cachePayout:5,
-  pinataPayout:12,
   discoverMinRadius:128,
   discoverMaxRadius:352,
   // World chest scatter (authored-map.js): scatterPerTile*MAP_TILES chests land on the free land
   // cells with the lowest deterministic hashes outside the discover band — exploration loot that
   // scales with map size (3 on the default 1-tile map, 15 on the full map), editor untouched.
   scatterPerTile:3,
-  weights:Object.freeze({wood:38,stone:36,dust:12,coin:11,diamond:3}),
 });
 // Feeding values are read only by simulation.js; no runtime path may assign into this table.
 export const FEED_XP={wood:1,stone:1,dust:5,coin:5,diamond:12};
@@ -104,8 +100,8 @@ export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay
 // the player aims with IS the area this damages.
 export const FIREBALL={damage:6,radius:135};
 // Intentional large-obstacle tuning: the impact reserves 3x3 through meteorTarget and the rock's
-// runtime footprint; 30 HP makes it a durable mining opportunity rather than an ordinary 1x1 node.
-export const METEOR=Object.freeze({damage:20,radius:180,rockHp:30});
+// runtime footprint; 15 HP keeps it durable while matching the halved yield of world nodes.
+export const METEOR=Object.freeze({damage:20,radius:180,rockHp:15});
 export const DAMAGE_ORBS=Object.freeze({duration:30,minCount:1,maxCount:3,orbitRadius:52,aoeRadius:38,damage:1,cooldown:.6});
 export const SUMMONING_CIRCLE=Object.freeze({duration:120,dustCost:5});
 export const FRIENDLY_BRUTE=Object.freeze({hp:36,damage:5,speed:34,range:34,rate:1.1,guardRadius:360});
@@ -213,7 +209,7 @@ for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of
 // One authored boss for now: brute behavior/model, but a 4× render/collision scale and fixed boss
 // stats. It is not a weighted variant; WAVE_BOSS_SPAWNS guarantees its one scheduled appearance.
 enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantColor:null,minWave:5,
-  hp:180,damage:60,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
+  hp:500,damage:60,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
 export const ENEMY_TYPES=Object.freeze(enemyVariants);
 export const WAVE_BOSS_SPAWNS=Object.freeze({5:"bruteBoss"});
 // Enemies spawn at a random angle on a ring around the base (small radial jitter in
@@ -242,7 +238,7 @@ export const NIGHT_WAVE_RECIPES=Object.freeze([
 
 // ── day / night pacing ──────────────────────────────────────────────────────
 export const DAY_DURATION=75;
-export const NIGHT_OVERLAY_ALPHA=.35,LIGHT_FADE_TIME=6;
+export const NIGHT_OVERLAY_ALPHA=.28,LIGHT_FADE_TIME=6;
 
 // ── the king ────────────────────────────────────────────────────────────────
 export const KING={range:95,damage:2,rate:.85};

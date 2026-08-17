@@ -5,10 +5,10 @@
 //   inPool      — the draft can actually offer it
 // Workflow: add an entry here (implemented:false), point Claude at it, it gets
 // built, the flag flips.
-// Reward pools: level-ups offer BUILDS only; cleared waves offer permanent BUFFS only.
-// A chosen buff applies immediately. Chosen builds enter the run's HAND (simulation.js) and
-// only become an effect when the player plays them. Consumables currently have no production
-// reward pool. docs/cards.html renders this file as a browsable
+// Reward pools: level-ups offer BUILDS; cleared waves offer a permanent BUFF then a CONSUMABLE;
+// opened chests offer a CONSUMABLE. A chosen buff applies immediately. Chosen builds and
+// consumables enter the HAND (simulation.js) and only become effects when played.
+// docs/cards.html renders this file as a browsable
 // catalog; docs/progression-model.js reads `model` to simulate income
 // compounding; scripts/validate.mjs keeps every ref honest.
 //

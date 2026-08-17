@@ -3,9 +3,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // DRAFT ADAPTER
 //
-// One overlay, two reward loops. draftKind() decides which: "level" deals builds into
-// the hand; "dawn" applies one permanent buff after a cleared wave. The simulation owns those
-// disjoint pools; this adapter only titles and presents the resulting offer.
+// One overlay, three reward kinds. "level" deals builds; "dawn" applies the first wave-clear
+// reward (a permanent buff); "consumable" deals the second wave-clear reward or a chest reward into
+// the hand. The simulation owns those disjoint pools; this adapter only presents the offer.
 //
 // Ownership / data flow
 //   Reads:    src/game/simulation.js — draftPending(), draftKind(), chooseDraft(), levelState().
@@ -28,7 +28,7 @@ import {draftPending, draftKind, chooseDraft, levelState} from "../game/simulati
 import {cardFace, cardBox, expectArrival, playArrival} from "./hand.js";
 import {syncModalUi} from "./hud.js";
 
-const TITLE = {level:"choose a build",dawn:"choose a permanent upgrade"};
+const TITLE = {level:"choose a build",dawn:"choose a permanent upgrade",consumable:"choose a consumable"};
 const goesToHand = category => category!=="buff";
 
 let surface=null;      // <canvas id="overlay"> — the focus target of last resort
@@ -80,7 +80,8 @@ function setFrameInert(on){
 // ── the subtitle ────────────────────────────────────────────────────────────
 // Each kind explains itself with its own numbers rather than a shared "pick one".
 function subtitle(kind){
-  if(kind==="dawn")return "the village held. choose one permanent upgrade.";
+  if(kind==="dawn")return "the village held. first, choose one permanent upgrade.";
+  if(kind==="consumable")return "choose one card to keep until played.";
   const level=levelState();
   return "level "+level.level+(level.next>0?" · next at "+Math.ceil(level.next)+" more xp":" · top level")+".";
 }

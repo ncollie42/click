@@ -30,7 +30,7 @@ import {
   makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeCorpse, makeGrassTuftGeometry,
   makeChest, makeDamageDummy, makeShowcaseProp,
   makeMainBase, makePegWorker, makeKing, makeBuilding, makeBlueprint, handMeshFor,
-  outlineMat, outlineMatPx
+  outlineMat, outlineMatPx, adoptOutlineShell, releaseOutlineShell
 } from "./models.js";
 import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,
@@ -548,23 +548,82 @@ function syncGrass(){
   grassInstances.instanceMatrix.needsUpdate=true;if(grassInstances.instanceColor)grassInstances.instanceColor.needsUpdate=true;scene.add(grassInstances);builtVegetationRevision=metadata.revision;
 }
 
-const syncTrees = makeLayer(makeTree, (g,t)=>{
-  setXZ(g,t);
-  const d = g.userData, felled = t.stump>0;
-  d.trunk.visible = d.crown.visible = !felled;
-  d.stump.visible = felled;
-  g.rotation.z = felled ? 0 : shakeOf(t);
-  const wear = felled ? 1 : .78 + .22*(t.hp/t.max);
-  g.scale.set(wear, wear*view.heightScale/100, wear);
-});
-const syncRocks = makeLayer(makeRock, (g,r)=>{
-  setXZ(g,r);
-  const d = g.userData, spent = r.depleted>0;
-  for(const m of d.live) m.visible = !spent;
-  d.rubble.visible = spent;
-  g.rotation.z = spent ? 0 : shakeOf(r);
-  const wear = (spent ? 1 : .8 + .2*(r.hp/r.max))*(r.meteor?2.25:1);
-  g.scale.set(wear, wear*view.heightScale/100, wear);
+// ── instanced resource scatter ──────────────────────────────────────────────
+// The authored map carries a few hundred trees/rocks; as pooled groups they were ~1,500 draws
+// (parts + ink shells + their shadow passes). Each class is now a handful of InstancedMeshes —
+// one live body per colour variant, one depleted remnant, each paired with an ink shell that
+// SHARES the live instance buffer — so scatter draws no longer scale with map density. Matrices
+// are recomposed from the simulation arrays every frame (a few hundred composes is microseconds),
+// which keeps shake/wear/heightScale behaviour identical to the old per-group path.
+// Occlusion sweeps identify instances through userData.entities[instanceId] (see countVisible).
+function makeScatterLayer(buildTemplate, variantCount){
+  const variantGeos = [], liveMat = flat(0xffffff, {vertexColors:true});
+  let remnantGeo = null, remnantMat = null;
+  for(let v = 0; v < variantCount; v++){
+    const template = buildTemplate(v);
+    const liveSrc = Array.isArray(template.userData.live) ? template.userData.live[0] : template.userData.live;
+    liveSrc.updateMatrix();
+    variantGeos.push(liveSrc.geometry.clone().applyMatrix4(liveSrc.matrix));
+    if(!remnantGeo){
+      const remnantSrc = template.userData.stump ?? template.userData.rubble;
+      remnantSrc.updateMatrix();
+      remnantGeo = remnantSrc.geometry.clone().applyMatrix4(remnantSrc.matrix);
+      remnantMat = flat(remnantSrc.material.color.getHex());
+    }
+    disposeGroup(template);
+  }
+  const layer = {units:[], capacity:-1, variantCount};
+  layer.rebuild = n => {
+    for(const {mesh, shell} of layer.units){
+      scene.remove(mesh, shell); releaseOutlineShell(shell); mesh.dispose(); shell.dispose();
+    }
+    layer.units = [...variantGeos, remnantGeo].map((geo, i) => {
+      const mesh = new THREE.InstancedMesh(geo, i < variantCount ? liveMat : remnantMat, Math.max(n,1));
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.frustumCulled = false; mesh.count = 0;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.userData.entities = [];
+      const shell = new THREE.InstancedMesh(geo, outlineMat, Math.max(n,1));
+      shell.instanceMatrix = mesh.instanceMatrix;   // one write drives body and ink together
+      shell.frustumCulled = false; shell.count = 0;
+      adoptOutlineShell(shell);
+      scene.add(mesh, shell);
+      return {mesh, shell};
+    });
+    layer.capacity = n;
+  };
+  return layer;
+}
+const _sm=new THREE.Matrix4(),_sq=new THREE.Quaternion(),_sv=new THREE.Vector3(),_ssc=new THREE.Vector3(),_axisZ=new THREE.Vector3(0,0,1);
+// classify(e) -> [unitIndex, rotZ, wear]; scale is (wear, wear*heightScale, wear) like the old groups.
+function syncScatter(layer, list, classify){
+  if(list.length !== layer.capacity) layer.rebuild(list.length);
+  for(const u of layer.units){ u.mesh.count = 0; u.mesh.userData.entities.length = 0; }
+  const hs = view.heightScale/100;
+  for(const e of list){
+    const [unit, rotZ, wear] = classify(e);
+    const u = layer.units[unit], i = u.mesh.count++;
+    u.mesh.userData.entities[i] = e;
+    _sq.setFromAxisAngle(_axisZ, rotZ);
+    _sv.set(gx(e.x), terrainLiftAt(e.x,e.y), gz(e.y));
+    _ssc.set(wear, wear*hs, wear);
+    _sm.compose(_sv, _sq, _ssc);
+    u.mesh.setMatrixAt(i, _sm);
+  }
+  for(const u of layer.units){
+    u.shell.count = u.mesh.count;
+    u.mesh.instanceMatrix.needsUpdate = true;
+    u.mesh.computeBoundingSphere();   // occlusion raycasts early-out against it
+  }
+}
+const treeLayer = makeScatterLayer(v => makeTree({variant:v}), PAL.leaf.length);
+const rockLayer = makeScatterLayer(() => makeRock(), 1);
+const syncTrees = list => syncScatter(treeLayer, list, t => t.stump>0
+  ? [treeLayer.variantCount, 0, 1]
+  : [PAL.leaf[t.variant] !== undefined ? t.variant : 0, shakeOf(t), .78 + .22*(t.hp/t.max)]);
+const syncRocks = list => syncScatter(rockLayer, list, r => {
+  const spent = r.depleted>0, meteor = r.meteor ? 2.25 : 1;
+  return spent ? [1, 0, meteor] : [0, shakeOf(r), (.8 + .2*(r.hp/r.max))*meteor];
 });
 const syncDiamonds = makeLayer(makeDiamond, (g,n)=>{
   setXZ(g,n);
@@ -1875,7 +1934,10 @@ export function countVisible(list, blockers){
     occRay.far = dist;
     let blocked = false;
     for(const hit of occRay.intersectObjects(blockers,false)){
-      const owner = hit.object.userData.ent;
+      // Instanced scatter identifies per instance; pooled meshes carry the entity directly.
+      const owner = hit.object.isInstancedMesh
+        ? hit.object.userData.entities?.[hit.instanceId]
+        : hit.object.userData.ent;
       if(owner === e) continue;                 // its own body doesn't count
       if(hit.distance < dist - .15){ blocked = true; break; }
     }

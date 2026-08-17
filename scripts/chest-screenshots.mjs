@@ -38,13 +38,11 @@ try{
   await page.evaluate(()=>{const s=window.__sim,c=s.chests[0];s.debugGoToPhase("day");s.state.clock.light=0;s.setPointerWorld(c.x,c.y);s.secondaryPress();let p=null;for(let y=64;y<960&&!p;y+=32)for(let x=64;x<1472;x+=32)if(s.canPlace(x,y,null,null,null,c)){p={x,y};break;}if(!p)throw new Error("no held chest screenshot cell");s.setPointerWorld(p.x,p.y);s.state.camera.x=p.x;s.state.camera.y=p.y;const tuple=window.__scene.scanSubjects().find(([entity])=>entity===c);if(!tuple||tuple[2]!==p.x||tuple[3]!==p.y)throw new Error("held chest scan does not use cursor coordinates");});
   await shot(page,"chest-held-placement.png");
   await page.evaluate(()=>{const s=window.__sim;s.secondaryRelease();const c=s.chests[0];s.TUNE.chopTime=.01;s.setPointerWorld(c.x,c.y);s.state.camera.x=c.x;s.state.camera.y=c.y;});await hitChest(page,1);await shot(page,"chest-damaged.png");
-  await page.evaluate(()=>{const s=window.__sim;s.debugForceNextChestOutcome("cache");Math.random=()=>0;});await hitChest(page,3);await shot(page,"chest-cache.png");await page.close();
-
-  page=await open();await focusChest(page);await page.evaluate(()=>{const s=window.__sim,c=s.chests[0];s.TUNE.chopTime=.01;s.debugForceNextChestOutcome("pinata");Math.random=()=>.75;s.setPointerWorld(c.x,c.y);});await hitChest(page,4);await page.evaluate(()=>{const s=window.__sim;if(s.resourceDrops.length!==12||!s.resourceDrops.every(drop=>drop.ttl===null))throw new Error("piñata browser proof payout mismatch");});await shot(page,"chest-pinata.png");await page.close();
+  await page.evaluate(()=>{Math.random=()=>0;});await hitChest(page,3);await page.evaluate(()=>{const s=window.__sim;if(s.draftKind()!=="consumable"||s.draftPending()?.length!==3)throw new Error("chest consumable draft missing");});await shot(page,"chest-consumable-draft.png");await page.close();
 
   page=await open("/?mode=showcase");await page.evaluate(async()=>{const s=window.__sim;for(let i=0;i<6;i++){s.rebuildShowcase();await new Promise(requestAnimationFrame);}s.focusShowcaseSection("props");if(s.chests.length!==1)throw new Error("showcase chest fixture missing");});await shot(page,"chest-showcase.png");await page.close();
   if(errors.length)throw new Error(errors.join("\n"));
-  console.log(JSON.stringify({ok:true,states:["normal-day","normal-night","held-placement","damaged","cache","pinata","showcase"],output}));
+  console.log(JSON.stringify({ok:true,states:["normal-day","normal-night","held-placement","damaged","consumable-draft","showcase"],output}));
 }finally{
   if(browser)await browser.close();
   server.kill("SIGTERM");

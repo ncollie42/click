@@ -47,8 +47,11 @@ export const outlineMat = new THREE.ShaderMaterial({
   vertexShader: `
     uniform float thickness;
     void main(){
-      vec3 swollen = position + normal * thickness;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(swollen, 1.0);
+      vec4 local = vec4(position + normal * thickness, 1.0);
+      #ifdef USE_INSTANCING
+        local = instanceMatrix * local;
+      #endif
+      gl_Position = projectionMatrix * modelViewMatrix * local;
     }`,
   fragmentShader: `
     uniform vec3 tint;
@@ -72,6 +75,115 @@ export function meshOf(geo, mat, cast=true, receive=true){
 export function setOutlines(on){
   OUTLINE_ON = on;
   for(const s of outlineShells) s.visible = on;
+}
+// Shells built OUTSIDE meshOf() — scene.js's instanced scatter — join and leave the same registry
+// so the view panel's outline switch reaches them too.
+export function adoptOutlineShell(shell){
+  shell.castShadow = shell.receiveShadow = false;
+  shell.userData.outline = true;
+  shell.visible = OUTLINE_ON;
+  outlineShells.push(shell);
+  return shell;
+}
+export function releaseOutlineShell(shell){
+  const i = outlineShells.indexOf(shell);
+  if(i >= 0) outlineShells.splice(i, 1);
+}
+
+// ── static baking ───────────────────────────────────────────────────────────
+// Collapses a freshly built group's rigid, untinted meshes into ONE vertex-coloured mesh (plus its
+// single outline shell), so a model costs a handful of draw calls instead of dozens. Build-time
+// only: call it inside a make*() before the group is returned, never on a group already in a scene.
+// A mesh is baked only when nothing can ever move or restyle it independently of the group:
+//   - not reachable from group.userData (those are the animated / toggled / retinted parts). The
+//     `parts` key is exempt — it is the whole-model hurt-flash list, which the caller rebuilds
+//     around the merged mesh.
+//   - material is a bare opaque front-sided Lambert with no map and no emissive (an emissive or
+//     transparent material is a styling hook, not set dressing).
+//   - visible and castShadow (hidden state toggles and pads keep their own mesh).
+// material.color is already in working space, so copying it into the vertex colour attribute under
+// a white vertexColors material renders the identical pixels.
+export function bakeStatic(g, {extraKeep = [], requireShadow = true, shell = true} = {}){
+  const keep = new Set(extraKeep.filter(Boolean));
+  const keepMats = new Set();
+  const visit = value => {
+    if(!value || typeof value !== "object") return;
+    if(value.isObject3D){ keep.add(value); return; }
+    if(value.isMaterial){ keepMats.add(value); return; }
+    if(Array.isArray(value)){ value.forEach(visit); return; }
+    if(value.constructor === Object) Object.values(value).forEach(visit);
+  };
+  for(const [key, value] of Object.entries(g.userData)) if(key !== "parts") visit(value);
+  const bakeableMat = m => m && m.isMeshLambertMaterial && !m.map && !m.transparent &&
+    m.side === THREE.FrontSide && m.emissive.getHex() === 0 && !keepMats.has(m);
+  // requireShadow=false is the pre-adoption path (sim-px models before adoptModel() switches
+  // shadows on); it must still respect a model's noShadow locks, probed by set-and-read.
+  const shadowOk = o => {
+    if(requireShadow) return o.castShadow;
+    const was = o.castShadow; o.castShadow = true;
+    const unlocked = o.castShadow; o.castShadow = was;
+    return unlocked;
+  };
+  const bakeable = [];
+  g.traverse(o => {
+    if(!o.isMesh || isOutline(o) || keep.has(o) || !o.visible || !shadowOk(o)) return;
+    for(let p = o.parent; p && p !== g; p = p.parent) if(keep.has(p)) return;
+    const m = o.material;
+    if(Array.isArray(m)){
+      if(!o.geometry.groups.length || !m.every(bakeableMat)) return;
+    } else if(!bakeableMat(m)) return;
+    bakeable.push(o);
+  });
+  if(bakeable.length < 2) return null;
+  const positions = [], normals = [], colors = [];
+  const mat4 = new THREE.Matrix4();
+  for(const mesh of bakeable){
+    mesh.updateMatrix(); mat4.copy(mesh.matrix);
+    for(let p = mesh.parent; p !== g; p = p.parent){ p.updateMatrix(); mat4.premultiply(p.matrix); }
+    const geo = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(mat4);
+    const pos = geo.getAttribute("position"), nor = geo.getAttribute("normal"), vc = geo.getAttribute("color");
+    // Per-vertex diffuse: the material's colour (per geometry group when multi-material),
+    // multiplied by any authored vertex colours — exactly what the Lambert shader computed.
+    const mats = Array.isArray(mesh.material) ? mesh.material : null;
+    const groupColorAt = i => {
+      if(!mats) return mesh.material.color;
+      for(const grp of geo.groups) if(i >= grp.start && i < grp.start + grp.count)
+        return mats[grp.materialIndex % mats.length].color;
+      return mats[0].color;
+    };
+    for(let i = 0; i < pos.count; i++){
+      positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+      normals.push(nor.getX(i), nor.getY(i), nor.getZ(i));
+      const c = groupColorAt(i);
+      if(vc) colors.push(c.r*vc.getX(i), c.g*vc.getY(i), c.b*vc.getZ(i));
+      else colors.push(c.r, c.g, c.b);
+    }
+    geo.dispose();
+  }
+  // Tear the sources down; a material survives only while some kept mesh still uses it.
+  const baked = new Set(bakeable);
+  const liveMaterials = new Set();
+  g.traverse(o => { if(o.isMesh && !baked.has(o) && !isOutline(o))
+    for(const m of Array.isArray(o.material) ? o.material : [o.material]) liveMaterials.add(m); });
+  for(const mesh of bakeable){
+    for(const child of [...mesh.children]) if(isOutline(child)){
+      const i = outlineShells.indexOf(child); if(i >= 0) outlineShells.splice(i, 1);
+    }
+    mesh.removeFromParent(); mesh.geometry.dispose();
+    for(const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material])
+      if(!liveMaterials.has(m) && !keepMats.has(m)) m.dispose();
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeBoundingSphere();
+  const material = flat(0xffffff, {vertexColors: true});
+  // shell=false is the pre-adoption path: adoptModel() adds the sim-px outline itself, so meshOf's
+  // world-unit shell would both double the ink and use the wrong thickness under the 1/16 wrapper.
+  const merged = shell ? meshOf(geometry, material) : new THREE.Mesh(geometry, material);
+  g.add(merged);
+  return merged;
 }
 
 export function disposeGroup(g){
@@ -114,7 +226,8 @@ export function makeTree(t){
   const stump = meshOf(new THREE.CylinderGeometry(.26,.3,.42,6), flat(PAL.stump));
   stump.position.y = .21; stump.visible = false;
   g.add(trunk, crown, stump);
-  g.userData = {trunk, crown, stump};
+  g.userData = {stump};
+  g.userData.live = bakeStatic(g) ?? trunk;   // trunk+crown fuse into one live mesh
   return g;
 }
 export function makeRock(){
@@ -126,7 +239,9 @@ export function makeRock(){
   const rubble = meshOf(new THREE.DodecahedronGeometry(.55,0), flat(PAL.rubble));
   rubble.position.y = .14; rubble.scale.set(1,.3,1); rubble.visible = false;
   g.add(body, chip, rubble);
-  g.userData = {live:[body,chip], rubble};
+  g.userData = {rubble};
+  const fused = bakeStatic(g);                // body+chip fuse into one live mesh
+  g.userData.live = fused ? [fused] : [body, chip];
   return g;
 }
 export function makeDiamond(){
@@ -162,7 +277,7 @@ export function makeDamageDummy(){
   const target=meshOf(new THREE.CylinderGeometry(.72,.72,.18,12),flat(PAL.plasterLit));target.rotation.x=Math.PI/2;target.position.y=1.35;
   const bull=meshOf(new THREE.CylinderGeometry(.32,.32,.2,12),flat(PAL.bad));bull.rotation.x=Math.PI/2;bull.position.set(0,1.35,.03);
   const base=meshOf(new THREE.BoxGeometry(1.15,.16,.75),flat(PAL.masonryDark));base.position.y=.08;
-  g.add(post,target,bull,base);g.userData={target,bull};return g;
+  g.add(post,target,bull,base);g.userData={target,bull};bakeStatic(g);return g;
 }
 
 export function makeChest(){
@@ -179,7 +294,10 @@ export function makeChest(){
   const latch=meshOf(new THREE.BoxGeometry(.23,.34,.11),metal);latch.name="chest-latch";latch.position.set(0,.55,.47);
   const keyhole=meshOf(new THREE.CylinderGeometry(.035,.035,.025,8),frame);keyhole.rotation.x=Math.PI/2;keyhole.position.set(0,.54,.535);
   g.add(body,lid,lidRail,baseRail,latch,keyhole);
-  g.userData={body,lid,latch,wearMats:[timber,frame,metal]};
+  g.userData={body,lid,latch};
+  bakeStatic(g);                              // rails, straps, keyhole fuse
+  const wear=new Set();g.traverse(o=>{if(o.isMesh&&!isOutline(o))wear.add(o.material);});
+  g.userData.wearMats=[...wear];
   return g;
 }
 
@@ -192,6 +310,7 @@ export function makeShowcaseProp(model){
     const box=meshOf(new THREE.BoxGeometry(1,1,1),flat(PAL.wood));box.position.y=.5;
     const brace=meshOf(new THREE.BoxGeometry(1.08,.12,.12),flat(PAL.timberDark));brace.position.set(0,.5,.51);brace.rotation.z=Math.PI/4;g.add(box,brace);
   }
+  bakeStatic(g);
   return g;
 }
 
@@ -235,7 +354,13 @@ export function makePegWorker(key){
   const def = PEG_MODELS[name] || PEG_MODELS["worker-gatherer"];
   const inner = def.build();
   inner.rotation.y = 0;                  // zero the sheet display yaw; facing is the wrapper's job
-  if(carry) dressCarry(inner);
+  if(carry){
+    dressCarry(inner);
+    // The log bundle is rigid — anims move the whole stack group — so its ~17 meshes fuse into
+    // one before adoption (which then adds the single sim-px outline shell for it).
+    const stack = inner.getObjectByName("stack");
+    if(stack) bakeStatic(stack, {requireShadow: false, shell: false});
+  }
   adoptModel(inner);
   const g = new THREE.Group();
   g.add(inner);
@@ -287,6 +412,11 @@ export function makeCorpse(coat){
 export function makeMainBase(awake){
   const name = awake ? "main-base-awake" : "main-base";
   const inner = BASE_MODELS[name].build();
+  // The hole's anims move only the funnel group, the orb subtree and a set of emissive/transparent
+  // materials (which the bake filter refuses on its own). Everything else — keep, crenellations,
+  // door, berm, chute, apron, curb — is rigid and fuses into one mesh before adoption.
+  bakeStatic(inner, {extraKeep: [inner.getObjectByName("funnel"), inner.getObjectByName("orb")],
+                     requireShadow: false, shell: false});
   adoptModel(inner);
   const g = new THREE.Group();
   const floor = makeFootprintFloor(BASE.footprint, PAL.grass);
@@ -312,6 +442,7 @@ export function makeKing(){
   sword.position.set(.38,.86,0);
   g.add(body, head, crown, sword);
   g.userData = {sword};
+  bakeStatic(g);
   return g;
 }
 
@@ -658,6 +789,10 @@ export function makeBuilding(type){
   g.add(floor);
   g.userData.floor = floor;
   g.userData.parts = parts;
+  // Everything not hung on userData above fuses into one mesh; the hurt-flash list is rebuilt as
+  // the merged mesh plus whichever authored parts survived (they kept their own materials).
+  const fused = bakeStatic(g);
+  if(fused) g.userData.parts = [fused, ...parts.filter(part => part.parent)];
   return g;
 }
 // Blueprints are footprint-aware too: same pad the finished building will get, so completing a
@@ -675,6 +810,7 @@ export function makeBlueprint(type){
     p.position.set(sx*ix, FLOOR_TOP + .55, sz*iz);
     g.add(p);
   }
+  bakeStatic(g);                              // four corner posts fuse into one mesh
   return g;
 }
 
