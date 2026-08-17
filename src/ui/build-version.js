@@ -27,7 +27,7 @@ async function contentFingerprint(){
   assets.sort(([a],[b])=>a.localeCompare(b));
   const payload=assets.map(([path,source])=>path+"\n"+source).join("\n");
   const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(payload));
-  return [...new Uint8Array(digest)].slice(0,5).map(byte=>byte.toString(16).padStart(2,"0")).join("");
+  return [...new Uint8Array(digest)].map(byte=>byte.toString(16).padStart(2,"0")).join("");
 }
 
 export async function initBuildVersion(){
@@ -35,7 +35,7 @@ export async function initBuildVersion(){
   const commit=document.querySelector('meta[name="git-commit"]')?.content.trim();
   try{
     const version=commit||await contentFingerprint();
-    output.textContent="build "+version.slice(0,10);
+    output.textContent="build "+version;
     output.title=commit?"Git commit "+commit:"SHA-256 fingerprint of the served game files";
   }catch(error){
     output.textContent="build local";
