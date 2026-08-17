@@ -252,14 +252,14 @@ function fillSelect(id, items){
 
 // ── the card dealer (gameplay > cards) ──────────────────────────────────────
 // A chip per registry card, grouped by category in the registry's own order, labelled with the id
-// because that is what the rest of the debugger speaks. Clicking a consumable/blueprint calls
+// because that is what the rest of the debugger speaks. Clicking a consumable/build calls
 // debugDealCard() — the same command the ?draftDemo console helpers use — so a dealt card is an
 // ordinary hand entry. Clicking an IMPLEMENTED buff calls debugApplyBuff(): one stack through the
 // ordinary applyBuff() path, uncapped on purpose, with the chip repainting its ×stacks tally.
 // (The tally repaints on click only, so it can go stale across a run reset — reopen to refresh.)
 // Auras and unimplemented buffs are drawn (the grid is the whole catalog) but disabled.
-const DEALER_GROUPS=[["blueprint","blueprints"],["consumable","consumables"],["aura","auras"],["buff","buffs"]];
-const DEALABLE=new Set(["consumable","blueprint"]);
+const DEALER_GROUPS=[["build","builds"],["consumable","consumables"],["aura","auras"],["buff","buffs"]];
+const DEALABLE=new Set(["consumable","build"]);
 // ── threat-curve preview ────────────────────────────────────────────────────
 // Earliest means every prior wave clears by the end of its 30-second spawn window. Real timestamps
 // move later when enemies survive; this is a curve ruler, not a promise about combat duration.
@@ -438,9 +438,7 @@ function bindControls(){
   bindV("vGroundSourcing", v => { DBG.groundSourcing = v; });
   bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });
   bindV("vBuilderRadius", v => { TUNE.builderSourceRadius = v; }, v => v + "px");
-  bindV("vBlueprintRecruiting", v => { DBG.blueprintRecruiting = v; });
-  bindV("vIdleSeeksWork", v => { DBG.idleSeeksWork = v; });
-  bindV("vRecruitRadius", v => { TUNE.recruitRadius = v; }, v => v + "px");
+  bindV("vFreeSearchRadius", v => { TUNE.freeSearchRadius = v; }, v => v + "px");
   bindBtn("vGrantXp",      ()=>debugGrantXp(25));
   bindBtn("vGrantXpBig",   ()=>debugGrantXp(100));
   bindBtn("vGrantAll",     ()=>debugGrant(RESOURCE_KINDS));

@@ -8,9 +8,10 @@ import {
   pressKey, releaseKey,
   beginCameraPan, endCameraPan, dragCameraTo, zoomCameraBy,
   offsetCamera, clampCamera,
-  togglePause, cancelBuildMode, closeUpgradeMenu, openSkillTree, closeSkillTree
+  togglePause, cancelBuildMode, closeUpgradeMenu, closeSkillTree
 } from "./game/simulation.js";
 import {placeCamera, groundFromEvent} from "./render/scene.js";
+import {addClickRipple} from "./render/overlay.js";
 import {modalOpen} from "./ui/hud.js";
 
 // The element every canvas-level listener below is attached to. Set once, by initInput().
@@ -63,6 +64,9 @@ function onPointerDown(event){
   pointerPosition(event);
   if(event.button===1){event.preventDefault();const g=groundFromEvent(event);beginCameraPan(g?g.x:state.camera.x,g?g.y:state.camera.y);surface.setPointerCapture(event.pointerId);return;}
   if(state.gameOver||state.paused||modalOpen())return;
+  // Presentation-only press mark: every primary press on the world gets a same-frame ripple at the
+  // cursor, whether or not the press resolves to an action — empty ground included.
+  if(event.button===0&&state.mouse.inside)addClickRipple(state.mouse.x,state.mouse.y);
   if(event.button===0)primaryPress();
   if(event.button===2)secondaryPress();
 }
@@ -77,8 +81,8 @@ function onKeyDown(event){
   // Escape is a dismiss chain, outermost thing first, and each link reports whether it consumed the
   // press: the skill tree covers the whole stage, so it goes before the panel underneath it.
   if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeSkillTree())return;if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
-  // K is the production skill-tree shortcut. It is unused elsewhere and all modals own it while open.
-  if(event.code==="KeyK"){if(!event.repeat&&!modalOpen()){event.preventDefault();openSkillTree();}return;}
+  // The K skill-tree shortcut is retired while the tree is hidden from production UI (its nodes
+  // have no cost or effect yet); the view panel's "open skill tree" button remains the debug entry.
   // The skill tree covers the whole stage, so panning under it would scroll a world nobody can see;
   // openSkillTree() already dropped the held keys and this stops new ones being taken. Escape above
   // is deliberately ahead of the guard, and the upgrade panel — which hides little — is untouched.

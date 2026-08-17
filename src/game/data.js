@@ -92,7 +92,7 @@ export const XP_TIERS=[40,100,200,350];   // dead: superseded by LEVEL_CURVE, st
 // ids, rarities, texts and stack limits but none of the arithmetic. Read only by simulation.js;
 // no runtime path may assign into these tables — a taken card tallies a stack in run state and
 // the accessors layer these numbers over the authored values at read time.
-export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,towerDamage:1.1,towerSpeed:1.1,baseHp:5,clickDamage:1,
+export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,buildCapacity:1,towerDamage:1.1,towerSpeed:1.1,baseHp:5,clickDamage:1,
   // Chain lightning scales BOTH dials per stack: stack N procs a completed player swing at
   // chainChance+(N-1)*chainChanceStack and throws chainJumps+(N-1) jumps — 20%/1, 30%/2, 40%/3,
   // 50%/4 at the card's 4-stack cap. A jump is a full ordinary swing (its own crit roll) on the
@@ -103,31 +103,61 @@ export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay
 // blast charge's effectRadius on purpose — the cast borrows the blast placement ghost, so the ring
 // the player aims with IS the area this damages.
 export const FIREBALL={damage:6,radius:135};
+// Intentional large-obstacle tuning: the impact reserves 3x3 through meteorTarget and the rock's
+// runtime footprint; 30 HP makes it a durable mining opportunity rather than an ordinary 1x1 node.
+export const METEOR=Object.freeze({damage:20,radius:180,rockHp:30});
+export const DAMAGE_ORBS=Object.freeze({duration:30,minCount:1,maxCount:3,orbitRadius:52,aoeRadius:38,damage:1,cooldown:.6});
+export const SUMMONING_CIRCLE=Object.freeze({duration:120,dustCost:5});
+export const FRIENDLY_BRUTE=Object.freeze({hp:36,damage:5,speed:34,range:34,rate:1.1,guardRadius:360});
+// Capture Yard conversion rules. Combat stats are NOT here on purpose: a controlled enemy keeps its
+// authored ENEMY_TYPES record, so this table only owns what the yard itself decides — how many
+// living allies one completed yard supports, how far from the yard they engage hostiles, how close
+// they idle to it, and how far a controlled healer looks for wounded allies.
+export const CAPTURE_YARD=Object.freeze({capacity:3,guardRadius:300,homeRadius:70,healSearchRadius:150});
+// Garrison rules. The BUILDING_TYPES row below owns what every building owns — name, cost, footprint,
+// construction and job slots — and this table owns everything GUARD-specific, so no other module may
+// restate a guard number: how many workers one garrison can hold (capacity, which IS its job-slot
+// count), how near a hostile must come to call the muster (threatRadius), how far that call reaches
+// for workers (musterRadius), how far an arrived guard engages from its post (guardRadius), how many
+// threat-free daylight seconds demobilize it (safeSeconds), and the stats an arrived guard fights
+// with (maxHp/damage). The garrison itself creates no workers and has no attack.
+// Only the card/registry layer reads this today; the mustering behavior is not built yet.
+export const GARRISON=Object.freeze({capacity:3,musterRadius:300,threatRadius:180,guardRadius:180,safeSeconds:10,maxHp:10,damage:2});
 
 // ── houses and workers ──────────────────────────────────────────────────────
 // The first house is a cheap opening bootstrap. Later houses retain the regular progression below.
 export const HOUSE_SLOTS=4,STARTING_HOUSE_COST={wood:2,stone:0},HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
-// Worker capacities are authored here; future upgrades may modify their effective values at runtime.
-export const RESOURCE_NODE_JOB_SLOTS=1,BLUEPRINT_JOB_SLOTS=2;
+// Resource-node capacity is global because nodes have no type table. Construction capacity belongs
+// to each BUILDING_TYPES row below and is modified only when read for the current run.
+export const RESOURCE_NODE_JOB_SLOTS=1;
 export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
 
 // ── buildings ───────────────────────────────────────────────────────────────
-// Every entry carries an explicit `footprint` (odd cells, anchor-centered). The tower chassis is the
-// only 3x3; every other building and deployable is 1x1. Tower VARIANTS inherit the chassis footprint -
+// Every entry carries an explicit `footprint` (odd cells, anchor-centered). The tower chassis and
+// the capture yard are the only persistent 3x3s; every other building and deployable is 1x1 (the
+// summoning circle and meteor target are temporary/instant 3x3s). Tower VARIANTS inherit the chassis footprint -
 // upgrading never resizes an already-placed tower, so variants deliberately declare no footprint.
-// `jobSlots` is authored, runtime-read-only permanent staffing capacity for a completed building;
-// absence means the type is not a durable post and has zero capacity.
+// `buildSlots` is construction staffing capacity; material totals >=12 use three builders. Every
+// row owns a number, including zero for instant/target-only records that never become blueprints.
+// `jobSlots` independently controls permanent staffing after completion; absence means zero.
 export const BUILDING_TYPES = {
-  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_1x1},
-  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_1x1},
-  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},serviceRadius:175,jobSlots:2,footprint:FOOTPRINT_1x1},
-  house:{name:"house",resource:null,cost:HOUSE_COST,footprint:FOOTPRINT_1x1},
-  obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},footprint:FOOTPRINT_1x1},
-  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},footprint:FOOTPRINT_3x3},
-  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},effectRadius:135,damage:3,innerDamage:5,instant:true,footprint:FOOTPRINT_1x1},
-  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},damage:2,cooldown:.55,instant:true,stack:true,footprint:FOOTPRINT_1x1},
-  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},effectRadius:65,damage:8,instant:true,stack:true,footprint:FOOTPRINT_1x1},
-  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},effectRadius:22,damage:0,cooldown:.25,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_1x1}
+  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},buildSlots:2,serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_1x1},
+  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},buildSlots:3,serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_1x1},
+  stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},buildSlots:2,serviceRadius:175,jobSlots:2,footprint:FOOTPRINT_1x1},
+  house:{name:"house",resource:null,cost:HOUSE_COST,buildSlots:2,footprint:FOOTPRINT_1x1},
+  obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},buildSlots:3,footprint:FOOTPRINT_1x1},
+  tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},buildSlots:3,footprint:FOOTPRINT_3x3},
+  captureYard:{name:"capture yard",resource:null,cost:{wood:8,stone:8},buildSlots:3,footprint:FOOTPRINT_3x3},
+  // The garrison's jobSlots ARE its guard slots, so the count is read from GARRISON.capacity rather
+  // than restated here. Guard stats, radii and the muster timing all live in that record.
+  garrison:{name:"garrison",resource:null,cost:{wood:6,stone:6},buildSlots:2,jobSlots:GARRISON.capacity,footprint:FOOTPRINT_1x1},
+  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:135,damage:3,innerDamage:5,instant:true,footprint:FOOTPRINT_1x1},
+  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},buildSlots:0,damage:2,cooldown:.55,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:65,damage:8,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:22,damage:0,cooldown:.25,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  damageOrbs:{name:"damage orbs",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:DAMAGE_ORBS.orbitRadius+DAMAGE_ORBS.aoeRadius,instant:true,movable:true,footprint:FOOTPRINT_1x1},
+  summoningCircle:{name:"summoning circle",resource:null,cost:{wood:0,stone:0},buildSlots:0,instant:true,movable:true,footprint:FOOTPRINT_3x3},
+  meteorTarget:{name:"meteor impact",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:METEOR.radius,instant:true,targetOnly:true,footprint:FOOTPRINT_3x3}
 };
 export const UPGRADES=[
   {id:"hardness",icon:"⛏",name:"click hardness",cost:{wood:5,stone:5},description:"placeholder: mine tougher resources with each click."},
@@ -162,10 +192,10 @@ export const TOWER_VARIANTS={
 // Variants are authored fixed-stat enemies, never runtime stat multipliers. Every archetype has the
 // same three visual/difficulty bands: base, blue veteran (wave 4+), red elite (wave 7+).
 const ENEMY_ARCHETYPES={
-  raider:{hp:5,speed:52,damage:2,range:40,rate:1,size:1,threatCost:1,spawnWeight:10},
-  archer:{hp:4,speed:42,damage:1,range:155,rate:1.8,size:1,threatCost:2,spawnWeight:6},
-  healer:{hp:5,speed:38,damage:0,range:180,rate:0,healAmount:2,healRate:2.3,size:1,threatCost:3,spawnWeight:2},
-  brute:{hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35,threatCost:4,spawnWeight:3}
+  raider:{hp:5,speed:52,damage:2,range:40,rate:1,size:1,weightTag:"light",threatCost:1,spawnWeight:10},
+  archer:{hp:4,speed:42,damage:1,range:155,rate:1.8,size:1,weightTag:"light",threatCost:2,spawnWeight:6},
+  healer:{hp:5,speed:38,damage:0,range:180,rate:0,healAmount:2,healRate:2.3,size:1,weightTag:"light",threatCost:3,spawnWeight:2},
+  brute:{hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35,weightTag:"heavy",threatCost:4,spawnWeight:3}
 };
 const ENEMY_VARIANT_BANDS=Object.freeze([
   Object.freeze({suffix:"",label:"",tier:1,minWave:1,hp:1,speed:1,damage:1,rate:1,cost:1,weight:1,color:null}),
@@ -191,6 +221,9 @@ export const WAVE_BOSS_SPAWNS=Object.freeze({5:"bruteBoss"});
 export const ENEMY_SPAWN_RADIUS=800;
 export const ENEMY_POOL=Object.freeze(["raider","raider","archer","healer","brute"]);
 export const NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
+// TEMPORARY win condition: clearing this wave ends the run in victory. Placement is undecided and
+// the wave itself should eventually be an authored boss set-piece, not a bare threshold.
+export const WIN_WAVE=10;
 // Normalized power curve: wave 1 starts at startBudget, targetWave reaches targetBudget, and later
 // waves hold there until another authored segment is added. Raise `power` for a slower start and
 // steeper finish; lower it toward 1 for a more linear ramp.

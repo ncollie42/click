@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // DRAFT ADAPTER
 //
-// One overlay, two reward loops. draftKind() decides which: "level" deals building blueprints into
+// One overlay, two reward loops. draftKind() decides which: "level" deals builds into
 // the hand; "dawn" applies one permanent buff after a cleared wave. The simulation owns those
 // disjoint pools; this adapter only titles and presents the resulting offer.
 //
@@ -28,7 +28,7 @@ import {draftPending, draftKind, chooseDraft, levelState} from "../game/simulati
 import {cardFace, cardBox, expectArrival, playArrival} from "./hand.js";
 import {syncModalUi} from "./hud.js";
 
-const TITLE = {level:"choose a building",dawn:"choose a permanent upgrade"};
+const TITLE = {level:"choose a build",dawn:"choose a permanent upgrade"};
 const goesToHand = category => category!=="buff";
 
 let surface=null;      // <canvas id="overlay"> — the focus target of last resort
@@ -54,7 +54,13 @@ export function syncLevelHud(){
   // whatever the last cost left over). The bar rounds only what it PRINTS and leaves the fill on the
   // raw pair, so the text can never claim progress the fill has not — and it rounds progress DOWN
   // against a cost rounded UP, so "8 / 8" is never on screen while the bar is still short.
-  document.getElementById("levelBarXp").textContent=capped?"max":Math.floor(level.xp)+" / "+Math.ceil(level.next);
+  const xpEl=document.getElementById("levelBarXp"),xpText=capped?"max":Math.floor(level.xp)+" / "+Math.ceil(level.next);
+  // A tick on every printed change, but not while the whole bar is replaying its level-up pulse —
+  // one piece of feedback at a time. Same remove/reflow/add replay trick as the pulse below.
+  if(xpEl.textContent!==xpText){
+    xpEl.textContent=xpText;
+    if(level.level===shownLevel){xpEl.classList.remove("tick");void xpEl.offsetWidth;xpEl.classList.add("tick");}
+  }
   if(level.level===shownLevel)return;
   // Reading offsetWidth between remove and add is the reflow that lets the pulse replay on
   // back-to-back level-ups; without it the class never leaves the element and nothing restarts.

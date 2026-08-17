@@ -217,10 +217,8 @@
           <label class="chk"><input autocomplete="off" type="checkbox" id="vBuilderSelfSupply" checked><span>starved builders self-supply</span></label>
           <label><span class="row"><span>builder source radius</span><span id="o_vBuilderRadius"></span></span>
             <input autocomplete="off" type="range" id="vBuilderRadius" min="60" max="1000" step="10" value="400"></label>
-          <label class="chk"><input autocomplete="off" type="checkbox" id="vBlueprintRecruiting" checked><span>blueprint recruiting</span></label>
-          <label class="chk"><input autocomplete="off" type="checkbox" id="vIdleSeeksWork" checked><span>idle guards seek work + tidy drops</span></label>
-          <label><span class="row"><span>recruit radius</span><span id="o_vRecruitRadius"></span></span>
-            <input autocomplete="off" type="range" id="vRecruitRadius" min="100" max="1000" step="20" value="500"></label>
+          <label><span class="row"><span>free worker search radius</span><span id="o_vFreeSearchRadius"></span></span>
+            <input autocomplete="off" type="range" id="vFreeSearchRadius" min="100" max="1000" step="20" value="500"></label>
           </div>
           <div class="vSubpane" data-subtab="time">
           <label id="vSpeedRow"><span class="row"><span>game speed</span><span id="o_vSpeed"></span></span>
@@ -256,7 +254,7 @@
           <!-- The card dealer. Empty root: src/debug/view-debugger.js builds one chip per registry
                card from src/game/cards.js, so a card added tomorrow appears here the same day and
                nothing in this markup names one. Buff and aura chips are drawn but disabled — only
-               consumables and blueprints can be HELD, which is what debugDealCard() deals. -->
+               consumables and builds can be HELD, which is what debugDealCard() deals. -->
           <div class="vSubpane" data-subtab="cards">
           <div class="btnrow">
             <button id="vClearHand" type="button">clear hand</button>
@@ -421,6 +419,8 @@
       <footer id="skillTreeBar"><button id="skillTreeContinue" type="button">continue</button></footer>
     </section>
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
+    <!-- TEMPORARY endcard: fires on clearing WIN_WAVE (data.js). Real ending is TBD (authored boss). -->
+    <section id="victory" class="off"><div class="endcard"><h2>the kingdom stands</h2><p>every wave broken. the dawn is yours.</p><button id="victoryRestart">play again</button></div></section>
   </main>
 </div>
 <!-- Card flights (a spent consumable leaving for the base, a drafted card arriving in the

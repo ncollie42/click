@@ -73,7 +73,7 @@ let spendWatch=null;    // id of a card mid-placement; renderHand() flies it out
 // Card ids are camelCase and the whole UI is lowercase, so an id is split at its humps rather than
 // flattened into one word: chopYield -> "chop yield". Nothing else renames a card.
 const cardName=id=>id.replace(/([a-z0-9])([A-Z])/g,"$1 $2").toLowerCase();
-const CATEGORY_LABEL={buff:"buff",consumable:"consumable",aura:"aura",blueprint:"blueprint"};
+const CATEGORY_LABEL={buff:"buff",consumable:"consumable",aura:"aura",build:"build"};
 
 // The glyph. A card's `ref` already names what it unlocks, so towers and upgrades read their
 // authored icon straight out of data.js and stay in step with it for free. The rest of the refs
@@ -81,24 +81,27 @@ const CATEGORY_LABEL={buff:"buff",consumable:"consumable",aura:"aura",blueprint:
 // presentation-only picks made HERE, drawn from the same glyph vocabulary the authored tables use.
 const REF_GLYPHS={
   "concept:clickCombat":"✊","concept:chopTime":"↻","concept:chopYield":"⛏","concept:crit":"⌖",
-  "concept:chainLightning":"ϟ","concept:loadedDrop":"▣","concept:enemySlam":"↓","concept:retaliation":"↩",
+  "concept:chainLightning":"ϟ","concept:freeHit":"✦","concept:enemyPickup":"☝","concept:loadedDrop":"▣","concept:enemySlam":"↓","concept:retaliation":"↩",
   "concept:workerSpeed":"»","concept:workerCarry":"▣","concept:houseSlots":"⌂","concept:workerHp":"♥",
   "concept:dawnHeal":"☀","concept:towerDamage":"●","concept:towerSpeed":"↯","concept:towerRange":"◎",
   "concept:dawnRepair":"▦","concept:baseHp":"⌂","concept:nightGather":"☾","concept:feedXp":"◉",
+  "concept:screenClick":"✊","concept:resourceRecall":"⌁","concept:touchOfDeath":"☠","concept:meteor":"●",
   "concept:fireball":"♨","concept:treants":"♣","concept:healBase":"♥","concept:repairTowers":"▦","concept:rushBuild":"↯",
   "concept:bundle":"▣","concept:tempWorker":"☝","concept:calmNight":"☾","concept:longDay":"☀",
   "concept:draftMeta":"↻","concept:barracks":"⚔","concept:mendingBeacon":"♥","concept:towerStandard":"✦",
   "concept:warDrum":"⚔","concept:frostTotem":"❄","concept:luckyTotem":"◆","concept:wildFoundation":"♣",
   "concept:dustSiphon":"⌁","concept:coinPress":"◎","concept:diamondDrill":"◈",
-  "building:blast":"●","building:spikes":"▲","building:landmine":"◉","building:tar":"≋","building:obelisk":"▰",
+  "building:blast":"●","building:spikes":"▲","building:landmine":"◉","building:tar":"≋","building:obelisk":"▰","building:damageOrbs":"◉","building:summoningCircle":"◎",
   // The base kit. These five refs are the buildings the shop used to sell; BUILDING_TYPES owns
   // their names and costs but no icon, so — like every other building above — the picture is
   // chosen here, out of the same glyph vocabulary the authored tables use.
   "building:house":"⌂","building:lumber":"♣","building:quarry":"⛏","building:stockpile":"▣","building:tower":"⌖",
+  // The capture yard's picture is the three-bay pen read edge-on: distinct from the storage "▣".
+  "building:captureYard":"▤",
 };
 // The last resort, one per category — so a card added to the registry tomorrow draws a picture the
 // day it lands instead of a hole where one should be. Nothing here can return empty.
-const CATEGORY_GLYPHS={buff:"✦",consumable:"◈",aura:"◎",blueprint:"⌂"};
+const CATEGORY_GLYPHS={buff:"✦",consumable:"◈",aura:"◎",build:"⌂"};
 function cardGlyph(card){
   const [kind,name]=String(card.ref||"").split(":");
   const authored=kind==="tower"?TOWER_VARIANTS[name]?.icon
@@ -113,15 +116,22 @@ function refName(ref){
   return kind==="tower"?TOWER_VARIANTS[name]?.name||null
     :kind==="building"?BUILDING_TYPES[name]?.name||null:null;
 }
-/** A blueprint's id is a slug for the thing it unlocks ("bpSniper"), and that thing already has an
+/** A build card's id is a slug for the thing it unlocks ("bpSniper"), and that thing already has an
  *  authored name — head the card with what it builds rather than with the slug. */
-function cardTitle(card){ return card.category==="blueprint"&&refName(card.ref)||cardName(card.id); }
-/** A blueprint's own `text` is its category said a third time ("blueprint: sniper tower"), after
- *  the eyebrow and the name. The authored table that NAMES the thing also describes it, so the
- *  card carries that line instead and says something the rest of the face does not. */
+function cardTitle(card){ return card.category==="build"&&refName(card.ref)||cardName(card.id); }
+/** A tower build's own `text` is its category said again after the eyebrow and the name. The
+ *  authored table that NAMES the tower also describes it, so the card carries that line instead
+ *  and says something the rest of the face does not. */
 function cardText(card){
   const [kind,name]=String(card.ref||"").split(":");
-  return card.category==="blueprint"&&kind==="tower"&&TOWER_VARIANTS[name]?.description||card.text;
+  return card.category==="build"&&kind==="tower"&&TOWER_VARIANTS[name]?.description||card.text;
+}
+/** The authored tower a build card's placement stands up, or null for anything else. The chassis
+ *  card ("building:tower") is the basic variant — same table row the finished tower fights with. */
+function towerVariant(card){
+  if(card.category!=="build")return null;
+  const [kind,name]=String(card.ref||"").split(":");
+  return kind==="tower"?TOWER_VARIANTS[name]||null:kind==="building"&&name==="tower"?TOWER_VARIANTS.basic:null;
 }
 // ── the card face ───────────────────────────────────────────────────────────
 // One anatomy, two sizes. Everything inside is em-based off the card's own font-size, which
@@ -138,11 +148,30 @@ export function cardFace(id,{key=null,count=1,charges=null}={}){
   el.dataset.id=id;
   const add=(tag,cls,text)=>{const node=document.createElement(tag);node.className=cls;if(text!==undefined)node.textContent=text;el.appendChild(node);return node;};
   if(key!==null){const k=document.createElement("kbd");k.className="card-key";k.textContent=key;el.appendChild(k);}
-  add("header","card-eyebrow",CATEGORY_LABEL[def.category]||def.category);
+  add("header","card-eyebrow",def.type==="spell"?"spell":CATEGORY_LABEL[def.category]||def.category);
   add("div","card-glyph",cardGlyph(def));
   add("h4","card-name",cardTitle(def));
   add("div","card-rule");
   add("p","card-text",cardText(def));
+  // The stat strip, only on a card that places a tower. Values are read at draw time from the
+  // same TOWER_VARIANTS row the glyph and description come from, so a data.js tuning pass
+  // changes the face for free. Area towers own no `range`; their effectRadius fills the slot.
+  const tower=towerVariant(def);
+  if(tower){
+    const stats=add("div","card-stats");
+    const stat=(short,value,label)=>{
+      const cell=document.createElement("span");cell.className="stat";
+      cell.setAttribute("aria-label",label+" "+value);
+      const tag=document.createElement("i");tag.setAttribute("aria-hidden","true");tag.textContent=short;
+      cell.append(tag,String(value));
+      stats.appendChild(cell);
+    };
+    stat("dmg:",tower.damage,"damage");
+    stat("cd:",tower.cooldown+"s","fires every");
+    stat("hp:",tower.maxHp,"hp");
+    if(tower.range!==undefined)stat("range:",tower.range,"range");
+    else stat("area:",tower.effectRadius,"area radius");
+  }
   const foot=add("footer","card-foot");
   // Charge pips: the kit's authored total, filled to whatever is left. A card with no charge
   // track draws no pips at all, so the row only ever appears on something that can be spent

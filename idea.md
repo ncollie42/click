@@ -276,6 +276,18 @@ Prevent repeatedly picking up and dropping the same resources for free infinite 
 - Decide whether impact damages enemies only, everyone nearby, or the dropped unit too.
 - Keep worker assignment priority and resource collection unambiguous when targets overlap.
 
+### Capture Building — SHIPPED as the Capture Yard
+
+**Tags:** `Core Gameplay`, `Retention`
+
+Shipped rules (see CONTEXT.md "Enemy Capture" for vocabulary):
+
+- The **Capture Yard** is a 3x3 constructed building (8 wood + 8 stone, 3 build slots) dealt by the rare `bpCaptureYard` build card. The card is draft-gated behind the Enemy Pickup buff through authored `requires` metadata — it never appears in an offer before the buff is owned.
+- Dropping a carried light enemy onto a **completed, non-full** yard converts it instantly — no recruitment timer. The unit keeps its authored type/variant/abilities and its current HP; hostile statuses, tower retaliation, and wave membership are cleared. Capturing an active-wave enemy removes it from clearance accounting like a kill.
+- Each completed yard supports **three living controlled enemies**; occupancy is derived by counting living linked units and a slot reopens only when one dies. A full or unfinished yard rejects the drop and restores the enemy to its exact pickup origin.
+- Controlled units guard around their source yard with their authored combat kit (raiders melee, archers ranged); controlled healers heal allied units instead of hostiles. Hostiles target and kill them through the ordinary damage pipeline.
+- Snowballing is limited by per-yard capacity plus the yard's build cost per +3 force; heavy enemies remain uncapturable by the pickup weight rule.
+
 ## Fog and Expansion
 
 **Question:** How should fog and expansion work?
@@ -317,16 +329,16 @@ Workers currently encode their behavior in scattered booleans (`returning`, `sta
 **Target shape:**
 
 - **Tagged union for state:** `worker.state = {type:"...", ...payload}`, one update function per `type`, dispatched on the tag. Illegal combinations become unrepresentable instead of policed.
-- **Two layers:** `job` stays the ROLE (long-term, what placement/recruiting assigns); the tagged state is the OBJECTIVE (short-term: fetching this drop, fleeing, returning to post).
+- **Two layers:** `job` stays the ROLE (long-term, what manual placement or the free-worker scheduler assigns); the tagged state is the OBJECTIVE (short-term: fetching this drop, fleeing, returning to post).
 - Refactor behavior-preserving first — same observable behavior, flags folded into the union one at a time. New behaviors land after, as new tags.
 
 Sequencing note: small visible behaviors (flee, idle texture, opportunistic pickup) do not require this refactor and should not wait for it. Refactor when the flags actually start hurting.
 
-## Recruitment Legibility
+## Autonomous Work Legibility
 
-Shipped with blueprint recruiting: borrowed workers carry a marker while they have a `homePost` loan, and hovering a blueprint draws lines to its assigned builders. Keep both only while they make temporary assignments easier to understand in play.
+Historical note: blueprint recruiting once borrowed idle guards on a `homePost` loan and marked them with a diamond overlay. That system is gone — workers now spawn **free** and pick their own bounded work (build → haul → gather, local tier before expanded). What survives: hovering a blueprint still draws lines to its assigned builders, manual or autonomous.
 
-Related open question: once camps auto-refill and blueprints recruit, does dropping a worker directly on a resource node still earn its place? Track it by noticing how often you still do it. If "basically never," delete the `harvest` job and route everything through camps.
+Related open question: with free workers gathering and hauling on their own, does dropping a worker directly on a resource node still earn its place? Track it by noticing how often you still do it. If "basically never," delete the manual `harvest` job and route everything through camps.
 
 ## Assigning NPC Work
 
@@ -406,7 +418,22 @@ This makes the battlefield itself vulnerable: fighting near valuable resource cl
 - Decide whether the king can move, receive upgrades, be manually picked up, or be directly commanded.
 - Decide what happens if the king is defeated.
 
+## Garrison — SHIPPED
+
+**Tags:** `Core Gameplay`, `Cursor Attention Is the Real Resource`
+
+The colony's answer to "my workers keep dying" is a place to stand, not a new unit (see CONTEXT.md "The Garrison" for vocabulary).
+
+- The **Garrison** is a 1x1 constructed building (6 wood + 6 stone, 2 build slots) dealt by the common, ungated `bpGarrison` build card. It is drafted like any other build and is not in the starting hand.
+- It **converts existing workers**. Three guard slots, no production, no attack, no population, no new unit of any kind. Standing a worker in a slot is paying gathering throughput for defense — that opportunity cost is the design.
+- **Manual guards** are standing orders: right-drag a worker in (or finish building the garrison with a manual builder, which inherits the post) and it stays until you move it.
+- **Autonomous guards** are the muster: any free-ish autonomous worker with a hostile within 180px runs to a garrison within 300px, ahead of build/haul/gather. Night postings hold; dawn releases the whole autonomous roster in one transaction; a quiet day releases them after 10 seconds with no hostile inside the station's 180px guard radius. Manual guards are exempt from both.
+- **The kit is earned by arriving**, not by being ordered: standing at a live completed garrison doubles a worker to 10 max HP and 2 damage. It is granted as a max-HP delta (a wounded 3/5 becomes 8/10) and clamped away on exit, so it can never full-heal a guard and never kill one by subtraction. Death at zero is unchanged.
+- Snowballing is limited by the three slots per garrison, the build cost per extra station, and the fact that a guard is a worker who has stopped working.
+
 ## Barracks and Commandable Units
+
+Still unbuilt, and deliberately **not** the Garrison: a barracks would *produce* warriors of its own, where the Garrison only re-roles workers the colony already has. Keep `bpBarracks` a separate concept card.
 
 - Add barracks that create an army for the player.
 - Let the player choose which unit type to recruit.

@@ -39,10 +39,14 @@ const manifest = {
     {id:"stockpile",section:"buildings",x:352,y:672,label:"stockpile"},
     {id:"house",section:"buildings",x:480,y:672,label:"house"},
     {id:"obelisk",section:"buildings",x:608,y:672,label:"obelisk"},
+    {id:"garrison",section:"buildings",x:736,y:672,label:"garrison"},
     {id:"blast",section:"buildings",x:96,y:800,label:"blast charge"},
     {id:"spikes",section:"buildings",x:224,y:800,label:"spike trap"},
     {id:"landmine",section:"buildings",x:352,y:800,label:"land mine"},
     {id:"tar",section:"buildings",x:480,y:800,label:"tar"},
+    {id:"damageOrbs",section:"buildings",x:608,y:896,label:"damage orbs"},
+    {id:"summoningCircle",section:"buildings",x:768,y:896,label:"summoning circle"},
+    {id:"captureYard",section:"buildings",x:928,y:896,label:"capture yard"},
   ],
   towers:[
     {id:"basic",x:96,y:96},{id:"turret",x:416,y:96},{id:"outpost",x:736,y:96},{id:"watch",x:1056,y:96},{id:"sniper",x:1376,y:96},
@@ -106,7 +110,7 @@ function overlaps(a,b){return a.minX<=b.maxX&&b.minX<=a.maxX&&a.minY<=b.maxY&&b.
 function validateManifest(){
   sameMembers("resource nodes",manifest.resourceNodes.map(f=>f.id),["wood","stone","diamond"]);
   sameMembers("loose resources",manifest.looseResources.map(f=>f.id),RESOURCE_KINDS);
-  sameMembers("buildings",manifest.buildings.map(f=>f.id),Object.keys(BUILDING_TYPES).filter(id=>id!=="tower"));
+  sameMembers("buildings",manifest.buildings.map(f=>f.id),Object.keys(BUILDING_TYPES).filter(id=>id!=="tower"&&!BUILDING_TYPES[id].targetOnly));
   sameMembers("tower variants",manifest.towers.map(f=>f.id),Object.keys(TOWER_VARIANTS));
   sameMembers("enemies",manifest.enemies.map(f=>f.id),Object.keys(ENEMY_TYPES));
 
@@ -150,7 +154,7 @@ function validateManifest(){
     }
   }
   for(const worker of manifest.workers){
-    if(!["guard","haul","build","harvest","staff"].includes(worker.job))fail("invalid worker job "+worker.job);
+    if(!["free","guard","haul","build","harvest","staff"].includes(worker.job))fail("invalid worker job "+worker.job);
     if(["harvest","staff"].includes(worker.job)&&!["wood","stone"].includes(worker.tool))fail("invalid worker tool "+worker.id);
   }
   for(const dummy of manifest.dummies)if(!(dummy.hp>0)||dummy.x!==dummy.homeX||dummy.y!==dummy.homeY)fail("invalid dummy "+dummy.id);

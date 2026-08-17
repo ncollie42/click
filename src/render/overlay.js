@@ -22,15 +22,14 @@ import {project} from "./scene.js";
 import {
   VIEW_W,VIEW_H,BASE,
   RESOURCE_KINDS,
-  WORKER_HP,
-  BUILDING_TYPES,UPGRADES,
+  BUILDING_TYPES,UPGRADES,DAMAGE_ORBS,SUMMONING_CIRCLE,CAPTURE_YARD,
   ENEMY_TYPES,
   NIGHT_TELEGRAPH_TIME
 } from "../game/data.js";
 import {
-  state, trees, rocks, diamonds, chests, buildings, damageDummies, damageNumbers,
-  badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget,
-  buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldChest, workerIsLoaned, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, clamp
+  state, trees, rocks, diamonds, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, damageNumbers, resourceDrops,
+  badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget, captureYardOccupancy,
+  buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldBuilding, heldChest, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, workerMaxHp, clamp
 } from "../game/simulation.js";
 
 const canvas = document.getElementById("overlay");   // 2D overlay sits above the WebGL scene
@@ -131,8 +130,9 @@ function addBuilderLine(worker,held,sitePoint){
   if(p.depth>1)return;
   ctx.moveTo(p.x,p.y);ctx.lineTo(sitePoint.x,sitePoint.y);
 }
-/** Hover-only construction links. One shared path keeps the transient work allocation-free. */
-function drawRecruitmentLines(){
+/** Hover-only construction links — one line per assigned builder, manual or autonomous.
+ * One shared path keeps the transient work allocation-free. */
+function drawBuilderLines(){
   if(state.runMode!=="normal")return;
   const hovered=hoverTarget(),site=hovered?.kind==="building"&&!hovered.object.complete?hovered.object:null;
   if(!site)return;
@@ -141,17 +141,6 @@ function drawRecruitmentLines(){
   for(const worker of state.workers)if(worker.job==="build"&&worker.jobTarget===site)addBuilderLine(worker,held,sitePoint);
   if(held&&held.job==="build"&&held.jobTarget===site)addBuilderLine(held,held,sitePoint);
   ctx.strokeStyle=BUILD_JOB_ACCENT;ctx.globalAlpha=.28;ctx.lineWidth=Math.max(1,barScale());ctx.lineCap="round";ctx.stroke();ctx.restore();
-}
-function drawLoanMarker(worker,held){
-  if(!workerIsLoaned(worker))return;
-  const at=workerDrawPosition(worker,held),p=project(at.x,at.y,38);if(p.depth>1)return;
-  const r=3.5*barScale();ctx.fillStyle=BUILD_JOB_ACCENT;ctx.beginPath();
-  ctx.moveTo(p.x,p.y-r);ctx.lineTo(p.x+r,p.y);ctx.lineTo(p.x,p.y+r);ctx.lineTo(p.x-r,p.y);ctx.closePath();ctx.fill();
-}
-function drawLoanMarkers(){
-  if(state.runMode!=="normal")return;
-  const held=heldWorker();for(const worker of state.workers)drawLoanMarker(worker,held);
-  if(held)drawLoanMarker(held,held);
 }
 
 export function drawOverlay(){
@@ -165,7 +154,7 @@ export function drawOverlay(){
     ctx.fillRect(0,0,VIEW_W,VIEW_H);
   }
   drawNightTelegraph();
-  drawRecruitmentLines();
+  drawBuilderLines();
 
   // Health only. Swing progress lives in the action badge now (drawActionBadge),
   // so a node you are cutting shows its remaining yield here and the fill of the
@@ -197,11 +186,15 @@ export function drawOverlay(){
     const s = ENEMY_TYPES[e.type].size;
     marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e.hp/e.max, "#c65343"));
   }
+  for(const brute of friendlyBrutes){marks(brute.x,brute.y,42,52,rowsFor(brute.hp/brute.max,"#62c990"));label("ALLY",brute.x,brute.y,62,"#8ff0b5");}
+  // Controlled enemies wear the friendly-Brute language — green health track, ALLY tag — so a
+  // converted raider can never be misread as the hostile it used to be.
+  for(const unit of controlledEnemies){marks(unit.x,unit.y,28,40,rowsFor(unit.hp/unit.max,"#62c990"));label("ALLY",unit.x,unit.y,50,"#8ff0b5");}
   // Simulation-owned dummies reuse neutral health bars; they never enter enemy identity/reward UI.
   for(const d of damageDummies)marks(d.x,d.y,42,48,rowsFor(d.hp/d.max,"#d6c36d"));
-  for(const w of state.workers)
-    if(w.hp<WORKER_HP) bar(w.x,w.y,30,w.hp/WORKER_HP,40,null,css(PAL.hpGood));
-  drawLoanMarkers();
+  // Effective maximum, not the ordinary one: an arrived garrison guard carries the bigger pool, so
+  // its bar must fill against that or a fortified guard would read as permanently wounded.
+  for(const w of state.workers){const max=workerMaxHp(w);if(w.hp<max) bar(w.x,w.y,30,w.hp/max,40,null,css(PAL.hpGood));}
   if(state.baseHp<state.baseMax) bar(BASE.x,BASE.y,84,state.baseHp/state.baseMax,90,null,css(PAL.bad));
 
   for(const b of buildings){
@@ -218,16 +211,26 @@ export function drawOverlay(){
     if(staffing&&occupancyVisible(b))drawOccupancy(b,48);
     if(b.type==="tower" && b.tower && b.tower.hp<b.tower.maxHp)
       bar(b.x,b.y,56,b.tower.hp/b.tower.maxHp,52,null,css(PAL.hpGood));
+    // Yard capacity is derived per frame, so this readout is correct the instant a capture lands
+    // or a linked ally dies — there is no cached counter to lag behind.
+    if(b.type==="captureYard"){const held=captureYardOccupancy(b);marks(b.x,b.y,48,58,[{frac:held/CAPTURE_YARD.capacity,fill:"#75c86d"}]);label(held+"/"+CAPTURE_YARD.capacity+" turned",b.x,b.y,70,"#a8e6b0");}
+    if(b.orbs){marks(b.x,b.y,44,50,[{frac:b.orbs.remaining/DAMAGE_ORBS.duration,fill:"#8fd9ee"}]);label(Math.ceil(b.orbs.remaining)+"s",b.x,b.y,57,"#bcecff");}
+    if(b.summoning){marks(b.x,b.y,48,58,[{frac:b.summoning.remaining/SUMMONING_CIRCLE.duration,fill:"#9870c9"},{frac:b.summoning.dust/SUMMONING_CIRCLE.dustCost,fill:"#c5a1e8"}]);label(b.summoning.dust+"/"+SUMMONING_CIRCLE.dustCost+" dust · "+Math.ceil(b.summoning.remaining)+"s",b.x,b.y,70,"#dec8f4");}
     if(b.activeUpgrade){
       const job = b.activeUpgrade;
       const up = towerUpgradeList().find(i=>i.id===job.id) || UPGRADES.find(i=>i.id===job.id);
       if(up) drawDelivery(b.x, b.y, up.name, up.cost, job.delivered, css(PAL.arcane));
     }
   }
+  const heldTemporary=heldBuilding();
+  if(heldTemporary?.orbs&&state.mouse.inside){marks(state.mouse.x,state.mouse.y,44,50,[{frac:heldTemporary.orbs.remaining/DAMAGE_ORBS.duration,fill:"#8fd9ee"}]);label(Math.ceil(heldTemporary.orbs.remaining)+"s",state.mouse.x,state.mouse.y,57,"#bcecff");}
+  if(heldTemporary?.summoning&&state.mouse.inside){marks(state.mouse.x,state.mouse.y,48,58,[{frac:heldTemporary.summoning.remaining/SUMMONING_CIRCLE.duration,fill:"#9870c9"},{frac:heldTemporary.summoning.dust/SUMMONING_CIRCLE.dustCost,fill:"#c5a1e8"}]);label(heldTemporary.summoning.dust+"/"+SUMMONING_CIRCLE.dustCost+" dust · "+Math.ceil(heldTemporary.summoning.remaining)+"s",state.mouse.x,state.mouse.y,70,"#dec8f4");}
 
   // Transient combat feedback sits over persistent bars/badges; cursor carry remains topmost.
+  drawCoinBeacons();
   drawActionBadge();
   drawDamageNumbers();
+  drawClickRipples();
   drawCarryCount();
 }
 
@@ -461,16 +464,63 @@ function drawActionBadge(){
 }
 
 /** The pile itself is 3D; only the "n/5" readout stays flat. */
+// The readout bumps on any change — a gained drop and a spent pile both deserve a tick.
+const CARRY_BUMP_MS = 180;
+let carryShown = 0, carryBumpAt = -1e9;
 function drawCarryCount(){
   const total = carriedTotal();
+  if(total !== carryShown){carryShown = total;carryBumpAt = performance.now();}
   if(!total || !state.mouse.inside) return;
   const p = project(state.mouse.x, state.mouse.y, 0);
   if(p.depth>1) return;
   const full = total >= state.capacity;
-  ctx.font = "bold 10px monospace"; ctx.textAlign = "center";
+  const bump = Math.max(0, 1-(performance.now()-carryBumpAt)/CARRY_BUMP_MS);
+  ctx.font = "bold "+(10+4*bump*bump).toFixed(1)+"px monospace"; ctx.textAlign = "center";
   ctx.fillStyle = "#17120dcc"; ctx.fillText(total+"/"+state.capacity, p.x+1, p.y+15);
   ctx.fillStyle = full ? "#e8926f" : "#f1dfb7";
   ctx.fillText(total+"/"+state.capacity, p.x, p.y+14);
+}
+
+// ── click ripples ───────────────────────────────────────────────────────────
+// Same-frame press feedback: src/input.js pushes a world point on every primary press (hit or
+// miss); each entry draws one expanding, fading ring and expires on wall-clock age.
+const RIPPLE_MS = 280;
+const ripples = [];
+export function addClickRipple(x,y){ripples.push({x,y,at:performance.now()});}
+function drawClickRipples(){
+  const now = performance.now();
+  for(let i=ripples.length-1;i>=0;i--){
+    const age = (now-ripples[i].at)/RIPPLE_MS;
+    if(age>=1){ripples.splice(i,1);continue;}
+    const p = project(ripples[i].x, ripples[i].y, 0);
+    if(p.depth>1) continue;
+    const ease = 1-Math.pow(1-age,3), k = barScale();
+    ctx.beginPath();ctx.arc(p.x, p.y, (5+15*ease)*k, 0, Math.PI*2);
+    ctx.strokeStyle = "rgba(241,223,183,"+(.6*(1-age)).toFixed(3)+")";
+    ctx.lineWidth = 2*k*(1-.5*age);ctx.stroke();
+  }
+}
+
+// ── coin beacon ─────────────────────────────────────────────────────────────
+// Timed drops (the wandering gold coin) get a pulsing ground ring and a soft rising beam so the
+// toast is no longer their only announcement. The scene's TTL blink still owns despawn urgency.
+function drawCoinBeacons(){
+  const t = performance.now()/1000;
+  for(const drop of resourceDrops){
+    if(drop.ttl===null || drop.target) continue;
+    const p = project(drop.x, drop.groundY, 0);
+    if(p.depth>1) continue;
+    const k = barScale(), pulse = .5+.5*Math.sin(t*5+drop.spin);
+    const fade = clamp(drop.ttl/2, 0, 1);         // settle out over the last 2s, under the blink
+    const beamH = (46+8*pulse)*k, beamW = 7*k;
+    const beam = ctx.createLinearGradient(0, p.y-beamH, 0, p.y);
+    beam.addColorStop(0,"rgba(227,180,69,0)");
+    beam.addColorStop(1,"rgba(227,180,69,"+(.34*fade).toFixed(3)+")");
+    ctx.fillStyle = beam;ctx.fillRect(p.x-beamW/2, p.y-beamH, beamW, beamH);
+    ctx.beginPath();ctx.arc(p.x, p.y, (9+4*pulse)*k, 0, Math.PI*2);
+    ctx.strokeStyle = "rgba(227,180,69,"+((.30+.35*pulse)*fade).toFixed(3)+")";
+    ctx.lineWidth = 2*k;ctx.stroke();
+  }
 }
 
 function drawNightTelegraph(){

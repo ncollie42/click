@@ -12,8 +12,8 @@
 //             file splices, pushes or assigns into them, and nothing assigns into `state`.
 //   Writes:   renderer-owned pools and meshes, the camera/view presentation holders (`view`,
 //             `VIEW_TUNE`, `IND`) and visual animation state (glide, shots, hand pile). Nothing else.
-//   Supplies: project() — the scene->overlay projection boundary. This module is the PRODUCER of
-//             screen coordinates; src/render/overlay.js is the sole CONSUMER. The dependency runs
+//   Supplies: project() and combatTargetOnScreen() — the scene owns all camera projection/frustum
+//             decisions. Overlay and simulation receive answers, never camera internals. The dependency runs
 //             overlay -> scene and never back, so the overlay can never steer the camera.
 //   Asks:     connect({isModalOpen}) — one host predicate the idle cursor bracket needs. Injected
 //             rather than imported so this module never reaches into the host or the DOM UI.
@@ -48,10 +48,10 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, grass, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs,
-  badgeAction, hoveredBuilding,
+  trees, rocks, diamonds, grass, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs,
+  badgeAction, hoveredBuilding, captureYardOccupancy, durablePostStatus,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
-  heldWorker, heldBuilding, heldChest, heldProp, workerLoad,
+  heldWorker, heldEnemy, heldBuilding, heldChest, heldProp, workerLoad,
   vacuumRadius,terrainAtRasterCell,terrainMetadata,terrainRaisedAtCell,vegetationMetadata,
   clamp, distance
 } from "../game/simulation.js";
@@ -187,11 +187,19 @@ export function groundFromEvent(event){
 // The ONE function that converts world space into overlay space. overlay.js imports it and nothing
 // else; no screen coordinate is computed anywhere but here, so a camera change can never leave the
 // two layers disagreeing about where a thing is.
-const _pv = new THREE.Vector3();
+const _pv = new THREE.Vector3(),_viewProjection=new THREE.Matrix4(),_viewFrustum=new THREE.Frustum(),_targetSphere=new THREE.Sphere();
 /** game (x,y) plus height in game px -> overlay canvas coords (960x540). */
 export function project(x, y, hpx=0){
   _pv.set(gx(x), hpx*S, gz(y)).project(camera3);
   return {x:(_pv.x*.5+.5)*VIEW_W, y:(-_pv.y*.5+.5)*VIEW_H, depth:_pv.z};
+}
+/** Actual active-camera frustum test injected into simulation for screen-wide spells. The sphere
+ * includes a target whose model intersects an edge even when its ground center is just outside. */
+export function combatTargetOnScreen(target){
+  const size=target.combatKind==="damage-dummy"?1:ENEMY_TYPES[target.type]?.size||1,radius=24*size*S;
+  camera3.updateMatrixWorld();_viewProjection.multiplyMatrices(camera3.projectionMatrix,camera3.matrixWorldInverse);_viewFrustum.setFromProjectionMatrix(_viewProjection);
+  _targetSphere.center.set(gx(target.x),radius*.75,gz(target.y));_targetSphere.radius=radius;
+  return _viewFrustum.intersectsSphere(_targetSphere);
 }
 
 // ─────────────────────────────────────────────────────────── lights
@@ -555,7 +563,7 @@ const syncRocks = makeLayer(makeRock, (g,r)=>{
   for(const m of d.live) m.visible = !spent;
   d.rubble.visible = spent;
   g.rotation.z = spent ? 0 : shakeOf(r);
-  const wear = spent ? 1 : .8 + .2*(r.hp/r.max);
+  const wear = (spent ? 1 : .8 + .2*(r.hp/r.max))*(r.meteor?2.25:1);
   g.scale.set(wear, wear*view.heightScale/100, wear);
 });
 const syncDiamonds = makeLayer(makeDiamond, (g,n)=>{
@@ -658,7 +666,8 @@ function syncEnemies(list){
     const burning = !!e.status?.burn;
     for(const m of rec.tintMats)
       m.emissive.setHex(e.flash>0 ? PAL.flash : burning ? PAL.emberGlow : 0x000000);
-    setXZ(g, e, 0);
+    const held=e===heldEnemy()&&state.mouse.inside;
+    if(held)g.position.set(gx(state.mouse.x),2.2,gz(state.mouse.y));else setXZ(g, e, 0);
     g.rotation.set(0, rec.yaw, 0);
     // Archetype size is baked into reviewed models. modelScale is reserved for explicit authored
     // scale variants such as the brute boss; collision size is authored independently in data.js.
@@ -670,6 +679,44 @@ function syncEnemies(list){
     scene.remove(rec.g); disposeGroup(rec.g); enemyStore.delete(e);
   }
 }
+const syncFriendlyBrutes=makeLayer(()=>makeEnemy("brute"),(g,brute)=>{
+  const t=performance.now()/1000,target=brute.combatTarget,inner=g.userData.inner,anims=g.userData.anims;
+  if(anims.thump)anims.thump(inner,target?(1-clamp(brute.attackCooldown,0,1.1)/1.1):brute.wob*.12%1,t);
+  if(target)g.rotation.y=Math.atan2(target.x-brute.x,target.y-brute.y);
+  setXZ(g,brute);g.scale.set(S,S*view.heightScale/100,S);
+  for(const material of g.userData.tintMats||[])material.emissive.setHex(0x244a35);
+});
+// Controlled enemies keep their own archetype/variant shard model — same build path, same anims —
+// with the friendly-Brute green emissive layered on so allegiance reads at a glance beside hostile
+// veteran/elite tints. Facing/anim state rides the pooled group's userData; makeLayer owns disposal
+// when a unit dies or the run resets.
+const syncControlledEnemies=makeLayer(unit=>makeEnemy(unit.type),(g,unit)=>{
+  const t=performance.now()/1000,d=g.userData,def=ENEMY_TYPES[unit.type],inner=d.inner,anims=d.anims;
+  d.px??=unit.x;d.py??=unit.y;d.yaw??=Math.PI;d.healT??=-9;
+  const dx=unit.x-d.px,dz=unit.y-d.py,moving=Math.hypot(dx,dz)>.05;
+  if(moving)d.targetYaw=Math.atan2(dx,dz);
+  else if(unit.combatTarget)d.targetYaw=Math.atan2(unit.combatTarget.x-unit.x,unit.combatTarget.y-unit.y);
+  d.px=unit.x;d.py=unit.y;
+  if(d.targetYaw!==undefined)d.yaw+=yawWrap(d.targetYaw-d.yaw)*.2;
+  const engaged=unit.attackCooldown>0;
+  const combatPhase=strike=>(strike+(1-clamp(unit.attackCooldown,0,def.rate)/def.rate))%1;
+  if(def.archetype==="healer"){
+    if(unit.healFlash>0&&t-d.healT>1.2)d.healT=t;
+    if(t-d.healT<.9&&anims.heal)anims.heal(inner,(t-d.healT)/.9,t);
+    else anims.hover(inner,0,t);
+  }else if(def.archetype==="archer"){
+    if(engaged&&anims.fire)anims.fire(inner,combatPhase(.5),t);
+    else anims.sway(inner,0,t);
+  }else if(def.archetype==="brute"){
+    if(anims.thump)anims.thump(inner,engaged?combatPhase(.55):moving?(unit.wob*.12)%1:0,t);
+  }else{
+    if(engaged&&anims.lunge)anims.lunge(inner,combatPhase(.5),t);
+    else anims.scuttle(inner,moving?(unit.wob*.2)%1:0,t);
+  }
+  for(const material of d.tintMats||[])material.emissive.setHex(unit.flash>0?PAL.flash:0x244a35);
+  setXZ(g,unit);g.rotation.set(0,d.yaw,0);
+  g.scale.set(S,S*view.heightScale/100,S);
+});
 // Workers swap their whole model when their job or carrying-state changes (the buildingStore
 // pattern) — the reviewed pegs carry the tool and the load IN the model, so there is nothing to
 // tint or toggle per frame; the per-frame work is choosing an animation and a facing.
@@ -678,7 +725,8 @@ function syncEnemies(list){
 const workerStore = new Map();
 const workerModelKey = w =>
   (w.job==="haul" ? "worker-courier" : w.job==="build" ? "worker-builder" :
-   w.job==="guard" ? "worker-guard" : "worker-gatherer") + (workerLoad(w)>0 ? "+carry" : "");
+   w.job==="guard" ? "worker-guard" : w.job==="free" ? "worker-gatherer" :
+   "worker-gatherer") + (workerLoad(w)>0 ? "+carry" : "");   // free wears the plain gatherer coat
 const yawWrap = a => Math.atan2(Math.sin(a), Math.cos(a));
 function syncWorkers(){
   const t = performance.now()/1000;
@@ -802,6 +850,16 @@ function syncBuildings(){
       for(const p of rec.g.userData.parts||[]) p.material.emissive.setHex(hurt?PAL.hurtGlow:0x000000);
     }
     if(rec.g.userData.tip) rec.g.userData.tip.rotation.y += .02;
+    if(b.orbs&&rec.g.userData.orbit){rec.g.userData.orbit.rotation.y=b.orbs.angle;rec.g.userData.orbs.forEach((orb,index)=>orb.visible=index<b.orbs.count);}
+    // Derived occupancy drives the sage bay caps directly: one visible cap per living linked ally,
+    // so a capture or an ally death changes the model on the very next frame.
+    if(b.type==="captureYard"&&rec.g.userData.slotMarkers){const held=captureYardOccupancy(b);rec.g.userData.slotMarkers.forEach((cap,index)=>cap.visible=index<held);}
+    // Same contract for the garrison's two station pennants, read off the durable-post status the
+    // overlay already uses: a pennant flies only for a guard that has ARRIVED, so a reserved-but-
+    // travelling slot stays bare and matches the "! vacant" label. Outside a normal run (showcase,
+    // and therefore the placement ghost's untracked copy too) the status is null and the station
+    // shows its full dress.
+    if(b.type==="garrison"&&rec.g.userData.postMarkers){const staffing=durablePostStatus(b),flying=staffing?staffing.arrived:rec.g.userData.postMarkers.length;rec.g.userData.postMarkers.forEach((pennant,index)=>pennant.visible=index<flying);}
   }
   for(const [b,rec] of buildingStore){
     if(seen.has(b))continue;
@@ -1742,7 +1800,7 @@ export function drawScene(){
   syncGrass();syncTrees(trees); syncRocks(rocks); syncDiamonds(diamonds);
   syncChests(heldChest()?[...chests,heldChest()]:chests);
   syncDrops(resourceDrops); syncCorpses(workerCorpses);
-  syncEnemies(state.enemies); syncWorkers();
+  syncEnemies(heldEnemy()?[...state.enemies,heldEnemy()]:state.enemies);syncFriendlyBrutes(friendlyBrutes);syncControlledEnemies(controlledEnemies);syncWorkers();
   syncDummies(damageDummies);syncShowcaseProps(showcaseProps);
   syncBuildings(); syncParticles(); syncHand();
 
@@ -1793,6 +1851,9 @@ export function scanSubjects(){
   if(heldChest()){const held=heldChest(),x=state.mouse.inside?state.mouse.x:held.x,y=state.mouse.inside?state.mouse.y:held.y;out.push([held,.8,x,y]);}
   for(const w of state.workers) out.push([w,.8]);
   for(const e of state.enemies) out.push([e,.8]);
+  if(heldEnemy()){const held=heldEnemy(),x=state.mouse.inside?state.mouse.x:held.x,y=state.mouse.inside?state.mouse.y:held.y;out.push([held,.8,x,y]);}
+  for(const brute of friendlyBrutes) out.push([brute,1.4]);
+  for(const unit of controlledEnemies) out.push([unit,.8]);
   for(const d of damageDummies) out.push([d,1.2]);
   for(const p of showcaseProps) out.push([p,.8]);
   for(const b of buildings)     out.push([b,1.0]);

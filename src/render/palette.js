@@ -87,6 +87,7 @@ export const PAL = {
   blueprint:  0x9a774d,
   scaffold:   0x83603a,
   pad:        0xa08a63,   // packed earth under a finished building's footprint
+  sage:       0x7ba46a,   // allied-unit accent: capture yard markers, converted-enemy read
 
   // ── tower accents (by variant) ─────────────────────────
   towShock:   0x4c5d61,

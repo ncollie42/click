@@ -5,8 +5,8 @@
 //   inPool      — the draft can actually offer it
 // Workflow: add an entry here (implemented:false), point Claude at it, it gets
 // built, the flag flips.
-// Reward pools: level-ups offer BLUEPRINTS only; cleared waves offer permanent BUFFS only.
-// A chosen buff applies immediately. Chosen blueprints enter the run's HAND (simulation.js) and
+// Reward pools: level-ups offer BUILDS only; cleared waves offer permanent BUFFS only.
+// A chosen buff applies immediately. Chosen builds enter the run's HAND (simulation.js) and
 // only become an effect when the player plays them. Consumables currently have no production
 // reward pool. docs/cards.html renders this file as a browsable
 // catalog; docs/progression-model.js reads `model` to simulate income
@@ -15,7 +15,7 @@
 // Fields:
 //   id         unique slug
 //   category   "buff" (permanent, stackable) | "consumable" (free, expendable)
-//              | "aura" (free, temporary buff tower) | "blueprint" (drops one construction
+//              | "aura" (free, temporary buff tower) | "build" (drops one construction
 //              site; it stays in the pool and may be offered again)
 //   rarity     "common" | "rare" | "epic" | "legendary"
 //   text       player-facing effect line
@@ -30,10 +30,12 @@
 //   durationSeconds  lifetime of a temporary consumable effect, in real seconds
 //   tags       optional mechanic facets beyond the card's category
 //   features   larger game systems touched by the card; values come from CARD_FEATURES
-//   produces   output of a generator blueprint that has no authored game table yet
+//   produces   output of a generator build that has no authored game table yet
+//   requires   optional list of BUFF card ids the run must own (>=1 stack each) before the draft
+//              may offer this card; ownership never expires, so a once-eligible card stays eligible
 
 export const RARITIES=["common","rare","epic","legendary"];
-export const CARD_CATEGORIES=["buff","consumable","aura","blueprint"];
+export const CARD_CATEGORIES=["buff","consumable","aura","build"];
 export const CARD_FEATURES=["day/night","resources","workers","hp","fire","fog","physical space"];
 // Relative draw weight per rarity. The draft picks 3 distinct eligible cards proportionally to
 // these; they are odds, not percentages, so adding a card to the pool reweights its whole rarity.
@@ -56,6 +58,12 @@ export const CARDS=[
   {id:"chainLightning", category:"buff", rarity:"epic", text:"swings can arc lightning between nearby targets",
    tags:["chain","lightning"], stacks:4, ref:"concept:chainLightning", model:null,
    implemented:true, inPool:true, notes:"stack N procs at 20%+10%(N-1) and throws N jumps — 20%/1 to 50%/4 at cap; jumps are full swings (own crit roll) crossing freely between enemies and resources (CARD_BUFFS.chain* in data.js)"},
+  {id:"freeHit", category:"buff", rarity:"rare", text:"each click hit has a 15% chance per stack to strike again for free",
+   tags:["click","free hit"], stacks:3, ref:"concept:freeHit", model:null,
+   implemented:true, inPool:true, notes:"the bonus strike is a full click hit with crit and future click effects; it cannot recursively trigger itself"},
+  {id:"enemyPickup", category:"buff", rarity:"epic", text:"pick up enemies tagged light",
+   tags:["enemy pickup","light enemy"], features:["physical space"], stacks:1, ref:"concept:enemyPickup", model:null,
+   implemented:true, inPool:true, notes:"enemy definitions own weightTag; held scheduled enemies still count toward wave clearance"},
   {id:"loadedDrop", category:"buff", rarity:"epic", text:"dropping carried resources deals 1 area damage per resource",
    tags:["aoe","hand"], features:["resources","physical space"], stacks:1, ref:"concept:loadedDrop", model:null,
    implemented:false, inPool:false, notes:"uses hand count before the drop; prevent repeated pickup/drop from dealing free infinite damage"},
@@ -79,6 +87,9 @@ export const CARDS=[
   {id:"workerCarry",  category:"buff", rarity:"rare",   text:"workers carry +1",
    features:["workers"], stacks:3, ref:"concept:workerCarry", model:{target:"worker",mult:1.25},
    implemented:true, inPool:true, notes:"WORKER_CARRY is 3 today, so each stack is big"},
+  {id:"buildCapacity", category:"buff", rarity:"rare", text:"every construction site supports +1 builder",
+   features:["workers"], stacks:2, ref:"concept:buildCapacity", model:{target:"worker",mult:1.08},
+   implemented:true, inPool:true, notes:"adds one to each building type's authored buildSlots while it is under construction"},
   {id:"workerSlot",   category:"buff", rarity:"epic",   text:"every house hosts +1 worker",
    features:["workers","physical space"], stacks:2, ref:"concept:houseSlots", model:{target:"worker",mult:1.2},
    implemented:false, inPool:false, notes:"HOUSE_SLOTS lever; retroactive on built houses"},
@@ -131,6 +142,19 @@ export const CARDS=[
    notes:"held in hand; 3 free placements, and cancelling mid-kit keeps the unplaced charges on the card"},
 
   // ── B · consumables — new ─────────────────────────────────────────────────
+  {id:"screenClick", category:"consumable", rarity:"epic", text:"apply one full click hit to every on-screen enemy",
+   type:"spell", tags:["click","aoe"], features:["physical space"], charges:1, ref:"concept:screenClick", model:null, implemented:true, inPool:true,
+   notes:"each target enters the ordinary click-hit pipeline, including crit, chain lightning, free hit, and future click effects"},
+  {id:"resourceRecall", category:"consumable", rarity:"rare", text:"pull every loose resource back to the base",
+   type:"spell", features:["resources"], charges:1, ref:"concept:resourceRecall", model:null, implemented:true, inPool:true, notes:"releases worker claims and deposits recalled drops into base storage"},
+  {id:"touchOfDeath", category:"consumable", rarity:"legendary", text:"deal 999 damage to every on-screen enemy",
+   type:"spell", tags:["aoe"], features:["physical space"], charges:1, ref:"concept:touchOfDeath", model:null, implemented:true, inPool:true, notes:"direct spell damage; not a click hit"},
+  {id:"damageOrbs", category:"consumable", rarity:"rare", text:"place 1–3 orbiting damage orbs for 30 seconds",
+   type:"building", tags:["aoe"], features:["physical space"], charges:1, durationSeconds:30, ref:"building:damageOrbs", model:null, implemented:true, inPool:true, notes:"the center can be picked up and relocated while active"},
+  {id:"meteor", category:"consumable", rarity:"epic", text:"call a heavy meteor that leaves a mineable rock",
+   type:"spell", tags:["aoe"], features:["resources","physical space"], charges:1, ref:"concept:meteor", model:null, implemented:true, inPool:true, notes:"targets a clear 3x3 footprint; impact deals heavy area damage and installs a large stone node"},
+  {id:"summoningCircle", category:"consumable", rarity:"epic", text:"place a 2-minute circle; feed it 5 dust to summon a friendly Brute",
+   type:"building", tags:["summon"], features:["resources","physical space"], charges:1, durationSeconds:120, ref:"building:summoningCircle", model:null, implemented:true, inPool:true, notes:"the circle can be picked up and is consumed when its fifth dust summons one Brute"},
   {id:"fireball",     category:"consumable", rarity:"rare",   text:"cast a fireball at a location",
    type:"spell", features:["fire"], charges:1, ref:"concept:fireball", model:null, implemented:true, inPool:true,
    notes:"held in hand; aims with the blast charge's placement ghost and detonates FIREBALL (damage/radius in data.js), leaving no building"},
@@ -140,7 +164,7 @@ export const CARDS=[
    type:"building", features:["hp","physical space"], durationSeconds:5, ref:"concept:healBase", model:null, implemented:true, inPool:true, notes:""},
   {id:"repairAll",    category:"consumable", rarity:"rare",   text:"repair every tower",
    features:["hp"], ref:"concept:repairTowers", model:null, implemented:true, inPool:true, notes:"a held shock tower repairs too"},
-  {id:"rushBuild",    category:"consumable", rarity:"epic",   text:"instantly finish one blueprint",
+  {id:"rushBuild",    category:"consumable", rarity:"epic",   text:"instantly finish one build",
    features:["physical space"], ref:"concept:rushBuild", model:null, implemented:false, inPool:false, notes:""},
   {id:"woodBundle",   category:"consumable", rarity:"common", text:"+20 wood, delivered now",
    features:["resources"], ref:"concept:bundle", model:null, implemented:true, inPool:true, notes:"lands in base storage, not in the hand"},
@@ -180,53 +204,70 @@ export const CARDS=[
    ref:"concept:wildFoundation", model:null, implemented:false, inPool:false,
    notes:"prototype: matching biome costs 25% less; mismatched biome costs 25% more; biome detection does not exist yet"},
 
-  // ── D · blueprints — the base kit ─────────────────────────────────────────
+  // ── D · builds — the base kit ─────────────────────────────────────────
   // The build shop is gone: these five ARE the ordinary economy/defense menu, dealt as cards. Each
   // one drops a single ordinary CONSTRUCTION SITE at the building's own authored cost — the card
   // buys the plan, never the materials — and the house site charges nextHouseCost(), the same
   // escalating price every later house pays. They are common and they stay in the pool, so a run
   // can keep drawing houses and camps as it grows.
-  {id:"bpHouse",     category:"blueprint", rarity:"common", text:"place a house blueprint",     features:["workers","physical space"], charges:1, ref:"building:house",     model:null, implemented:true, inPool:true, notes:"one house site at the ESCALATED house cost — the same price the nth house has always cost"},
-  {id:"bpLumber",    category:"blueprint", rarity:"common", text:"place a lumber camp blueprint",features:["resources","physical space"], charges:1, ref:"building:lumber",    model:null, implemented:true, inPool:true, notes:"one lumber camp site at its authored cost; staff it with a worker once it stands"},
-  {id:"bpQuarry",    category:"blueprint", rarity:"common", text:"place a quarry blueprint",    features:["resources","physical space"], charges:1, ref:"building:quarry",    model:null, implemented:true, inPool:true, notes:"one quarry site at its authored cost; staff it with a worker once it stands"},
-  {id:"bpStockpile", category:"blueprint", rarity:"common", text:"place a stockpile blueprint", features:["resources","physical space"], charges:1, ref:"building:stockpile", model:null, implemented:true, inPool:true, notes:"one stockpile site at its authored cost; local storage haulers can fill"},
-  {id:"bpTower",     category:"blueprint", rarity:"common", text:"place a basic tower blueprint",features:["physical space"], charges:1, ref:"building:tower",     model:null, implemented:true, inPool:true, notes:"one basic tower site, plannedVariant null — the chassis, free to take any variant later"},
+  {id:"bpHouse",     category:"build", rarity:"common", text:"place a house",     features:["workers","physical space"], charges:1, ref:"building:house",     model:null, implemented:true, inPool:true, notes:"one house site at the ESCALATED house cost — the same price the nth house has always cost"},
+  {id:"bpLumber",    category:"build", rarity:"common", text:"place a lumber camp",features:["resources","physical space"], charges:1, ref:"building:lumber",    model:null, implemented:true, inPool:false, notes:"one lumber camp site at its authored cost; staff it with a worker once it stands; pulled from the draft pool for now (starting hand only)"},
+  {id:"bpQuarry",    category:"build", rarity:"common", text:"place a quarry",    features:["resources","physical space"], charges:1, ref:"building:quarry",    model:null, implemented:true, inPool:false, notes:"one quarry site at its authored cost; staff it with a worker once it stands; pulled from the draft pool for now (starting hand only)"},
+  {id:"bpStockpile", category:"build", rarity:"common", text:"place a stockpile", features:["resources","physical space"], charges:1, ref:"building:stockpile", model:null, implemented:true, inPool:false, notes:"pulled from the pool for now — stockpiles aren't part of the game yet; one stockpile site at its authored cost when re-enabled"},
+  {id:"bpTower",     category:"build", rarity:"common", text:"place a basic tower",features:["physical space"], charges:1, ref:"building:tower",     model:null, implemented:true, inPool:true, notes:"one basic tower site, plannedVariant null — the chassis, free to take any variant later"},
 
-  // ── D · blueprints — the tower table is the pool ──────────────────────────
+  // ── D · builds — the tower table is the pool ──────────────────────────
   // Every card below refs a real authored table row, so all of them are in the pool. Drafting one
   // puts the card in the HAND; playing it arms the ordinary build placement flow and the click drops
-  // a normal CONSTRUCTION SITE, one per card. A blueprint does NOT leave the pool — sites are not
+  // a normal CONSTRUCTION SITE, one per card. A build card does NOT leave the pool — sites are not
   // unlocks, so a run may draw the same plan again and stand three of the thing. The card is
   // access to the variant, never its materials: the site costs the authored basic-tower price and
   // its variant upgrade is accepted the moment the chassis stands, so the player pays exactly what
   // building the tower and buying the upgrade by hand would have cost.
-  {id:"bpTurret",   category:"blueprint", rarity:"common", text:"place a turret blueprint",        tags:["single target"], features:["physical space"], charges:1, ref:"tower:turret",   model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the turret upgrade, accepted for you"},
-  {id:"bpOutpost",  category:"blueprint", rarity:"common", text:"place an outpost blueprint",      tags:["single target"], features:["physical space"], charges:1, ref:"tower:outpost",  model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the outpost upgrade, accepted for you"},
-  {id:"bpWatch",    category:"blueprint", rarity:"common", text:"place a watch tower blueprint",   tags:["single target"], features:["physical space"], charges:1, ref:"tower:watch",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the watch tower upgrade, accepted for you"},
-  {id:"bpBrick",    category:"blueprint", rarity:"rare",   text:"place a brick tower blueprint",   tags:["single target"], features:["physical space"], charges:1, ref:"tower:brick",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the brick tower upgrade, accepted for you"},
-  {id:"bpAggro",    category:"blueprint", rarity:"rare",   text:"place an aggro tower blueprint",  tags:["single target"], features:["physical space"], charges:1, ref:"tower:aggro",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the aggro tower upgrade, accepted for you"},
-  {id:"bpFire",     category:"blueprint", rarity:"rare",   text:"place a fire tower blueprint",    tags:["single target"], features:["fire","physical space"], charges:1, ref:"tower:fire",     model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the fire tower upgrade, accepted for you"},
-  {id:"bpFreeze",   category:"blueprint", rarity:"rare",   text:"place a freeze tower blueprint",  tags:["single target"], features:["physical space"], charges:1, ref:"tower:freeze",   model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the freeze tower upgrade, accepted for you"},
-  {id:"bpTar",      category:"blueprint", rarity:"rare",   text:"place a tar tower blueprint",     tags:["single target"], features:["physical space"], charges:1, ref:"tower:tarTower", model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the tar tower upgrade, accepted for you"},
-  {id:"bpSniper",   category:"blueprint", rarity:"epic",   text:"place a sniper tower blueprint",  tags:["single target"], features:["physical space"], charges:1, ref:"tower:sniper",   model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the sniper tower upgrade, accepted for you"},
-  {id:"bpTeleport", category:"blueprint", rarity:"epic",   text:"place a teleport tower blueprint",tags:["single target"], features:["physical space"], charges:1, ref:"tower:teleport", model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the teleport tower upgrade, accepted for you"},
-  {id:"bpBomb",     category:"blueprint", rarity:"epic",   text:"place a bomb tower blueprint",    tags:["aoe"], features:["physical space"], charges:1, ref:"tower:bomb",     model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the bomb tower upgrade, accepted for you"},
-  {id:"bpLaser",    category:"blueprint", rarity:"epic",   text:"place a laser tower blueprint",   tags:["piercing"], features:["physical space"], charges:1, ref:"tower:laser",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the laser tower upgrade, accepted for you"},
-  {id:"bpPulse",    category:"blueprint", rarity:"epic",   text:"place a pulse tower blueprint",   tags:["aoe"], features:["physical space"], charges:1, ref:"tower:pulse",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the pulse tower upgrade, accepted for you"},
-  {id:"bpLightning",category:"blueprint", rarity:"epic",   text:"place a lightning tower blueprint",tags:["aoe","chain","lightning"], features:["physical space"], charges:1, ref:"tower:lightning", model:null, implemented:true, inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the lightning tower upgrade, accepted for you"},
-  {id:"bpShock",    category:"blueprint", rarity:"legendary", text:"place a shock tower blueprint",tags:["aoe"], features:["physical space"], charges:1, ref:"tower:shock",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the shock tower upgrade, accepted for you; the finished tower stays movable"},
-  {id:"bpObelisk",  category:"blueprint", rarity:"rare",   text:"place an obelisk blueprint",      features:["physical space"], charges:1, ref:"building:obelisk", model:null, implemented:true, inPool:false, notes:"disabled: direct tower upgrading is gone and the obelisk shop is not used"},
+  {id:"bpTurret",   category:"build", rarity:"common", text:"place a turret",        tags:["single target"], features:["physical space"], charges:1, ref:"tower:turret",   model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the turret upgrade, accepted for you"},
+  {id:"bpOutpost",  category:"build", rarity:"common", text:"place an outpost",      tags:["single target"], features:["physical space"], charges:1, ref:"tower:outpost",  model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the outpost upgrade, accepted for you"},
+  {id:"bpWatch",    category:"build", rarity:"common", text:"place a watch tower",   tags:["single target"], features:["physical space"], charges:1, ref:"tower:watch",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the watch tower upgrade, accepted for you"},
+  {id:"bpBrick",    category:"build", rarity:"rare",   text:"place a brick tower",   tags:["single target"], features:["physical space"], charges:1, ref:"tower:brick",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the brick tower upgrade, accepted for you"},
+  {id:"bpAggro",    category:"build", rarity:"rare",   text:"place an aggro tower",  tags:["single target"], features:["physical space"], charges:1, ref:"tower:aggro",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the aggro tower upgrade, accepted for you"},
+  {id:"bpFire",     category:"build", rarity:"rare",   text:"place a fire tower",    tags:["single target"], features:["fire","physical space"], charges:1, ref:"tower:fire",     model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the fire tower upgrade, accepted for you"},
+  {id:"bpFreeze",   category:"build", rarity:"rare",   text:"place a freeze tower",  tags:["single target"], features:["physical space"], charges:1, ref:"tower:freeze",   model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the freeze tower upgrade, accepted for you"},
+  {id:"bpTar",      category:"build", rarity:"rare",   text:"place a tar tower",     tags:["single target"], features:["physical space"], charges:1, ref:"tower:tarTower", model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the tar tower upgrade, accepted for you"},
+  {id:"bpSniper",   category:"build", rarity:"epic",   text:"place a sniper tower",  tags:["single target"], features:["physical space"], charges:1, ref:"tower:sniper",   model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the sniper tower upgrade, accepted for you"},
+  {id:"bpTeleport", category:"build", rarity:"epic",   text:"place a teleport tower",tags:["single target"], features:["physical space"], charges:1, ref:"tower:teleport", model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the teleport tower upgrade, accepted for you"},
+  {id:"bpBomb",     category:"build", rarity:"epic",   text:"place a bomb tower",    tags:["aoe"], features:["physical space"], charges:1, ref:"tower:bomb",     model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the bomb tower upgrade, accepted for you"},
+  {id:"bpLaser",    category:"build", rarity:"epic",   text:"place a laser tower",   tags:["piercing"], features:["physical space"], charges:1, ref:"tower:laser",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the laser tower upgrade, accepted for you"},
+  {id:"bpPulse",    category:"build", rarity:"epic",   text:"place a pulse tower",   tags:["aoe"], features:["physical space"], charges:1, ref:"tower:pulse",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the pulse tower upgrade, accepted for you"},
+  {id:"bpLightning",category:"build", rarity:"epic",   text:"place a lightning tower",tags:["aoe","chain","lightning"], features:["physical space"], charges:1, ref:"tower:lightning", model:null, implemented:true, inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the lightning tower upgrade, accepted for you"},
+  {id:"bpShock",    category:"build", rarity:"legendary", text:"place a shock tower",tags:["aoe"], features:["physical space"], charges:1, ref:"tower:shock",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the shock tower upgrade, accepted for you; the finished tower stays movable"},
+  {id:"bpObelisk",  category:"build", rarity:"rare",   text:"place an obelisk",      features:["physical space"], charges:1, ref:"building:obelisk", model:null, implemented:true, inPool:false, notes:"disabled: direct tower upgrading is gone and the obelisk shop is not used"},
 
-  // ── C · blueprints — workers (don't exist yet) ────────────────────────────
-  {id:"bpBarracks", category:"blueprint", rarity:"rare", text:"makes warriors",
+  // ── D · builds — enemy capture ────────────────────────────────────────
+  {id:"bpCaptureYard", category:"build", rarity:"rare", text:"place a capture yard — drop carried light enemies in to turn them",
+   tags:["enemy pickup","light enemy"], features:["workers","physical space"], charges:1, requires:["enemyPickup"],
+   ref:"building:captureYard", model:null, implemented:true, inPool:true,
+   notes:"gated behind the enemyPickup buff via `requires`; each finished yard controls up to 3 living converted enemies, a slot reopening when one dies"},
+
+  // ── D · builds — the garrison ─────────────────────────────────────────
+  // A defensive post, not a producer: it creates no workers and has no attack of its own. It holds
+  // ordinary workers, who keep working in peace and fight from it when danger comes. Common and it
+  // stays in the pool like the rest of the build menu, but it is NOT part of the opening hand.
+  {id:"bpGarrison", category:"build", rarity:"common", text:"place a garrison — workers muster here to defend",
+   tags:["guard"], features:["workers","physical space"], charges:1, ref:"building:garrison", model:null,
+   implemented:true, inPool:true,
+   notes:"one garrison site at its authored cost; GARRISON in data.js owns the guard slots, muster/threat/guard radii, demobilize delay and arrived-guard stats"},
+
+  // ── C · builds — workers (don't exist yet) ────────────────────────────
+  // Unimplemented and unrelated to the garrison: a barracks would PRODUCE warriors of its own, where
+  // the garrison only borrows the workers the colony already has.
+  {id:"bpBarracks", category:"build", rarity:"rare", text:"makes warriors",
    tags:["worker"], features:["workers","physical space"], produces:"warriors", ref:"concept:barracks", model:null, implemented:false, inPool:false, notes:""},
 
-  // ── C · blueprints — fog generators (don't exist yet) ─────────────────────
-  {id:"bpDustSiphon",   category:"blueprint", rarity:"epic",      text:"blueprint: dust siphon — works a fog dust node",
+  // ── C · builds — fog generators (don't exist yet) ─────────────────────
+  {id:"bpDustSiphon",   category:"build", rarity:"epic",      text:"build: dust siphon — works a fog dust node",
    features:["resources","fog","physical space"], ref:"concept:dustSiphon", model:{target:"xp",mult:1.1}, implemented:false, inPool:false, notes:"higher-tier generator, lives out in the fog"},
-  {id:"bpCoinPress",    category:"blueprint", rarity:"epic",      text:"blueprint: coin press — mints from a fog vein",
+  {id:"bpCoinPress",    category:"build", rarity:"epic",      text:"build: coin press — mints from a fog vein",
    features:["resources","fog","physical space"], ref:"concept:coinPress", model:{target:"xp",mult:1.1}, implemented:false, inPool:false, notes:""},
-  {id:"bpDiamondDrill", category:"blueprint", rarity:"legendary", text:"blueprint: diamond drill — the deep fog pays",
+  {id:"bpDiamondDrill", category:"build", rarity:"legendary", text:"build: diamond drill — the deep fog pays",
    features:["resources","fog","physical space"], ref:"concept:diamondDrill", model:{target:"xp",mult:1.15}, implemented:false, inPool:false, notes:""},
 ];
 

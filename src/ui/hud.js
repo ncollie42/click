@@ -75,6 +75,7 @@ export const SIM_EFFECTS = {
   toastExpired(){document.getElementById("toast").classList.remove("on");},
   afterUpdate(){updatePrompt();syncPhaseHud();},
   gameOver(){document.getElementById("gameOver").classList.remove("off");},
+  victory(){document.getElementById("victory").classList.remove("off");},
   pauseChanged(paused){document.getElementById("pauseBadge").classList.toggle("off",!paused);},
   buildHudChanged(){syncBuildHud();},
   upgradeMenuOpened(){renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");syncModalUi();},
@@ -113,8 +114,10 @@ export function syncPhaseHud(){
   const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber,living=isDay?0:livingActiveWaveEnemies();
   setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",isDay?Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"elapsed "+formatDuration(wave.elapsed));
   setText("runTime",formatDuration(clock.elapsed));
+  // The skill tree is hidden from production UI (nodes have no cost or effect yet); the badge
+  // stays off no matter the point count. Debug entry: view panel's "open skill tree".
   const points=skillPoints(),badge=document.getElementById("skillPointBadge");
-  setText("skillPointCount",String(points));badge.hidden=points===0;
+  setText("skillPointCount",String(points));badge.hidden=true;
   panel.classList.toggle("night",!isDay);
   // During night, spawning merely transfers work from the schedule to the battlefield. Only an
   // active-wave defeat advances clearance, while cap-delayed scheduled work keeps the bar bounded.
@@ -143,7 +146,7 @@ export function syncBuildHud(){
 function updatePrompt(){
   const box=document.getElementById("prompt"),label=box.querySelector("span"),target=hoverTarget();
   box.classList.toggle("on",!!target);
-  if(target)label.textContent=target.kind==="base"?"deposit at base":target.kind==="stockpile"?"store in stockpile":target.kind==="upgrade"?"deposit toward upgrade":"deliver to blueprint";
+  if(target)label.textContent=target.kind==="base"?"deposit at base":target.kind==="stockpile"?"store in stockpile":target.kind==="upgrade"?"deposit toward upgrade":"deliver to build";
 }
 
 // ── audio ───────────────────────────────────────────────────────────────────
@@ -168,6 +171,7 @@ export function initHud(pointerSurface){
   // production skill-tree entry; command owns modal/input semantics.
   document.getElementById("skillPointBadge").addEventListener("click",openSkillTree);
 
-  // game over
+  // game over / victory
   document.getElementById("restart").addEventListener("click", ()=>location.reload());
+  document.getElementById("victoryRestart").addEventListener("click", ()=>location.reload());
 }

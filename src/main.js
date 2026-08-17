@@ -6,7 +6,7 @@ import {connect as connectSimulation, initializeRunMode, TUNE, update, toast} fr
 // Namespace as well as named bindings: the ?draftDemo console helpers below reach for a handful of
 // debug commands that nothing else in the composition names.
 import * as SIMULATION from "./game/simulation.js";
-import {connect as connectScene, resizeRenderer, drawScene, renderScene} from "./render/scene.js";
+import {connect as connectScene, resizeRenderer, drawScene, renderScene, combatTargetOnScreen} from "./render/scene.js";
 import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
 import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
@@ -41,6 +41,7 @@ function resizeView(){
 // handChanged / draftChanged / levelChanged ride in the same record as every other effect, so the
 // card UI is driven entirely by the simulation raising them — nothing polls.
 connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...DRAFT_EFFECTS,
+  isCombatTargetOnScreen(target){return combatTargetOnScreen(target);},
   handChanged(){renderHand();},
   phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();},
   // Arming and cancelling a card's placement is a BUILD-hud move in the simulation's eyes: only

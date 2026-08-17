@@ -139,7 +139,7 @@ const RANK=Object.fromEntries(RARITIES.map((r,i)=>[r,i]));
 const CAT_LABEL={buff:"A · Buffs — permanent, stackable",
                  consumable:"B · Consumables — free, expendable",
                  aura:"C · Buff Towers — free, temporary auras",
-                 blueprint:"D · Blueprints — unlock a buildable"};
+                 build:"D · Builds — unlock a buildable"};
 
 // tiles
 const tiles=document.getElementById("tiles");
@@ -181,7 +181,7 @@ function cardStats(card){
     const scored=definition&&scoreBuilding(definition,{quantity:card.charges||1});
     return [["score",scored?.score??"TBD"]];
   }
-  if(card.category!=="blueprint")return [];
+  if(card.category!=="build")return [];
   const stats=[];
   if(card.produces)stats.push(["produces",card.produces,"cost"]);
   if(!definition)return stats;
@@ -216,7 +216,7 @@ for(const cat of CARD_CATEGORIES){
     top.append(nm,ra);
     const tx=document.createElement("div");tx.className="text";tx.textContent=c.text;
     const traits=document.createElement("div");traits.className="traits";
-    const traitValues=[[c.category==="blueprint"?"blueprint":c.type,c.category==="blueprint"?"blueprint":c.type],
+    const traitValues=[[c.category==="build"?"build":c.type,c.category==="build"?"build":c.type],
       ...(c.tags||[]).map(tag=>[tag,tag]),
       ...(c.features||[]).map(feature=>[feature,"feature"]),
       [c.durationSeconds?`timer · ${c.durationSeconds} second${c.durationSeconds===1?"":"s"}`:null,"timer"],
@@ -238,7 +238,7 @@ for(const cat of CARD_CATEGORIES){
       const ch=document.createElement("span");ch.className="chip "+(on?"on":"off");
       ch.textContent=label;chips.appendChild(ch);}
     d.appendChild(top);
-    if(c.category!=="blueprint")d.appendChild(tx);
+    if(c.category!=="build")d.appendChild(tx);
     if(traits.children.length)d.appendChild(traits);
     if(stats.children.length)d.appendChild(stats);
     d.append(meta,chips);

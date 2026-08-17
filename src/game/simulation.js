@@ -4,16 +4,16 @@
 import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
   CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
-  FOOTPRINT_1x1,RESOURCE_FOOTPRINT,
+  FOOTPRINT_1x1,FOOTPRINT_3x3,RESOURCE_FOOTPRINT,
   RESOURCE_KINDS,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
-  HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,BLUEPRINT_JOB_SLOTS,
+  HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
   ENEMY_TYPES,ENEMY_SPAWN_RADIUS,
   ENEMY_POOL,
-  NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,WAVE_THREAT_CURVE,WAVE_BOSS_SPAWNS,
+  NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,WAVE_THREAT_CURVE,WAVE_BOSS_SPAWNS,WIN_WAVE,
   DAY_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
-  KING,STEADY_HAND_RATE,FIREBALL
+  KING,STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_ORBS,SUMMONING_CIRCLE,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
 } from "./data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -55,8 +55,8 @@ export const TUNE = {
   clickDamage:1,     // hp removed per completed player swing        [slider vDamage]
   gameSpeed:1,       // whole simulation steps per rendered frame    [slider vSpeed]
   builderSourceRadius:400, // blueprint-centered loose-drop scan [slider vBuilderRadius]
-  recruitRadius:500, // blueprint guard recruitment radius           [slider vRecruitRadius]
-  fleeHpThreshold:1, // worker hp that triggers the survival interrupt
+  freeSearchRadius:500, // expanded free-worker search tier      [slider vFreeSearchRadius]
+  fleeHpThreshold:1, // survival-interrupt hp per 5 max hp; scaled by workerMaxHp so fortified guards flee at 2
 };
 
 // ── effect boundary ─────────────────────────────────────────────────────────
@@ -78,6 +78,7 @@ const NO_EFFECTS = {
   toastExpired(){},          // the toast timer reached zero this step
   afterUpdate(){},           // one whole simulation step finished
   gameOver(){},              // the base fell; the run is over
+  victory(){},               // the win wave was cleared; the run is over, won
   pauseChanged(){},          // (paused)
   levelChanged(){},          // xp progress or the level itself moved
   draftChanged(){},          // an offer appeared, was consumed, or was replaced by the next one
@@ -90,6 +91,7 @@ const NO_EFFECTS = {
   skillTreeClosed(){},       // state.skillTree.open went false; hide the panel
   phaseHudChanged(){},       // a debug command jumped the clock; re-read the phase HUD
   isModalOpen(){return false;},   // does a modal currently own input?
+  isCombatTargetOnScreen(){return false;}, // renderer injects the active-camera frustum query
 };
 let effects = NO_EFFECTS;
 /** Install the adapter. Unlisted hooks keep their no-op default. */
@@ -115,6 +117,14 @@ const grassByCell = new Map();
 let vegetationRevision = 0;
 const resourceDrops = [];
 const buildings = [];
+// Friendly Brutes are combat units, not workers or enemies. Circles create them; their dedicated
+// collection keeps hostile wave membership and worker economy free of special-case identities.
+const friendlyBrutes = [];
+// Controlled enemies are converted hostiles that fight for the player. A dedicated collection keeps
+// them out of hostile wave accounting, the worker economy, and the Friendly Brute contract. Each
+// unit keeps its authored ENEMY_TYPES record and links to exactly ONE completed Capture Yard as its
+// sourceYard; yard occupancy is always derived by counting living linked units, never stored.
+const controlledEnemies = [];
 // Unopened chest ownership is exclusive: this collection owns placed chests; held chests are
 // temporarily owned only by state.heldObject. Destruction removes identity permanently before payout.
 // Normal lifetime is world seed until pickup/destruction/page reload; showcase rebuild replaces fixtures.
@@ -167,7 +177,7 @@ const state = {
   // BUILDING_TYPES key whose ghost/footprint the placement flow draws; `cast` (fireball) replaces
   // "leave a building" with an instant effect at the anchor.
   cardTargeting:null,
-  baseHp:100,baseMax:100,gameOver:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
+  baseHp:100,baseMax:100,gameOver:false,victory:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed is simulated run time. remaining is the authoritative DAY countdown only; night has
   // no deadline and ends from active-wave clearance after the frame's complete combat pipeline.
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
@@ -202,9 +212,7 @@ const DBG={
   invulnBase:false,         // enemy hits on the base subtract nothing
   instantWorkers:true,      // houses ignore their spawn timer by default
   groundSourcing:true,      // builders prefer loose drops before covered storage
-  builderSelfSupply:true,   // starved builders mine one bounded, needed resource at a time
-  blueprintRecruiting:true, // incomplete buildings borrow nearby idle guards
-  idleSeeksWork:true         // house-posted guards fill vacant durable jobs
+  builderSelfSupply:true    // starved builders mine one bounded, needed resource at a time
 };
 
 // ── Global upgrade ownership flow ──
@@ -258,7 +266,9 @@ function composeSpawnPlan(recipe,waveNumber,{budget=waveThreatBudget(waveNumber)
  * waveNightNumber, while survivors from a force-ended older night retain their retired identity. */
 function livingActiveWaveEnemies(){
   const activeNightNumber=state.nightWave.activeNightNumber;
-  return activeNightNumber===null?0:state.enemies.reduce((count,enemy)=>count+(enemy.hp>0&&enemy.waveNightNumber===activeNightNumber?1:0),0);
+  if(activeNightNumber===null)return 0;
+  const placed=state.enemies.reduce((count,enemy)=>count+(enemy.hp>0&&enemy.waveNightNumber===activeNightNumber?1:0),0);
+  return placed+(heldEnemy()?.waveNightNumber===activeNightNumber?1:0);
 }
 function chooseUpcomingNight(){
   const recipes=NIGHT_WAVE_RECIPES.filter(recipe=>recipe.minTier<=waveTier());
@@ -320,6 +330,11 @@ materializeWorld(buildStarterWorld());
 
 const RUN_MODES=new Set(["normal","showcase"]);
 const RESOURCE_KIND_SET=new Set(RESOURCE_KINDS);
+// The closed worker-job vocabulary. `free` is the autonomous idle role workers spawn into;
+// `guard` exists only as a GARRISON posting — reached by dropping a worker onto a station or by the
+// autonomous muster answering a nearby hostile. Dropping a worker on open ground or a house
+// repositions it as free, and no other path in the game mints a guard.
+const WORKER_JOBS=new Set(["free","build","haul","harvest","staff","guard"]);
 let initializedMode=null;
 function invariant(condition,message){if(!condition)throw new Error("simulation invariant: "+message);}
 function assertCombatKind(target){
@@ -327,16 +342,16 @@ function assertCombatKind(target){
   return target.combatKind;
 }
 function assertHeldKind(held){
-  invariant(held&&["worker","building","chest","showcase-prop"].includes(held.kind),"unknown held kind "+held?.kind);
+  invariant(held&&["worker","enemy","building","chest","showcase-prop"].includes(held.kind),"unknown held kind "+held?.kind);
   return held.kind;
 }
 function makeShowcaseWorker(f,index){
-  // homePost is null or {job,jobTarget,postX,postY}; temporary jobs restore that saved assignment.
-  return {x:f.x,y:f.y,postX:f.x,postY:f.y,spawnSource:null,job:f.job,jobTarget:null,homePost:null,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:resourceCounts(),hp:WORKER_HP,attackCooldown:0,hitCooldown:0,step:index*.4,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,reposting:false,displayUnit:true,displayTool:f.tool||null,showcaseKey:"worker:"+f.id,showcaseLabel:f.label,showcaseSection:f.section};
+  // Authored fixtures are manual assignments: `autonomous` is explicit provenance, never inferred.
+  return {x:f.x,y:f.y,postX:f.x,postY:f.y,spawnSource:null,job:f.job,jobTarget:null,autonomous:false,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:resourceCounts(),hp:WORKER_HP,attackCooldown:0,hitCooldown:0,step:index*.4,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,guardSafeTime:0,garrisonBonus:false,displayUnit:true,displayTool:f.tool||null,showcaseKey:"worker:"+f.id,showcaseLabel:f.label,showcaseSection:f.section};
 }
 function clearShowcaseLive(){
   cancelHeldObject();closeUpgradeMenu();resetChop();state.showcaseFocus=null;
-  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=lightningArcs.length=0;replaceGrass([]);state.workers.length=state.enemies.length=0;
+  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=friendlyBrutes.length=controlledEnemies.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=lightningArcs.length=0;replaceGrass([]);state.workers.length=state.enemies.length=0;
   invariant(!state.heldObject,"held object survived showcase teardown");
 }
 function buildShowcaseFixtures(){
@@ -372,7 +387,7 @@ function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.s
 // camp and one quarry
 // (income), one basic tower chassis (the first night). It is a DESIGN GUESS — change the ids, the
 // counts, or delete the line entirely; nothing else reads it.
-const STARTING_HAND=["bpHouse","bpLumber","bpQuarry","bpTower"];
+const STARTING_HAND=["bpHouse","bpTower"];
 let startingHandDealt=false;
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
@@ -389,9 +404,13 @@ export function initializeRunMode(mode="normal"){
     validateSimulationInvariants();return;
   }
   installAllLandTerrain();
-  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.upcomingPlan=null;state.nightWave.activePlan=null;state.nightWave.threatBudget=0;state.nightWave.spawnedThreat=0;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
+  state.gameOver=false;state.victory=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.upcomingPlan=null;state.nightWave.activePlan=null;state.nightWave.threatBudget=0;state.nightWave.spawnedThreat=0;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
 }
 export function rebuildShowcase(){if(state.runMode!=="showcase")return false;resetShowcaseEconomy();installAllLandTerrain();buildShowcaseFixtures();return true;}
+function assertTemporaryBuildingState(building){
+  if(building.orbs)invariant(building.type==="damageOrbs"&&Number.isInteger(building.orbs.count)&&building.orbs.count>=DAMAGE_ORBS.minCount&&building.orbs.count<=DAMAGE_ORBS.maxCount&&building.orbs.remaining>0&&building.orbs.remaining<=DAMAGE_ORBS.duration,"illegal damage-orb state");
+  if(building.summoning)invariant(building.type==="summoningCircle"&&Number.isInteger(building.summoning.dust)&&building.summoning.dust>=0&&building.summoning.dust<SUMMONING_CIRCLE.dustCost&&!building.summoning.summoned&&building.summoning.remaining>0&&building.summoning.remaining<=SUMMONING_CIRCLE.duration,"illegal summoning-circle state");
+}
 
 export function validateSimulationInvariants(){
   invariant(RUN_MODES.has(state.runMode),"invalid run mode "+state.runMode);
@@ -411,12 +430,13 @@ export function validateSimulationInvariants(){
   invariant(offer===null||(Array.isArray(offer)&&offer.length>0&&offer.length<=3&&new Set(offer).size===offer.length&&offer.every(id=>cardById[id]?.inPool)),"illegal draft offer");
   invariant(offer===null?state.draft.offerKind===null:DRAFT_KINDS.includes(state.draft.offerKind),"draft offer kind disagrees with the pending offer");
   invariant(offer===null||offer.every(id=>DRAFT_CATEGORIES[state.draft.offerKind].includes(cardById[id].category)),"draft offer category disagrees with its kind");
+  invariant(offer===null||offer.every(id=>cardPrerequisitesMet(cardById[id])),"draft offered a card whose prerequisites are not owned");
   invariant(state.draftPaused===!!offer,"draft pause flag disagrees with the pending offer");
   // The hand: one stack per id, every id authored, every count real, partial kits mid-spend only.
   invariant(new Set(state.hand.map(entry=>entry.id)).size===state.hand.length,"the hand holds two stacks of one card");
   for(const entry of state.hand){
     invariant(cardById[entry.id],"unknown card in hand: "+entry.id);
-    invariant(["consumable","blueprint"].includes(cardById[entry.id].category),"only consumables and blueprints may be held");
+    invariant(["consumable","build"].includes(cardById[entry.id].category),"only consumables and builds may be held");
     invariant(Number.isInteger(entry.count)&&entry.count>=1,"illegal hand stack count for "+entry.id);
     invariant(entry.charges===null||(Number.isInteger(entry.charges)&&entry.charges>0&&entry.charges<=(cardById[entry.id].charges??1)),"illegal remaining charges for "+entry.id);
   }
@@ -428,7 +448,7 @@ export function validateSimulationInvariants(){
     const entry=handEntry(targeting.id);
     invariant(entry&&entry.charges>0,"card targeting outlived the card it is placing");
   }
-  const collections=[trees,rocks,diamonds,grass,resourceDrops,chests,buildings,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers];
+  const collections=[trees,rocks,diamonds,grass,resourceDrops,chests,buildings,friendlyBrutes,controlledEnemies,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers];
   for(const collection of collections)for(const item of collection)invariant(Number.isFinite(item.x)&&Number.isFinite(item.y),"non-finite entity coordinates");
   const wave=state.nightWave;
   invariant(Number.isInteger(wave.nightNumber)&&wave.nightNumber>=0,"illegal night number");
@@ -454,11 +474,13 @@ export function validateSimulationInvariants(){
   for(const dummy of damageDummies){invariant(assertCombatKind(dummy)==="damage-dummy","non-dummy in dummy collection");invariant(dummy.hp>=0&&dummy.hp<=dummy.max,"illegal dummy health");}
   invariant(grassByCell.size===grass.length,"grass cell index disagrees with vegetation collection");
   for(const tuft of grass){const cell=worldToCell(tuft.x,tuft.y),center=cellToWorld(cell.cx,cell.cy);invariant(tuft.x===center.x&&tuft.y===center.y&&tuft.hp===1&&tuft.max===1,"illegal grass tuft");invariant(grassByCell.get(cell.cy*GRID_COLS+cell.cx)===tuft,"grass cell index lost identity");}
-  for(const nodes of [trees,rocks,diamonds])for(const node of nodes){
+  for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){
     const cell=worldToCell(node.x,node.y),center=cellToWorld(cell.cx,cell.cy);
     invariant(node.x===center.x&&node.y===center.y,"resource is not cell aligned");
+    invariant(Number.isInteger(node.hp)&&Number.isInteger(node.max)&&node.max>0&&node.hp>=0&&node.hp<=node.max,"illegal "+kind+" node health");
     invariant(footprintInWorldBounds(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT),"resource footprint is out of bounds");
     invariant(terrainWorldRectEntirelyOnLand(footprintWorldRect(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT)),"resource is not on land");
+    if(node.meteor)invariant(nodes===rocks&&node.max===METEOR.rockHp&&node.footprint===FOOTPRINT_3x3,"malformed meteor rock");
   }
   invariant(new Set(chests).size===chests.length,"duplicate chest ownership");
   for(const chest of chests){
@@ -475,23 +497,59 @@ export function validateSimulationInvariants(){
   for(const arc of lightningArcs)invariant([arc.x1,arc.y1,arc.x2,arc.y2,arc.age,arc.seed].every(Number.isFinite)&&arc.age>=0,"illegal lightning arc");
   for(const drop of resourceDrops){
     invariant(RESOURCE_KIND_SET.has(drop.kind),"unknown resource drop kind "+drop.kind);
-    invariant(drop.target===null||drop.target==="hand","invalid resource drop target "+drop.target);
+    invariant(drop.target===null||drop.target==="hand"||drop.target==="base","invalid resource drop target "+drop.target);
     if(drop.claimedBy!==undefined)invariant(state.workers.includes(drop.claimedBy),"resource claimed by unknown worker");
   }
   for(const kind of RESOURCE_KINDS){invariant(Number.isFinite(state.carried[kind])&&state.carried[kind]>=0,"illegal carried "+kind);invariant(Number.isFinite(state.stored[kind])&&state.stored[kind]>=0,"illegal stored "+kind);}
   for(const kind of Object.keys(state.carried))invariant(RESOURCE_KIND_SET.has(kind),"unknown carried resource "+kind);
   for(const kind of Object.keys(state.stored))invariant(RESOURCE_KIND_SET.has(kind),"unknown stored resource "+kind);
-  for(const worker of state.workers){invariant(worker.hp>=0&&worker.hp<=WORKER_HP,"illegal worker health");if(worker.taskTarget)invariant(resourceDrops.includes(worker.taskTarget)||trees.includes(worker.taskTarget)||rocks.includes(worker.taskTarget)||diamonds.includes(worker.taskTarget),"worker task target left owned collection");}
-  for(const building of buildings)if(building.tower)invariant(building.tower.hp>=0&&building.tower.hp<=building.tower.maxHp,"illegal tower health");
-  // A designated variant is a promise made to an unfinished tower site; completeBuilding() turns it
-  // into the upgrade job and clears it, so it can never outlive the construction it was made to.
+  for(const worker of state.workers.concat(heldWorker()?[heldWorker()]:[])){
+    // Health is bounded by the EFFECTIVE maximum — the garrison pool for an arrived guard, the
+    // ordinary pool for everyone else, held workers included — so a stale bonus is a hard error.
+    invariant(worker.hp>=0&&worker.hp<=workerMaxHp(worker),"illegal worker health");
+    if(worker.taskTarget)invariant(resourceDrops.includes(worker.taskTarget)||trees.includes(worker.taskTarget)||rocks.includes(worker.taskTarget)||diamonds.includes(worker.taskTarget),"worker task target left owned collection");
+    // The closed job vocabulary and explicit assignment provenance. Staff exists only as a manual
+    // assignment; guard is manual OR an autonomous garrison muster; free is autonomous idle
+    // carrying no target and no claims.
+    invariant(WORKER_JOBS.has(worker.job),"unknown worker job "+worker.job);
+    invariant(typeof worker.autonomous==="boolean","worker assignment provenance is not explicit");
+    if(worker.job==="staff")invariant(!worker.autonomous,"the scheduler may never assign staff");
+    // Every scheduler-posted guard carries the demobilization clock that will eventually stand it
+    // down; a manual guard has no clock because it never stands itself down.
+    if(worker.job==="guard"&&worker.autonomous)invariant(Number.isFinite(worker.guardSafeTime)&&worker.guardSafeTime>=0,"an autonomous guard has no demobilization timer");
+    // A production guard is always a GARRISON guard: no ground drop, house or completion inheritance
+    // may mint one without a station. Showcase guards are inert display fixtures, exempt by design.
+    if(worker.job==="guard"&&state.runMode==="normal")invariant(isGuardStation(worker.jobTarget),"a guard is not posted to a completed garrison");
+    if(worker.job==="free")invariant(worker.autonomous&&worker.jobTarget===null&&worker.taskTarget===null&&worker.selfSupply===null,"free worker retains job state");
+  }
+  // Guard occupancy is DERIVED from the workers pointing at each garrison — held workers included —
+  // so a reservation can never drift from a stored counter or oversubscribe the authored capacity.
+  for(const building of buildings)if(building.type==="garrison"&&building.complete)invariant(assignedWorkers(building).length<=GARRISON.capacity,"garrison exceeds its guard capacity");
+  for(const brute of friendlyBrutes)invariant(brute.hp>0&&brute.hp<=brute.max&&brute.max===FRIENDLY_BRUTE.hp,"illegal friendly brute health");
+  invariant(new Set(controlledEnemies).size===controlledEnemies.length,"duplicate controlled enemy ownership");
+  for(const unit of controlledEnemies){
+    const def=ENEMY_TYPES[unit.type];
+    invariant(def&&def.weightTag==="light","controlled enemy has an illegal type "+unit.type);
+    invariant(unit.hp>0&&unit.hp<=unit.max&&unit.max===def.hp,"illegal controlled enemy health");
+    invariant(buildings.includes(unit.sourceYard)&&unit.sourceYard.type==="captureYard"&&unit.sourceYard.complete,"controlled enemy lost its source capture yard");
+    invariant(!state.enemies.includes(unit),"controlled enemy still in the hostile collection");
+    invariant(unit.waveNightNumber===undefined,"controlled enemy retains wave membership");
+    invariant(heldEnemy()!==unit,"controlled enemy is simultaneously held");
+  }
+  for(const building of buildings)if(building.type==="captureYard"&&building.complete)invariant(captureYardOccupancy(building)<=CAPTURE_YARD.capacity,"capture yard exceeds its living-ally capacity");
+  for(const building of buildings){
+    if(building.tower)invariant(building.tower.hp>=0&&building.tower.hp<=building.tower.maxHp,"illegal tower health");
+    assertTemporaryBuildingState(building);
+  }
+  // A designated variant belongs only to its unfinished site. completeBuilding() installs that
+  // variant directly and clears the designation; no second construction job may survive completion.
   for(const building of buildings)if(building.plannedVariant){
     invariant(building.type==="tower"&&TOWER_VARIANTS[building.plannedVariant],"illegal designated tower variant "+building.plannedVariant);
     invariant(!building.complete,"a designated tower variant outlived its construction");
   }
   for(const id of state.skillTree.selected)invariant(state.skillTree.revealed.has(id)&&SKILL_NODES_BY_ID[id],"selected skill is not revealed");
   for(const id of state.skillTree.revealed)invariant(SKILL_NODES_BY_ID[id],"unknown revealed skill "+id);
-  if(state.heldObject){const held=state.heldObject,kind=assertHeldKind(held);invariant(Number.isFinite(held.originX)&&Number.isFinite(held.originY),"invalid held origin");if(kind==="worker")invariant(!state.workers.includes(held.object),"held worker still installed");else if(kind==="building")invariant(!buildings.includes(held.object),"held building still installed");else if(kind==="chest"){invariant(!chests.includes(held.object),"held chest still installed");invariant(Number.isFinite(held.object.x)&&Number.isFinite(held.object.y),"held chest has non-finite coordinates");invariant(Number.isInteger(held.object.hp)&&held.object.hp>0&&held.object.hp<=held.object.max&&held.object.max===CHEST.maxHp,"held dead chest");invariant(held.object.footprint===CHEST.footprint,"held chest has invalid footprint");}else invariant(showcaseProps.includes(held.object),"held prop lost ownership");}
+  if(state.heldObject){const held=state.heldObject,kind=assertHeldKind(held);invariant(Number.isFinite(held.originX)&&Number.isFinite(held.originY),"invalid held origin");if(kind==="worker")invariant(!state.workers.includes(held.object),"held worker still installed");else if(kind==="enemy"){invariant(!state.enemies.includes(held.object),"held enemy still installed");invariant(ENEMY_TYPES[held.object.type]?.weightTag==="light","held enemy is not light");}else if(kind==="building"){invariant(!buildings.includes(held.object),"held building still installed");assertTemporaryBuildingState(held.object);}else if(kind==="chest"){invariant(!chests.includes(held.object),"held chest still installed");invariant(Number.isFinite(held.object.x)&&Number.isFinite(held.object.y),"held chest has non-finite coordinates");invariant(Number.isInteger(held.object.hp)&&held.object.hp>0&&held.object.hp<=held.object.max&&held.object.max===CHEST.maxHp,"held dead chest");invariant(held.object.footprint===CHEST.footprint,"held chest has invalid footprint");}else invariant(showcaseProps.includes(held.object),"held prop lost ownership");}
   if(state.runMode==="normal")invariant(!damageDummies.length&&!showcaseProps.length&&!showcaseLabelRecords.length,"normal mode contains showcase entities");
   else{invariant(grass.length===0&&grassByCell.size===0,"showcase contains production vegetation");
     invariant(state.enemies.every(enemy=>enemy.displayUnit)&&state.workers.every(worker=>worker.displayUnit),"showcase display units are not inert");
@@ -567,22 +625,34 @@ function killEnemy(enemy,announce=true){
   if(droppedDust)spawnResource("dust",enemy.x+rand(-7,7),enemy.y);
   burst(enemy.x,enemy.y,"#4b3b50",12);if(announce||droppedDust)toast(droppedDust?"enemy defeated — dust dropped":"enemy defeated");sound(150,.12);
 }
-function hitCombatTarget(target,quiet=false){
-  // One crit roll per COMPLETED swing, so a critical hit and its damage number can never disagree.
-  const kind=assertCombatKind(target),critical=critHit(),damage=clickDamage()*(critical?CARD_BUFFS.critMultiplier:1);
-  if(kind==="damage-dummy")damageDummy(target,damage,"#d25b49",5,{critical});
-  else if(kind==="enemy")damageEnemy(target,damage,"#d25b49",5,null,{announce:true,critical});
-  else invariant(false,"unhandled combat kind "+kind);
-  if(!quiet)sound(critical?820:610,.045);
-  maybeChainLightning(target);
+const MAX_PLAYER_HIT_EFFECT_DEPTH=12;
+function combatTargetActive(target){const kind=assertCombatKind(target);return kind==="damage-dummy"?damageDummies.includes(target)&&target.defeatedTimer<=0:state.enemies.includes(target)&&target.hp>0;}
+function playerHitActive(hit){return hit.kind==="combat"?combatTargetActive(hit.target):resourceIsActive(hit.target,hit.resourceKind);}
+/** One extensible player-click pipeline for combat and resources. Context makes recursion policy
+ * explicit: chain jumps cannot chain directly, free hits can, and no generated hit can generate
+ * another Free Hit. The depth ceiling guarantees future effect combinations remain bounded. */
+function executePlayerHit(hit,context={}){
+  const ctx={depth:0,source:"direct",allowChain:true,allowFreeHit:true,quiet:false,...context};
+  if(!playerHitActive(hit))return false;
+  const critical=critHit();
+  if(hit.kind==="combat"){
+    const kind=assertCombatKind(hit.target),damage=clickDamage()*(critical?CARD_BUFFS.critMultiplier:1);
+    if(kind==="damage-dummy")damageDummy(hit.target,damage,"#d25b49",5,{critical});
+    else damageEnemy(hit.target,damage,"#d25b49",5,null,{announce:true,critical});
+  }else damageResourceTarget(hit.target,hit.resourceKind,critical);
+  if(!ctx.quiet){const frequency=hit.kind==="combat"?(critical?820:610):hit.resourceKind==="wood"?350+hit.target.hp*25:hit.resourceKind==="diamond"?760:170+hit.target.hp*15;sound(frequency,.045);}
+  if(ctx.depth<MAX_PLAYER_HIT_EFFECT_DEPTH&&ctx.allowChain)resolvePlayerHitChain(hit,ctx);
+  const stacks=buffStacks("freeHit");
+  if(ctx.depth<MAX_PLAYER_HIT_EFFECT_DEPTH&&ctx.allowFreeHit&&playerHitActive(hit)&&stacks>0&&Math.random()<Math.min(1,CARD_BUFFS.freeHitChance*stacks))
+    executePlayerHit(hit,{depth:ctx.depth+1,source:"free",allowChain:true,allowFreeHit:false,quiet:true});
+  return true;
 }
+function hitCombatTarget(target,quiet=false){return executePlayerHit({kind:"combat",target},{quiet});}
 
 // ── chain lightning ─────────────────────────────────────────────────────────
 // The chainLightning buff turns a completed player swing into up to N more swings, each landing on
-// the nearest unstruck target within reach of the previous strike. A jump re-enters the ordinary
-// hit paths (hitCombatTarget / hitResource) so it IS a full swing — its own crit roll, its own
-// drops — and `chainResolving` is what stops those re-entered swings from proccing again.
-let chainResolving=false;
+// the nearest unstruck target within reach of the previous strike. Every jump re-enters
+// executePlayerHit() with explicit effect permissions and its own crit/free-hit rolls.
 function chainCombatRoster(){return state.runMode==="showcase"?damageDummies.filter(dummy=>dummy.defeatedTimer<=0):state.enemies;}
 /** Jump order resolved BEFORE any damage lands, so a kill mid-chain cannot re-aim later jumps. */
 function chainLightningTargets(fromX,fromY,jumps,range,visited,combatOnly=false){
@@ -598,20 +668,17 @@ function chainLightningTargets(fromX,fromY,jumps,range,visited,combatOnly=false)
   return targets;
 }
 function addLightningArc(x1,y1,x2,y2){lightningArcs.push({x1,y1,x2,y2,age:0,seed:Math.random()});}
-function maybeChainLightning(origin){
-  const jumps=chainLightningJumps();
-  if(jumps<=0||chainResolving||Math.random()>=chainLightningChance())return;
+function resolvePlayerHitChain(hit,context){
+  const jumps=chainLightningJumps(),origin=hit.target;
+  if(jumps<=0||Math.random()>=chainLightningChance())return;
   const targets=chainLightningTargets(origin.x,origin.y,jumps,CARD_BUFFS.chainRange,new Set([origin]));
   if(!targets.length)return;
   let fromX=origin.x,fromY=origin.y;
-  chainResolving=true;
-  try{
-    for(const jump of targets){
-      addLightningArc(fromX,fromY,jump.target.x,jump.target.y);fromX=jump.target.x;fromY=jump.target.y;
-      if(jump.combat)hitCombatTarget(jump.target,true);
-      else hitResource(jump.target,jump.resource,false,true);
-    }
-  }finally{chainResolving=false;}
+  for(const jump of targets){
+    addLightningArc(fromX,fromY,jump.target.x,jump.target.y);fromX=jump.target.x;fromY=jump.target.y;
+    executePlayerHit(jump.combat?{kind:"combat",target:jump.target}:{kind:"resource",target:jump.target,resourceKind:jump.resource},
+      {depth:context.depth+1,source:"chain",allowChain:false,allowFreeHit:true,quiet:true});
+  }
   sound(940,.1);
 }
 function blastButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-34&&y<=building.y+34;}
@@ -627,12 +694,21 @@ function pickUpMovableAt(x,y){
   for(const candidate of state.workers){if(candidate.displayUnit)continue;const d=distance(x,y,candidate.x,candidate.y);if(d<best){worker=candidate;best=d;}}
   if(worker){
     clearWorkerSelfSupply(worker);state.workers.splice(state.workers.indexOf(worker),1);
+    // Lifting a guard off its post ends the fortification IMMEDIATELY — the kit belongs to a worker
+    // standing at the station, not to the orders it carries — while job/jobTarget (and therefore the
+    // derived slot reservation) survive in hand until the drop reassigns or returns it.
+    setWorkerStationArrival(worker,null);
     state.heldObject={kind:"worker",object:worker,originX:worker.x,originY:worker.y};state.collecting=false;toast("worker lifted — release to assign");return true;
   }
-  const building=buildings.find(item=>item.complete&&item.type==="tower"&&towerVariant(item).movable&&manualTowerButtonHit(item,x,y));
-  if(building){state.heldObject={kind:"building",object:building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;toast(towerVariant(building).name+" picked up — release right to place");return true;}
-  // Explicit secondary-action priority: workers, movable Shock Towers, unopened chests,
-  // showcase props, then loose-resource vacuuming.
+  if(buffStacks("enemyPickup")>0){
+    let enemy=null,bestEnemy=32;
+    for(const candidate of state.enemies){const def=ENEMY_TYPES[candidate.type],d=distance(x,y,candidate.x,candidate.y);if(def.weightTag==="light"&&d<bestEnemy){enemy=candidate;bestEnemy=d;}}
+    if(enemy){state.enemies.splice(state.enemies.indexOf(enemy),1);state.heldObject={kind:"enemy",object:enemy,originX:enemy.x,originY:enemy.y};state.collecting=false;toast(ENEMY_TYPES[enemy.type].name+" lifted — release right to place");return true;}
+  }
+  const building=buildings.find(item=>item.complete&&((item.type==="tower"&&towerVariant(item).movable)||BUILDING_TYPES[item.type].movable)&&manualTowerButtonHit(item,x,y));
+  if(building){const name=building.type==="tower"?towerVariant(building).name:BUILDING_TYPES[building.type].name;state.heldObject={kind:"building",object:building,originX:building.x,originY:building.y};buildings.splice(buildings.indexOf(building),1);state.collecting=false;toast(name+" picked up — release right to place");return true;}
+  // Explicit secondary-action priority: workers (preserved interaction), light enemies with the
+  // buff, movable deployables, unopened chests, showcase props, then loose-resource vacuuming.
   let chest=null,chestDistance=30;
   for(const candidate of chests){const d=distance(x,y,candidate.x,candidate.y);if(candidate.hp>0&&d<chestDistance){chest=candidate;chestDistance=d;}}
   if(chest){stopPrimaryClick();state.heldObject={kind:"chest",object:chest,originX:chest.x,originY:chest.y};chests.splice(chests.indexOf(chest),1);state.collecting=false;toast("unopened chest picked up — release right to place");return true;}
@@ -643,14 +719,53 @@ function pickUpMovableAt(x,y){
   return false;
 }
 function heldWorker(){return state.heldObject?.kind==="worker"?state.heldObject.object:null;}
+function heldEnemy(){return state.heldObject?.kind==="enemy"?state.heldObject.object:null;}
 function heldBuilding(){return state.heldObject?.kind==="building"?state.heldObject.object:null;}
 function heldChest(){return state.heldObject?.kind==="chest"?state.heldObject.object:null;}
 function heldProp(){return state.heldObject?.kind==="showcase-prop"?state.heldObject.object:null;}
+// The garrison's guard post: one stable point just below the 1x1 station, in simulation
+// coordinates, shared by every guard it holds. Occupancy is DERIVED from the workers pointing at
+// this exact building (assignedWorkers below), so no slot counter is ever stored on the garrison.
+const GARRISON_POST_OFFSET=18;
+function garrisonPost(building){return {x:building.x,y:building.y+GARRISON_POST_OFFSET};}
+/** Is this the completed garrison a guard may legally be posted to? */
+function isGuardStation(building){return !!building&&buildings.includes(building)&&building.type==="garrison"&&building.complete;}
+// ── the garrison's fortified kit ────────────────────────────────────────────
+// THE predicate. A worker is a fortified guard only while all three hold at once: it holds guard
+// orders, those orders name a live completed garrison, and it has physically ARRIVED there through
+// the shared staffing gate. A reservation, a walk that is still in progress, or a razed station all
+// read false, so the kit can never outlive the post it belongs to.
+function isActiveGarrisonGuard(worker){
+  return !!worker&&worker.job==="guard"&&isGuardStation(worker.jobTarget)&&worker.staffingArrivedAt===worker.jobTarget;
+}
+/** THE effective maximum health of a worker: the garrison's pool for an active guard, else the
+ * ordinary worker pool. Every health bar, invariant and heal reads this, never WORKER_HP. */
+function workerMaxHp(worker){return isActiveGarrisonGuard(worker)?GARRISON.maxHp:WORKER_HP;}
+/** THE effective melee damage of a worker, on the same predicate. */
+function workerDamage(worker){return isActiveGarrisonGuard(worker)?GARRISON.damage:WORKER_DAMAGE;}
+// The ONE writer of the garrison health bonus. Taking the post grants only the MAX-HP DELTA — a
+// 3/5 worker becomes 8/10, never 10/10 — and losing it CLAMPS the pool back under the ordinary
+// maximum rather than subtracting a fixed amount, so a wounded guard is never healed or killed by
+// a status change. The stored flag makes each edge fire exactly once however often it is re-read.
+function syncWorkerGarrisonBonus(worker){
+  const active=isActiveGarrisonGuard(worker);
+  if(active===!!worker.garrisonBonus)return;
+  if(active)worker.hp+=GARRISON.maxHp-WORKER_HP;
+  else worker.hp=Math.min(worker.hp,WORKER_HP);
+  worker.garrisonBonus=active;
+}
+/** Every write of the station-arrival gate goes through here, so the kit can never lag the post. */
+function setWorkerStationArrival(worker,station){worker.staffingArrivedAt=station;syncWorkerGarrisonBonus(worker);}
 // Canonical completed-building assignment. Construction inheritance, placement, and vacancy filling share it.
 function builtJobAssignment(building){
   if(building.type==="lumber"||building.type==="quarry")return {job:"staff",jobTarget:building,postX:building.x,postY:building.y+16};
   if(building.type==="stockpile")return {job:"haul",jobTarget:building,postX:building.x,postY:building.y+18};
-  return {job:"guard",jobTarget:null,postX:building.x,postY:building.y+(building.type==="house"?23:18)};
+  // A garrison is a durable post like any other station — its jobSlots ARE the guard slots, so it
+  // shares the occupancy, reservation and arrival machinery instead of inventing a parallel one.
+  if(building.type==="garrison"){const post=garrisonPost(building);return {job:"guard",jobTarget:building,postX:post.x,postY:post.y};}
+  // Post-less buildings (house, tower, obelisk, deployables) hold nobody: a worker that lands on one
+  // is repositioned free, never converted into a guard standing watch over nothing.
+  return {job:"free",jobTarget:null,postX:building.x,postY:building.y+(building.type==="house"?23:18)};
 }
 function workerStaffsPost(worker,building){const assignment=builtJobAssignment(building);return worker.job===assignment.job&&worker.jobTarget===building;}
 function resourceNodeKind(node){return trees.includes(node)?"wood":rocks.includes(node)?"stone":diamonds.includes(node)?"diamond":null;}
@@ -665,7 +780,8 @@ function workerOccupancyStatus(target,excludeWorker=null){
   const kind=resourceNodeKind(target);
   if(kind){if(!resourceIsActive(target,kind))return null;return {target,assigned:assignedWorkers(target,excludeWorker).length,capacity:RESOURCE_NODE_JOB_SLOTS};}
   if(!buildings.includes(target))return null;
-  const capacity=target.complete?(BUILDING_TYPES[target.type].jobSlots||0):BLUEPRINT_JOB_SLOTS;if(!capacity)return null;
+  const def=BUILDING_TYPES[target.type];
+  const capacity=target.complete?(def.jobSlots||0):def.buildSlots+CARD_BUFFS.buildCapacity*buffStacks("buildCapacity");if(!capacity)return null;
   return {target,assigned:assignedWorkers(target,excludeWorker).length,capacity};
 }
 function workerOccupancyAt(x,y){
@@ -678,6 +794,7 @@ function installHeldAtOrigin(held){
   const object=held.object;object.x=held.originX;object.y=held.originY;
   const kind=assertHeldKind(held);
   if(kind==="worker")state.workers.push(object);
+  else if(kind==="enemy")state.enemies.push(object);
   else if(kind==="building")buildings.push(object);
   else if(kind==="chest")chests.push(object);
   else if(kind==="showcase-prop")invariant(showcaseProps.includes(object),"held prop left its owned collection");
@@ -688,27 +805,55 @@ function cancelHeldObject(){if(!state.heldObject)return;installHeldAtOrigin(stat
 function workerAssignmentAt(worker,x,y){
   if(x<20||y<20||x>W-20||y>H-20)return null;
   const near=predicate=>buildings.find(item=>predicate(item)&&distance(x,y,item.x,item.y)<42);
-  const blueprint=near(item=>!item.complete),node=workerNodeAt(x,y),staff=near(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")),stockpile=near(item=>item.complete&&item.type==="stockpile"),house=near(item=>item.complete&&item.type==="house");
+  const blueprint=near(item=>!item.complete),node=workerNodeAt(x,y),staff=near(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")),stockpile=near(item=>item.complete&&item.type==="stockpile"),garrison=near(item=>item.complete&&item.type==="garrison"),house=near(item=>item.complete&&item.type==="house");
   if(blueprint){const status=workerOccupancyStatus(blueprint,worker);if(status.assigned>=status.capacity)return null;return {job:"build",target:blueprint,postX:blueprint.x,postY:blueprint.y+20,zoneX:blueprint.x,zoneY:blueprint.y,zoneRadius:WORKER_LEASH};}
   if(node){const status=workerOccupancyStatus(node.node,worker);if(status.assigned>=status.capacity)return null;return {job:"harvest",target:node,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};}
   if(staff){const status=workerOccupancyStatus(staff,worker);if(status.assigned>=status.capacity)return null;return {job:"staff",target:staff,postX:staff.x,postY:staff.y+16,zoneX:staff.x,zoneY:staff.y,zoneRadius:BUILDING_TYPES[staff.type].serviceRadius};}
   if(stockpile){const status=workerOccupancyStatus(stockpile,worker);if(status.assigned>=status.capacity)return null;return {job:"haul",target:stockpile,postX:stockpile.x,postY:stockpile.y+18,zoneX:stockpile.x,zoneY:stockpile.y,zoneRadius:storageServiceRadius(stockpile)};}
-  if(house)return {job:"guard",target:null,postX:house.x,postY:house.y+23,zoneX:house.x,zoneY:house.y+23,zoneRadius:WORKER_LEASH};
+  // The garrison is a station: a full one REJECTS the drop outright (like a full camp or stockpile)
+  // rather than quietly leaking the worker onto the ground beside it.
+  if(garrison){const status=workerOccupancyStatus(garrison,worker);if(status.assigned>=status.capacity)return null;const post=garrisonPost(garrison);return {job:"guard",target:garrison,postX:post.x,postY:post.y,zoneX:garrison.x,zoneY:garrison.y,zoneRadius:WORKER_LEASH};}
+  // A house holds no post, and open ground is not a post either: both simply MOVE the worker and
+  // leave it free for the scheduler. Guard duty comes from a garrison or from nothing.
+  if(house)return {job:"free",target:null,postX:house.x,postY:house.y+23,zoneX:house.x,zoneY:house.y+23,zoneRadius:WORKER_LEASH};
   if(distance(x,y,BASE.x,BASE.y)<BASE.r+18)return {job:"haul",target:BASE,postX:BASE.x,postY:BASE.y+25,zoneX:BASE.x,zoneY:BASE.y,zoneRadius:BASE_ZONE};
-  return {job:"guard",target:null,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};
+  return {job:"free",target:null,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};
 }
 function assignWorker(worker,x,y){
   const assignment=workerAssignmentAt(worker,x,y);if(!assignment)return null;
-  const scatterGuardLoad=worker.job==="guard"||worker.reposting;
-  clearWorkerSelfSupply(worker);worker.x=x;worker.y=y;worker.postX=assignment.postX;worker.postY=assignment.postY;worker.job=assignment.job;worker.jobTarget=assignment.target;worker.homePost=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.fleeing=false;worker.fleeSafeTime=0;worker.reposting=false;worker.returning=false;worker.starved=false;
-  if(scatterGuardLoad||worker.job!=="haul")for(const kind of RESOURCE_KINDS){while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,x+rand(-8,8),y+rand(-5,5));}}
+  const scatterIdleLoad=worker.job==="guard"||worker.job==="free";
+  clearWorkerSelfSupply(worker);worker.x=x;worker.y=y;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.fleeing=false;worker.fleeSafeTime=0;
+  // A free placement is a REPOSITION, not a job: releaseWorkerToFree is the one transition that
+  // drops every claim, the staffing arrival, the stale station reference and the carried load, so
+  // the worker lands schedulable with nothing reserved behind it.
+  if(assignment.job==="free"){releaseWorkerToFree(worker);return worker.job;}
+  // Every drop-assigned job is a MANUAL assignment; the scheduler is the only writer of autonomous=true.
+  worker.postX=assignment.postX;worker.postY=assignment.postY;worker.job=assignment.job;worker.jobTarget=assignment.target;worker.autonomous=false;worker.returning=false;worker.starved=false;worker.guardSafeTime=0;
+  // A new posting is never an arrival: the worker must walk to it before the kit is granted again.
+  setWorkerStationArrival(worker,null);
+  if(scatterIdleLoad||worker.job!=="haul")for(const kind of RESOURCE_KINDS){while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,x+rand(-8,8),y+rand(-5,5));}}
   return worker.job;
 }
 function dropHeldObject(){
   const held=state.heldObject;if(!held)return false;
+  if(held.kind==="enemy"){
+    const enemy=held.object;
+    // A yard under the cursor claims the drop entirely: it either converts the enemy or restores
+    // its exact pickup origin — a hostile is never RELOCATED onto a yard it cannot enter.
+    const yard=state.mouse.inside?captureYardAtPoint(state.mouse.x,state.mouse.y):null;
+    if(yard){
+      if(!yard.complete){enemy.x=held.originX;enemy.y=held.originY;state.enemies.push(enemy);toast("capture yard unfinished — enemy returned");}
+      else if(captureYardOccupancy(yard)>=CAPTURE_YARD.capacity){enemy.x=held.originX;enemy.y=held.originY;state.enemies.push(enemy);toast("capture yard is full — enemy returned");}
+      else captureEnemy(enemy,yard);
+      state.heldObject=null;sound(180,.08);return true;
+    }
+    if(state.mouse.inside&&terrainAtWorldPoint(state.mouse.x,state.mouse.y)===LAND){enemy.x=clamp(state.mouse.x,BUILD_MARGIN,W-BUILD_MARGIN);enemy.y=clamp(state.mouse.y,BUILD_MARGIN,H-BUILD_MARGIN);toast(ENEMY_TYPES[enemy.type].name+" dropped");}
+    else{enemy.x=held.originX;enemy.y=held.originY;toast("invalid ground — enemy returned");}
+    state.enemies.push(enemy);state.heldObject=null;sound(180,.08);return true;
+  }
   if(held.kind==="worker"){
     const worker=held.object,result=state.mouse.inside&&assignWorker(worker,state.mouse.x,state.mouse.y);
-    if(result){worker.staffingArrivedAt=null;state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):result;toast("worker assigned: "+assignment);}
+    if(result){setWorkerStationArrival(worker,null);state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):worker.job==="guard"?"garrison guard":result;toast(result==="free"?"worker moved — free":"worker assigned: "+assignment);}
     else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast("invalid ground — worker returned");}
     state.heldObject=null;sound(260,.06);return true;
   }
@@ -729,8 +874,8 @@ function dropHeldObject(){
   // and an invalid drop restores the exact origin recorded at pickup.
   invariant(assertHeldKind(held)==="building","unhandled held drop kind "+held.kind);
   const building=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
-  if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)){building.x=anchor.x;building.y=anchor.y;clearGrassInFootprint(building.x,building.y,buildingFootprint(building.type));toast(towerVariant(building).name+" placed");}
-  else{building.x=held.originX;building.y=held.originY;toast("invalid ground — tower returned");}
+  if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)){building.x=anchor.x;building.y=anchor.y;clearGrassInFootprint(building.x,building.y,buildingFootprint(building.type));toast((building.type==="tower"?towerVariant(building).name:BUILDING_TYPES[building.type].name)+" placed");}
+  else{building.x=held.originX;building.y=held.originY;toast("invalid ground — "+(building.type==="tower"?"tower":BUILDING_TYPES[building.type].name)+" returned");}
   buildings.push(building);state.heldObject=null;sound(260,.06);return true;
 }
 function activateManualTower(building){
@@ -754,9 +899,12 @@ function detonateBlast(building){
 }
 function createBuilding(type,x,y){
   const def=BUILDING_TYPES[type],cost=type==="house"?nextHouseCost():{...def.cost};
-  // plannedVariant: the tower variant a blueprint card designated for this site, accepted as an
-  // upgrade job the moment construction finishes. Null on every ordinary build.
-  return {type,x,y,cost,delivered:{wood:0,stone:0},storage:{wood:0,stone:0,dust:0,coin:0,diamond:0},upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
+  // plannedVariant identifies the finished tower this one construction site will produce. Null on
+  // ordinary builds and basic towers.
+  const building={type,x,y,cost,delivered:resourceCounts(),storage:resourceCounts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
+  if(type==="damageOrbs")building.orbs={count:Math.floor(rand(DAMAGE_ORBS.minCount,DAMAGE_ORBS.maxCount+1)),angle:0,cooldown:0,remaining:DAMAGE_ORBS.duration};
+  if(type==="summoningCircle")building.summoning={dust:0,summoned:false,remaining:SUMMONING_CIRCLE.duration};
+  return building;
 }
 
 function chestAt(x,y){
@@ -848,7 +996,7 @@ function updatePrimaryClick(dt){
   if(!quiet)primary.audioCooldown=.25;
 }
 function leftClick(){
-  if(state.gameOver||state.paused||heldChest())return;
+  if(state.gameOver||state.paused||state.heldObject)return;
   const m=state.mouse;
   // A played card owns the click outright, ahead of even the swing: unlike build mode — which the
   // player may leave armed while fighting — targeting was an explicit commitment made this second,
@@ -929,29 +1077,23 @@ function clearGrassInFootprint(x,y,footprint){
   for(const tuft of removed)removeGrass(tuft);
 }
 
-// Player and harvesting workers share this path: harvesting automation creates physical drops, never stored resources.
+// Worker automation enters only the physical resource impact; player work always enters the unified
+// click pipeline above, where crit, chain, Free Hit, and later click effects compose once.
 function hitResource(target,kind,automatic,quiet=false){
-  // Only a player chop can crit. A resource crit adds exactly one drop; the ×3 critical
-  // multiplier remains combat-only. Worker automation keeps its one authored drop per hit.
-  const critical=!automatic&&critHit(),drops=automatic?1:TUNE.chopYield+(critical?1:0);
-  // Player and worker chops share this impact path, so every damaged resource gets combat text.
-  addDamageNumber(target,1,{critical});
-  target.hp--;
-  target.shake=1;
-  for(let i=0;i<drops;i++)
-    spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
+  if(automatic)return damageResourceTarget(target,kind,false,true);
+  return executePlayerHit({kind:"resource",target,resourceKind:kind},{quiet});
+}
+function damageResourceTarget(target,kind,critical,automatic=false){
+  const drops=automatic?1:TUNE.chopYield+(critical?1:0);
+  addDamageNumber(target,1,{critical});target.hp--;target.shake=1;
+  for(let i=0;i<drops;i++)spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
   burst(target.x,target.y-12,kind==="wood"?"#9fb351":kind==="diamond"?"#78d7e5":"#bbb7ae",5);
-  if(!automatic&&!quiet)sound(kind==="wood"?350+target.hp*25:kind==="diamond"?760:170+target.hp*15,.045);
   if(target.hp<=0&&kind==="wood"){
-    target.stump=1;
-    burst(target.x,target.y-10,"#557036",13);
-    if(!automatic)toast("tree felled");
+    target.stump=1;burst(target.x,target.y-10,"#557036",13);if(!automatic)toast("tree felled");
   }else if(target.hp<=0){
-    target.depleted=1;
-    burst(target.x,target.y,kind==="diamond"?"#78d7e5":"#8b8985",11);
-    if(!automatic)toast(kind==="diamond"?"diamond deposit exhausted":"rock cleared");
+    target.depleted=1;burst(target.x,target.y,kind==="diamond"?"#78d7e5":"#8b8985",11);if(!automatic)toast(kind==="diamond"?"diamond deposit exhausted":"rock cleared");
   }
-  if(!automatic)maybeChainLightning(target);
+  return true;
 }
 
 function spawnResource(kind,x,y,ttl=null){
@@ -965,7 +1107,7 @@ function spawnCoin(){
   for(let attempt=0;attempt<300;attempt++){
     const x=clamp(camera.x+rand(-halfW,halfW),40,W-40),y=clamp(camera.y+rand(-halfH,halfH),40,H-40);
     if(distance(x,y,BASE.x,BASE.y)<80)continue;
-    spawnResource("coin",x,y,8);toast("a gold coin appeared nearby");return;
+    spawnResource("coin",x,y,8);toast("a gold coin appeared nearby");sound(1170,.1);return;
   }
 }
 
@@ -995,6 +1137,7 @@ function hoverTarget(){
   for(const building of buildings){
     if(!building.complete&&distance(m.x,m.y,building.x,building.y)<38)return {kind:"building",object:building};
     if(building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<42)return {kind:"stockpile",object:building};
+    if(building.complete&&building.type==="summoningCircle"&&!building.summoning.summoned&&distance(m.x,m.y,building.x,building.y)<52)return {kind:"summoning",object:building};
     if(building.complete&&(building.type==="obelisk"||building.type==="tower")&&building.activeUpgrade&&upgradeButtonHit(building,m.x,m.y))return {kind:"upgrade",object:building};
   }
   return null;
@@ -1014,7 +1157,10 @@ function releaseRightMouse(){
   const target=hoverTarget();
   if(target&&target.kind==="base")dropToBase();
   else if(target&&target.kind==="stockpile")dropToStockpile(target.object);
-  else if(target&&target.kind==="upgrade"){
+  else if(target&&target.kind==="summoning"){
+    dropToSummoningCircle(target.object);
+    if(carriedTotal())dropCarriedOnGround(true);
+  }else if(target&&target.kind==="upgrade"){
     dropToUpgrade(target.object);
     if(carriedTotal())dropCarriedOnGround(true);
   }else if(target&&target.kind==="building"){
@@ -1026,6 +1172,14 @@ function releaseRightMouse(){
 function dropCarriedOnGround(silent=false){
   for(const kind of RESOURCE_KINDS){const amount=state.carried[kind];state.carried[kind]=0;for(let i=0;i<amount;i++)spawnResource(kind,state.mouse.x+rand(-10,10),state.mouse.y+rand(-7,7));}
   if(!silent){toast("resources dropped");sound(310,.06);}
+}
+
+function dropToSummoningCircle(building){
+  const summon=building.summoning,amount=Math.min(SUMMONING_CIRCLE.dustCost-summon.dust,state.carried.dust);
+  if(amount<=0){toast("summoning circle needs dust");return;}
+  state.carried.dust-=amount;summon.dust+=amount;building.pulse=1;handoffParticles(building.x,building.y,"dust",amount);
+  if(summon.dust>=SUMMONING_CIRCLE.dustCost){summon.summoned=true;spawnFriendlyBrute(building.x,building.y);const at=buildings.indexOf(building);invariant(at>=0,"funded summoning circle is not placed");buildings.splice(at,1);burst(building.x,building.y,"#9870c9",30);toast("friendly Brute summoned");sound(100,.35);}
+  else toast("summoning circle: "+summon.dust+" / "+SUMMONING_CIRCLE.dustCost+" dust");
 }
 
 function dropToStockpile(building){
@@ -1093,7 +1247,9 @@ function feedBase(counts,particleFromX,particleFromY){
 }
 function gainLevel(){
   state.levelXp-=levelCost(state.level);state.level++;
-  if(state.level%SKILL_POINT_LEVELS===0){state.skillPoints++;if(state.runMode!=="showcase"){toast("the thing stirs — skill point earned");sound(180,.25);}}
+  // Points still accrue, silently: the skill tree is hidden from production UI until its nodes
+  // have real costs and effects (badge in hud.js, K shortcut in input.js are the other two spots).
+  if(state.level%SKILL_POINT_LEVELS===0)state.skillPoints++;
   if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
   toast("level "+state.level);sound(660,.16);
   state.draft.queue++;refillDraft();
@@ -1101,20 +1257,23 @@ function gainLevel(){
 
 // ── the draft ───────────────────────────────────────────────────────────────
 // Two reward loops share this machinery but never share a pool: LEVEL-UP offers hand-bound
-// building blueprints; DAWN — the moment a cleared night rolls into day — offers permanent buffs.
+// builds; DAWN — the moment a cleared night rolls into day — offers permanent buffs.
 // This separation makes XP expand the village while surviving a wave strengthens the run. Each offer contains
 // up to three DISTINCT eligible cards drawn by rarity weight. Exactly one offer is live at a time,
 // the rest wait in their queues, and the world is halted while one pends via state.draftPaused.
 // The choice arrives through chooseDraft(); nothing else may write state.draft. What a taken card
 // DOES is routed by takeCard() below, not by the dealer.
 const DRAFT_KINDS=["level","dawn"];
-const DRAFT_CATEGORIES=Object.freeze({level:Object.freeze(["blueprint"]),dawn:Object.freeze(["buff"])});
+const DRAFT_CATEGORIES=Object.freeze({level:Object.freeze(["build"]),dawn:Object.freeze(["buff"])});
 function levelCost(level){return LEVEL_CURVE.base*LEVEL_CURVE.growth**level;}
 function buffStacks(id){return state.draft.buffs[id]||0;}
-// Consumables and blueprints carry no `stacks`, so the same test lets them repeat forever and caps
-// only buffs. A blueprint is deliberately RE-OFFERABLE: what it deals is a construction site, not
+// Consumables and builds carry no `stacks`, so the same test lets them repeat forever and caps
+// only buffs. A build card is deliberately RE-OFFERABLE: what it deals is a construction site, not
 // an unlock, so a run that keeps drawing bpSniper is a run that gets to stand three snipers.
-function draftEligible(categories=null){return CARDS.filter(card=>card.inPool&&(!categories||categories.includes(card.category))&&buffStacks(card.id)<(card.stacks??Infinity));}
+// `requires` gates a card behind owned buff stacks: every listed buff must have been drafted at
+// least once this run. Buff stacks never leave state.draft.buffs, so eligibility never regresses.
+function cardPrerequisitesMet(card){return (card.requires??[]).every(id=>buffStacks(id)>0);}
+function draftEligible(categories=null){return CARDS.filter(card=>card.inPool&&(!categories||categories.includes(card.category))&&buffStacks(card.id)<(card.stacks??Infinity)&&cardPrerequisitesMet(card));}
 function drawDraftOffer(categories=null){
   const pool=draftEligible(categories),picks=[];
   while(picks.length<3&&pool.length){
@@ -1144,11 +1303,18 @@ function queueDawnReward(){
   if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
   state.draft.dawnQueue++;refillDraft();
 }
+// Screen spells snapshot the renderer's actual active-camera frustum answer before damage starts;
+// kills and chain movement during iteration cannot change membership or ordering.
+function onScreenCombatTargets(){return chainCombatRoster().filter(target=>target.hp>0&&effects.isCombatTargetOnScreen(target));}
+function recallResources(){
+  for(const drop of resourceDrops){if(drop.claimedBy){clearWorkerTask(drop.claimedBy);delete drop.claimedBy;}drop.target="base";drop.t=0;}
+  toast("resources recalled");sound(520,.14);
+}
 // THE one place a card becomes an effect — a buff the instant it is drafted, a consumable the
 // instant it is PLAYED out of the hand. Buff entries are deliberately empty: their whole effect is
 // the stack tally, layered over the authored numbers by the accessors below.
 const CARD_EFFECTS={
-  clickSpeed(){},critClicks(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},towerDamage(){},towerSpeed(){},clickDamage(){},chainLightning(){},
+  clickSpeed(){},critClicks(){},freeHit(){},enemyPickup(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},buildCapacity(){},towerDamage(){},towerSpeed(){},clickDamage(){},chainLightning(){},
   handCarry(){state.capacity+=CARD_BUFFS.handCarry;},
   baseHp(){state.baseMax+=CARD_BUFFS.baseHp;state.baseHp+=CARD_BUFFS.baseHp;},
   woodBundle(){state.stored.wood+=CARD_CONSUMABLES.woodBundle;state.basePulse=1;},
@@ -1157,7 +1323,10 @@ const CARD_EFFECTS={
   healBase(){state.baseHp=state.baseMax;state.basePulse=1;},
   repairAll(){for(const building of [...buildings,heldBuilding()])if(building?.tower)building.tower.hp=building.tower.maxHp;},
   longDay(){if(state.clock.phase==="day")state.clock.remaining+=CARD_CONSUMABLES.longDay;else state.draft.dayBonus+=CARD_CONSUMABLES.longDay;},
-  calmNight(){state.draft.calmNight=true;}
+  calmNight(){state.draft.calmNight=true;},
+  screenClick(){for(const target of onScreenCombatTargets())hitCombatTarget(target,true);sound(760,.18);},
+  resourceRecall(){recallResources();},
+  touchOfDeath(){for(const target of onScreenCombatTargets())damageCombatTarget(target,999,"#493052",12,null,{announce:true});sound(90,.35);}
 };
 /** A drafted BUFF, applied on the spot: one more stack, and its (usually empty) effect. */
 function applyBuff(id){
@@ -1169,8 +1338,8 @@ function applyBuff(id){
 }
 /**
  * THE routing rule for a taken card, shared by level and dawn offers. A buff lands immediately; a
- * consumable or blueprint lands in the HAND and does nothing at all until it is played. Nothing
- * leaves the pool: a blueprint can be offered again, and a second copy simply thickens its stack.
+ * consumable or build lands in the HAND and does nothing at all until it is played. Nothing
+ * leaves the pool: a build card can be offered again, and a second copy simply thickens its stack.
  */
 function takeCard(id){
   const card=cardById[id];
@@ -1200,20 +1369,23 @@ function consumeHandCopy(entry){
 // radius ring the existing placement flow already draws — so targeting needs no render work at all.
 // `cast` is the escape hatch for a spell: fireball borrows the blast charge's ghost (its radius IS
 // FIREBALL.radius) and detonates on placement instead of leaving anything behind.
-// `site` is the blueprint half of the table (below): the card drops an ordinary CONSTRUCTION SITE
-// where a kit drops an authored instant building, and `variant` is the tower variant that site is
-// already promised to. The card buys ACCESS to the variant, never the materials.
+// `site` is the build half of the table (below): the card drops one CONSTRUCTION SITE where a kit
+// drops an authored instant building. A tower variant site combines chassis + variant materials,
+// then produces the named tower in one completion transition.
 const TARGETED_CARDS={
   blastCharge:{type:"blast"},
   spikeKit:{type:"spikes"},
   mineKit:{type:"landmine"},
   tarKit:{type:"tar"},
+  damageOrbs:{type:"damageOrbs"},
+  summoningCircle:{type:"summoningCircle"},
   fireball:{type:"blast",cast:castFireball},
-  // A blueprint asks WHERE exactly like a kit does — its own authored row names what lands, so the
+  meteor:{type:"meteorTarget",cast:castMeteor},
+  // A build card asks WHERE exactly like a kit does — its own authored row names what lands, so the
   // whole set is derived from the registry rather than restated here. "tower:sniper" drops a tower
-  // site promised to the sniper variant; "building:obelisk" drops an obelisk site. A blueprint whose
+  // site promised to the sniper variant; "building:obelisk" drops an obelisk site. A build card whose
   // ref is a concept has no table row yet and stays out, so playing one refuses.
-  ...Object.fromEntries(CARDS.filter(card=>card.category==="blueprint").map(card=>[card.id,blueprintPlacement(card.ref)]).filter(([,spec])=>spec))
+  ...Object.fromEntries(CARDS.filter(card=>card.category==="build").map(card=>[card.id,blueprintPlacement(card.ref)]).filter(([,spec])=>spec))
 };
 function blueprintPlacement(ref){
   const [kind,id]=String(ref||"").split(":");
@@ -1221,10 +1393,17 @@ function blueprintPlacement(ref){
   if(kind==="building"&&BUILDING_TYPES[id])return {type:id,variant:null,site:true};
   return null;
 }
-/** What a blueprint card's placement will be called once it stands up: its variant's authored name
+/** What a build card's placement will be called once it stands up: its variant's authored name
  *  when it is a tower, the building's own otherwise. */
 function blueprintName(spec){return spec.variant?TOWER_VARIANTS[spec.variant].name:BUILDING_TYPES[spec.type].name;}
 function cardCharges(id){return cardById[id].charges??1;}
+function castMeteor(x,y){
+  eachTowerCombatTarget(target=>{if(distance(x,y,target.x,target.y)<=METEOR.radius)damageCombatTarget(target,METEOR.damage,"#d06a38",14,null,{announce:true});});
+  rocks.push({x,y,hp:METEOR.rockHp,max:METEOR.rockHp,depleted:0,shake:0,meteor:true,footprint:FOOTPRINT_3x3});
+  clearGrassInFootprint(x,y,FOOTPRINT_3x3);
+  for(let i=0;i<64;i++)particles.push({x,y,vx:rand(-220,220),vy:rand(-240,20),life:rand(.45,1.1),col:i%3?"#8b6248":"#e18a43"});
+  toast("meteor impact — a mineable rock remains");sound(55,.5);
+}
 /** The fireball's whole effect: one area hit at the anchor, no building, blast-style noise and dust. */
 function castFireball(x,y){
   for(const enemy of [...state.enemies])if(distance(x,y,enemy.x,enemy.y)<=FIREBALL.radius)damageEnemy(enemy,FIREBALL.damage,"#ef7b3f",0);
@@ -1253,19 +1432,20 @@ function placeCardCharge(anchor){
   if(targeting.cast)targeting.cast(anchor.x,anchor.y);
   else{
     const placed=createBuilding(targeting.type,anchor.x,anchor.y);
-    // A blueprint card is ACCESS to the variant, not materials for it: what lands is an ordinary
-    // construction site at the authored cost, already promised to the card's variant. The player
-    // still carries every resource, exactly as if they had built the chassis and bought the upgrade.
-    if(targeting.site)placed.plannedVariant=targeting.variant;
+    // Fancy towers are one build. Their site asks for the same total materials as chassis + variant,
+    // but completion installs the promised variant directly instead of exposing a second job.
+    if(targeting.site){
+      placed.plannedVariant=targeting.variant;
+      if(targeting.variant)for(const kind of RESOURCE_KINDS)placed.cost[kind]=(placed.cost[kind]||0)+(TOWER_VARIANTS[targeting.variant].cost[kind]||0);
+    }
     buildings.push(placed);clearGrassInFootprint(placed.x,placed.y,buildingFootprint(placed.type));
     // A kit's charges are free: these are the authored cost-0 instant buildings, and the CARD is
     // the only thing that pays for them — there is no separate stack counter anywhere any more.
     if(!targeting.site)
       toast(BUILDING_TYPES[targeting.type].name+" placed — "+(entry.charges-1)+" charge"+(entry.charges===1?"":"s")+" left");
-    // free costs (debug): the site is created exactly as authored and then finished, designated
-    // upgrade included, so the toggle strands nothing.
-    else if(DBG.freeCosts){completeBuilding(placed);applyFinishedUpgrade(placed);}
-    else toast(blueprintName(targeting)+" blueprint placed — carry its resources to it");
+    // free costs (debug) resolves the same single completion transition.
+    else if(DBG.freeCosts)completeBuilding(placed);
+    else toast(blueprintName(targeting)+" build placed — carry its resources to it");
     sound(240,.06);
   }
   entry.charges--;
@@ -1294,36 +1474,36 @@ function towerCooldown(variant){return variant.cooldown/CARD_BUFFS.towerSpeed**b
 function dropToBase(){feedBase(state.carried,state.mouse.x,state.mouse.y);}
 
 function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
+function constructionComplete(building){const cost=buildingCost(building);return RESOURCE_KINDS.every(kind=>(building.delivered[kind]||0)>=(cost[kind]||0));}
+function constructionNeedText(building){const cost=buildingCost(building);return RESOURCE_KINDS.filter(kind=>(cost[kind]||0)>(building.delivered[kind]||0)).map(kind=>((cost[kind]||0)-(building.delivered[kind]||0))+" "+kind).join(" + ");}
 function completeBuilding(building){
   if(building.complete)return;
   const def=BUILDING_TYPES[building.type];building.complete=true;building.starved=false;
   if(def.resource)state.capacity+=2;
-  if(building.type==="tower"){const variant=TOWER_VARIANTS.basic;building.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp};}
-  // A blueprint card designated a variant when it dropped this site. The chassis is finished exactly
-  // like any other, then that upgrade is accepted here — the same {id,kind,delivered} job
-  // acceptUpgrade() writes — so the next deliveries carry straight on into its authored cost and the
-  // total materials match building the tower and buying the upgrade by hand.
   const planned=building.plannedVariant&&TOWER_VARIANTS[building.plannedVariant]?building.plannedVariant:null;
-  if(planned)building.activeUpgrade={id:planned,kind:"tower",delivered:resourceCounts()};
+  if(building.type==="tower"){
+    const id=planned||"basic",variant=TOWER_VARIANTS[id];
+    building.tower={variant:id,cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp};
+  }
   building.plannedVariant=null;
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
   // Resolve the transition as one transaction. updateWorkerSpawns() runs before workers, so leaving
   // an earlier builder unresolved until the next tick would expose its durable vacancy to autofill.
   resolveBuildingCompletionWorkers(building);
   burst(building.x,building.y-12,"#ead28d",18);
-  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?"basic tower complete — "+TOWER_VARIANTS[planned].name+" already accepted, keep delivering":"basic tower complete"):def.name+" complete";
+  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
   toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);effects.buildHudChanged();
 }
 function dropToBuilding(building){
   const cost=buildingCost(building);let total=0;
-  for(const kind of ["wood","stone"]){
-    const amount=Math.min(cost[kind]-building.delivered[kind],state.carried[kind]);
+  for(const kind of RESOURCE_KINDS){
+    const amount=Math.min((cost[kind]||0)-(building.delivered[kind]||0),state.carried[kind]);
     state.carried[kind]-=amount;building.delivered[kind]+=amount;total+=amount;handoffParticles(building.x,building.y,kind,amount);
   }
-  if(!total){toast("this blueprint already has that resource");return;}
+  if(!total){toast("this build already has that resource");return;}
   building.pulse=1;sound(480,.08);
-  if(building.delivered.wood>=cost.wood&&building.delivered.stone>=cost.stone)completeBuilding(building);
-  else toast("needs "+(cost.wood-building.delivered.wood)+" wood + "+(cost.stone-building.delivered.stone)+" stone");
+  if(constructionComplete(building))completeBuilding(building);
+  else toast("needs "+constructionNeedText(building));
 }
 
 function handoffParticles(x,y,kind,count,fromX=state.mouse.x,fromY=state.mouse.y){
@@ -1391,20 +1571,14 @@ function durablePostStatus(building){
   const assigned=assignedWorkers(building);
   return {building,capacity:status.capacity,assigned:status.assigned,arrived:assigned.filter(worker=>state.workers.includes(worker)&&worker.staffingArrivedAt===building).length};
 }
-function vacantDurablePosts(){return buildings.filter(building=>{const status=durablePostStatus(building);return status&&status.assigned<status.capacity;});}
 function createHouseWorker(house){
   if(!house.complete||house.type!=="house")return null;
   const postX=house.x,postY=house.y+23;
-  // homePost is null or {job,jobTarget,postX,postY}; temporary jobs restore that saved assignment.
-  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:house,job:"guard",jobTarget:null,homePost:null,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,reposting:false};
+  // Workers are born FREE: no job, no post loyalty. The scheduler below hands them autonomous work.
+  return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:house,job:"free",jobTarget:null,autonomous:true,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,guardSafeTime:0,garrisonBonus:false};
 }
 function spawnHouseWorker(house){
   const worker=createHouseWorker(house);if(!worker)return;
-  if(state.runMode==="normal"){
-    let nearest=null,best=Infinity;
-    for(const post of vacantDurablePosts()){const d=distance(house.x,house.y,post.x,post.y);if(d<best){best=d;nearest=post;}}
-    if(nearest){Object.assign(worker,builtJobAssignment(nearest));worker.staffingArrivedAt=null;}
-  }
   state.workers.push(worker);burst(house.x,house.y+23,"#ead28d",9);sound(720,.12);
 }
 function updateWorkerSpawns(dt){
@@ -1419,56 +1593,175 @@ function resourceIsActive(node,kind){return kind==="wood"?node.stump<=0:node.dep
 function workerLoad(worker){return RESOURCE_KINDS.reduce((total,kind)=>total+worker.carried[kind],0);}
 function clearWorkerTask(worker){if(worker.taskTarget?.claimedBy===worker)delete worker.taskTarget.claimedBy;worker.taskTarget=null;}
 function clearWorkerSelfSupply(worker){clearWorkerTask(worker);worker.selfSupply=null;}
-function releaseWorkerHome(worker){
+// ── the free-worker scheduler ───────────────────────────────────────────────
+// THE canonical transition into free. Releases every claim and transient task ownership so no
+// drop stays reserved by a worker that stopped working it. Free is autonomous by definition:
+// the scheduler is the only thing that moves a free worker back into a job.
+function releaseWorkerToFree(worker){
   clearWorkerSelfSupply(worker);
-  const homePost=worker.homePost;worker.homePost=null;
-  const node=homePost?.jobTarget?.node,nodeKind=node&&resourceNodeKind(node);
-  if(homePost&&(homePost.jobTarget===null||buildings.includes(homePost.jobTarget)||(nodeKind&&resourceIsActive(node,nodeKind)))){
-    worker.job=homePost.job;worker.jobTarget=homePost.jobTarget;worker.postX=homePost.postX;worker.postY=homePost.postY;return;
-  }
-  worker.job="guard";worker.jobTarget=null;worker.postX=worker.x;worker.postY=worker.y;
+  worker.job="free";worker.jobTarget=null;worker.autonomous=true;
+  worker.postX=worker.x;worker.postY=worker.y;
+  worker.returning=false;worker.starved=false;setWorkerStationArrival(worker,null);worker.guardSafeTime=0;
+  // A freed worker holds no cargo: anything still carried becomes physical drops where it stands,
+  // so autonomous hauling (its own or a neighbour's) can claim the load through the normal pipeline.
+  for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,worker.x+rand(-8,8),worker.y+rand(-5,5));}
 }
-const WORKER_RECRUIT_CADENCE=.5;
-let nextWorkerRecruitAt=0;
-function guardIdleAtSpawn(worker){
-  const house=worker.spawnSource;
-  return worker.job==="guard"&&worker.jobTarget===null&&!worker.combatTarget&&!worker.retaliationTarget&&!worker.returnAfterCombat&&!worker.fleeing&&!worker.homePost&&house&&buildings.includes(house)&&house.complete&&house.type==="house"&&distance(worker.postX,worker.postY,house.x,house.y+23)<=4;
+const FREE_WORKER_SEARCH_CADENCE=.5;
+let nextFreeWorkerSearchAt=0;
+function workerIsSchedulable(worker){
+  return worker.job==="free"&&!worker.combatTarget&&!worker.retaliationTarget&&!worker.returnAfterCombat&&!worker.fleeing;
 }
-function recruitBlueprintBuilders(){
-  if(!DBG.blueprintRecruiting||state.runMode!=="normal")return;
+function freeWorkerBuildCandidate(worker,radius){
+  let choice=null,best=Infinity;
   for(const building of buildings){
-    if(building.complete)continue;
-    while(workerOccupancyStatus(building).assigned<workerOccupancyStatus(building).capacity){
-      let nearest=null,best=Infinity;
-      for(const worker of state.workers){
-        if(worker.job!=="guard"||worker.combatTarget||worker.retaliationTarget||worker.returnAfterCombat||worker.fleeing||worker.homePost)continue;
-        const d=distance(worker.x,worker.y,building.x,building.y);if(d<=TUNE.recruitRadius&&d<best){nearest=worker;best=d;}
-      }
-      if(!nearest)break;
-      nearest.homePost={job:nearest.job,jobTarget:nearest.jobTarget,postX:nearest.postX,postY:nearest.postY};
-      nearest.job="build";nearest.jobTarget=building;nearest.postX=building.x;nearest.postY=building.y+20;
-    }
+    if(building.complete||!["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0))continue;
+    const occupancy=workerOccupancyStatus(building,worker);
+    if(!occupancy||occupancy.assigned>=occupancy.capacity)continue;
+    const d=distance(worker.x,worker.y,building.x,building.y);
+    if(d<=radius&&d<best){choice=building;best=d;}
+  }
+  return choice;
+}
+function haulDestinationFor(drop){
+  let choice=null,best=Infinity;
+  for(const storage of [BASE,...buildings.filter(item=>item.complete&&item.type==="stockpile")]){
+    const coverage=distance(storage.x,storage.y,drop.x,drop.y);
+    if(coverage>storageServiceRadius(storage))continue;
+    if(storage!==BASE){const occupancy=workerOccupancyStatus(storage);if(!occupancy||occupancy.assigned>=occupancy.capacity)continue;}
+    if(coverage<best){choice=storage;best=coverage;}
+  }
+  return choice;
+}
+function freeWorkerHaulCandidate(worker,radius){
+  let choice=null,best=Infinity;
+  for(const drop of resourceDrops){
+    if(drop.target||!drop.ground||targetIsClaimed(drop))continue;
+    const d=distance(worker.x,worker.y,drop.x,drop.y);
+    if(d>radius||d>=best)continue;
+    const storage=haulDestinationFor(drop);
+    if(storage){choice={drop,storage};best=d;}
+  }
+  return choice;
+}
+function freeWorkerGatherCandidate(worker,radius){
+  let choice=null,best=Infinity;
+  for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){
+    if(!resourceIsActive(node,kind))continue;
+    const occupancy=workerOccupancyStatus(node,worker);
+    if(occupancy.assigned>=occupancy.capacity)continue;
+    const d=distance(worker.x,worker.y,node.x,node.y);
+    if(d<=radius&&d<best){choice={node,kind};best=d;}
+  }
+  return choice;
+}
+/** One tier of the search, strict priority: construction, then hauling, then gathering. */
+function assignFreeWorkerWithin(worker,radius){
+  const site=freeWorkerBuildCandidate(worker,radius);
+  if(site){worker.job="build";worker.jobTarget=site;worker.autonomous=true;worker.postX=site.x;worker.postY=site.y+20;return true;}
+  const haul=freeWorkerHaulCandidate(worker,radius);
+  if(haul){
+    worker.job="haul";worker.jobTarget=haul.storage;worker.autonomous=true;
+    worker.postX=haul.storage.x;worker.postY=haul.storage.y+(haul.storage===BASE?25:18);
+    // Reserve the chosen drop IMMEDIATELY so two free workers can never pick it in one sweep.
+    worker.taskTarget=haul.drop;haul.drop.claimedBy=worker;
+    return true;
+  }
+  const gather=freeWorkerGatherCandidate(worker,radius);
+  if(gather){worker.job="harvest";worker.jobTarget=gather;worker.autonomous=true;worker.postX=worker.x;worker.postY=worker.y;return true;}
+  return false;
+}
+// ── the garrison muster ─────────────────────────────────────────────────────
+// Defense is the ONE autonomous job that outranks the economy sweep: a hostile at the door turns
+// nearby autonomous workers into garrison guards before build/haul/gather is even considered.
+// Everything here reuses the shared station machinery — occupancy stays DERIVED from the workers
+// pointing at each garrison, so the muster reserves a slot simply by naming its station.
+function livingHostileWithin(x,y,radius){
+  for(const enemy of state.enemies)if(enemy.hp>0&&distance(x,y,enemy.x,enemy.y)<=radius)return true;
+  return false;
+}
+/** A manual assignment is the player's standing order: only autonomous workers that are not already
+ * guards and are not entangled in combat answer the muster. A worker held for dragging is not in
+ * state.workers at all, and the explicit check keeps that true even if the roster ever changes. */
+function workerAnswersMuster(worker){
+  return worker.autonomous&&worker.job!=="guard"&&!worker.combatTarget&&!worker.retaliationTarget&&!worker.returnAfterCombat&&!worker.fleeing&&heldWorker()!==worker;
+}
+function nearestOpenGarrison(worker){
+  let choice=null,best=Infinity;
+  for(const building of buildings){
+    if(!isGuardStation(building))continue;
+    const status=workerOccupancyStatus(building,worker);
+    if(!status||status.assigned>=status.capacity)continue;
+    // Nearest station wins; the strict comparison keeps collection order on an exact-distance tie.
+    const d=distance(worker.x,worker.y,building.x,building.y);
+    if(d<=GARRISON.musterRadius&&d<best){choice=building;best=d;}
+  }
+  return choice;
+}
+/** Take the post. The prior autonomous objective is abandoned safely: every claim is released and
+ * the carried load becomes physical drops through the ordinary spawnResource path, so nothing stays
+ * reserved behind the worker and the load can re-enter hauling. */
+function musterWorkerToGarrison(worker,garrison){
+  const post=garrisonPost(garrison);
+  // The reservation lands FIRST: derived occupancy counts this worker from here on, so two workers
+  // in one sweep can never claim the same slot.
+  worker.job="guard";worker.jobTarget=garrison;worker.autonomous=true;
+  worker.postX=post.x;worker.postY=post.y;
+  worker.returning=false;worker.starved=false;worker.guardSafeTime=0;
+  // Arrival is tracked by the shared staffing gate in updateWorker: the guard only counts as posted
+  // once it has physically walked to the station. Nothing is granted for the reservation itself.
+  setWorkerStationArrival(worker,null);
+  clearWorkerSelfSupply(worker);
+  for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,worker.x+rand(-8,8),worker.y+rand(-5,5));}
+}
+function musterGarrisonGuards(){
+  for(const worker of state.workers){
+    if(!workerAnswersMuster(worker))continue;
+    if(!livingHostileWithin(worker.x,worker.y,GARRISON.threatRadius))continue;
+    const station=nearestOpenGarrison(worker);
+    if(station)musterWorkerToGarrison(worker,station);
   }
 }
-function recruitIdleGuards(){
-  if(!DBG.idleSeeksWork||state.runMode!=="normal")return;
-  for(const post of vacantDurablePosts()){
-    while(workerOccupancyStatus(post).assigned<workerOccupancyStatus(post).capacity){
-      let nearest=null,best=Infinity;
-      for(const worker of state.workers){
-        if(!guardIdleAtSpawn(worker))continue;
-        const d=distance(worker.x,worker.y,post.x,post.y);if(d<=TUNE.recruitRadius&&d<best){nearest=worker;best=d;}
-      }
-      if(!nearest)break;
-      Object.assign(nearest,builtJobAssignment(post));nearest.staffingArrivedAt=null;nearest.reposting=true;
-    }
+/** The other half of the contract. A guard the SCHEDULER posted stands itself down; a guard the
+ * player posted never does. A night muster is binding — dawn releases the whole autonomous roster in
+ * one transaction (transitionPhase) — so only a quiet day can time a guard out. */
+function demobilizeGarrisonGuards(dt){
+  for(const worker of state.workers){
+    if(worker.job!=="guard"||!worker.autonomous)continue;
+    const station=worker.jobTarget;
+    // A reservation may never outlive its station, in any phase.
+    if(!isGuardStation(station)){releaseWorkerToFree(worker);continue;}
+    if(state.clock.phase!=="day"){worker.guardSafeTime=0;continue;}
+    // The STATION's defense radius owns the timer, not the guard's wandering position.
+    if(livingHostileWithin(station.x,station.y,GARRISON.guardRadius)){worker.guardSafeTime=0;continue;}
+    worker.guardSafeTime=(worker.guardSafeTime??0)+dt;
+    if(worker.guardSafeTime>=GARRISON.safeSeconds)releaseWorkerToFree(worker);
   }
 }
-function recruitWorkers(){
-  if(state.runMode!=="normal"||(!DBG.blueprintRecruiting&&!DBG.idleSeeksWork)||state.clock.elapsed<nextWorkerRecruitAt)return;
-  // Both independent sweeps share one game-time cadence; blueprints never enter the durable-post sweep.
-  nextWorkerRecruitAt=state.clock.elapsed+WORKER_RECRUIT_CADENCE;
-  recruitBlueprintBuilders();recruitIdleGuards();
+/** Dawn's single auditable transaction: every autonomous garrison guard is released at once, so a
+ * night's muster can never quietly become a permanent posting. Manual guards keep their orders, and
+ * a worker the player is currently holding keeps its reservation until it is dropped. */
+function releaseAutonomousGarrisonGuards(){
+  const roster=state.workers.filter(worker=>worker.job==="guard"&&worker.autonomous);
+  for(const worker of roster)releaseWorkerToFree(worker);
+  if(roster.length)toast("dawn — "+roster.length+" garrison guard"+(roster.length===1?"":"s")+" stood down");
+  return roster.length;
+}
+/** One ordered pass per frame: answer the muster, then time out the quiet posts it created. */
+function updateGarrisonPostings(dt){
+  if(state.runMode!=="normal")return;
+  musterGarrisonGuards();
+  demobilizeGarrisonGuards(dt);
+}
+/** Deterministic sweep on a shared simulated-time cadence: each free worker evaluates its local
+ * tier completely before expanding, so nearby hauling beats a distant blueprint. A worker with no
+ * candidate in either tier simply stays free — only the garrison muster above converts one to guard. */
+function scheduleFreeWorkers(){
+  if(state.runMode!=="normal"||state.clock.elapsed<nextFreeWorkerSearchAt)return;
+  nextFreeWorkerSearchAt=state.clock.elapsed+FREE_WORKER_SEARCH_CADENCE;
+  for(const worker of state.workers){
+    if(!workerIsSchedulable(worker))continue;
+    for(const radius of [WORKER_LEASH,TUNE.freeSearchRadius])if(assignFreeWorkerWithin(worker,radius))break;
+  }
 }
 function targetIsClaimed(target){
   const owner=target.claimedBy;if(owner&&(!state.workers.includes(owner)||owner.taskTarget!==target)){delete target.claimedBy;return false;}return !!owner;
@@ -1483,10 +1776,11 @@ function moveWorker(worker,x,y,dt,stop=12){
   const d=distance(worker.x,worker.y,x,y);if(d<=stop+.01)return true;
   const remaining=d-stop,amount=Math.min(remaining,workerSpeed()*dt),angle=Math.atan2(y-worker.y,x-worker.x);worker.x+=Math.cos(angle)*amount;worker.y+=Math.sin(angle)*amount;return amount>=remaining-.01;
 }
+// Free workers wear the ordinary tan gatherer coat, alive and as corpses.
 function workerCoatColor(worker){return worker.job==="haul"?"#4d7892":worker.job==="build"?"#d29a39":worker.job==="guard"?"#856347":"#d4b079";}
 function killWorker(worker){
   const at=state.workers.indexOf(worker);if(at<0)return false;
-  clearWorkerSelfSupply(worker);worker.homePost=null;worker.combatTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.fleeing=false;worker.fleeSafeTime=0;worker.reposting=false;
+  clearWorkerSelfSupply(worker);worker.combatTarget=null;worker.retaliationTarget=null;worker.returnAfterCombat=false;worker.fleeing=false;worker.fleeSafeTime=0;
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,worker.x+rand(-7,7),worker.y+rand(-5,5));}
   state.workers.splice(at,1);
   // Snapshot only rendering data: the source slot is free as soon as the mutable worker leaves state.workers.
@@ -1495,7 +1789,7 @@ function killWorker(worker){
 }
 function workerAttack(worker,enemy){
   worker.combatTarget=enemy;if(worker.attackCooldown>0)return;
-  worker.attackCooldown=WORKER_ATTACK_RATE;const alive=damageEnemy(enemy,WORKER_DAMAGE,"#f0cc72",6);sound(310,.05);if(!alive)worker.returnAfterCombat=true;
+  worker.attackCooldown=WORKER_ATTACK_RATE;const alive=damageEnemy(enemy,workerDamage(worker),"#f0cc72",6);sound(310,.05);if(!alive)worker.returnAfterCombat=true;
 }
 function depositWorkerLoad(worker){
   // Hauling moves already-physical drops; harvesting itself can only call hitResource() and never reaches storage.
@@ -1519,17 +1813,16 @@ function buildNeed(building,kind,worker){
   }
   return Math.max(0,buildingCost(building)[kind]-building.delivered[kind]-reserved);
 }
+// Completion inheritance is a MANUAL-builder privilege: a player-assigned builder keeps working the
+// thing it stood up when the finished building has a durable post with room. Autonomous builders,
+// over-capacity builders, and builders of post-less buildings (house/tower/obelisk) return to free.
 function inheritBuiltJob(worker,building){
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,building.x+rand(-8,8),building.y+rand(-5,5));}
   clearWorkerSelfSupply(worker);worker.returning=false;worker.starved=false;
   const assignment=builtJobAssignment(building),occupancy=workerOccupancyStatus(building,worker);
-  if(worker.homePost&&(!occupancy||occupancy.assigned>=occupancy.capacity))releaseWorkerHome(worker);
-  else{
-    if(occupancy&&occupancy.assigned>=occupancy.capacity)Object.assign(worker,{job:"guard",jobTarget:null,postX:assignment.postX,postY:assignment.postY});
-    else Object.assign(worker,assignment);
-    worker.homePost=null;
-  }
-  worker.staffingArrivedAt=null;
+  if(worker.autonomous||!occupancy||occupancy.assigned>=occupancy.capacity||assignment.jobTarget!==building){releaseWorkerToFree(worker);return;}
+  Object.assign(worker,assignment);
+  worker.autonomous=false;setWorkerStationArrival(worker,null);
 }
 function resolveBuildingCompletionWorkers(building){
   // Snapshot preserves state.workers order while inheritance mutates the fields used by this filter.
@@ -1584,7 +1877,7 @@ function updateBuilderSelfSupply(worker,building,dt){
 }
 function updateBuilder(worker,dt){
   const building=worker.jobTarget;
-  if(!building||!buildings.includes(building)){releaseWorkerHome(worker);worker.starved=false;return;}
+  if(!building||!buildings.includes(building)){releaseWorkerToFree(worker);return;}
   if(building.complete){inheritBuiltJob(worker,building);return;}
   if(workerLoad(worker)>0){
     worker.selfSupply=null;worker.starved=false;if(!moveWorker(worker,building.x,building.y,dt,16))return;
@@ -1606,6 +1899,95 @@ function updateBuilder(worker,dt){
   if(claimBuildDrop(worker,nearestBuildDrop(building,worker)))return;
   if(updateBuilderSelfSupply(worker,building,dt))return;
   worker.starved=["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);
+}
+
+function spawnFriendlyBrute(x,y){
+  friendlyBrutes.push({x:x+24,y:y+24,homeX:BASE.x,homeY:BASE.y,hp:FRIENDLY_BRUTE.hp,max:FRIENDLY_BRUTE.hp,attackCooldown:0,wob:0,combatTarget:null});
+  burst(x,y,"#9870c9",24);
+}
+function damageFriendlyBrute(brute,damage){
+  const at=friendlyBrutes.indexOf(brute);if(at<0)return false;
+  brute.hp=Math.max(0,brute.hp-damage);addDamageNumber(brute,damage,{tone:"received"});burst(brute.x,brute.y,"#8f5141",6);
+  if(brute.hp<=0){friendlyBrutes.splice(at,1);burst(brute.x,brute.y,"#493052",20);toast("friendly Brute fell");return false;}return true;
+}
+function updateFriendlyBrute(brute,dt){
+  brute.attackCooldown-=dt;brute.wob+=dt*5;brute.combatTarget=null;
+  let target=null,best=FRIENDLY_BRUTE.guardRadius;
+  for(const enemy of state.enemies){const d=distance(brute.x,brute.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}}
+  if(!target){const d=distance(brute.x,brute.y,brute.homeX,brute.homeY);if(d>60){const a=Math.atan2(brute.homeY-brute.y,brute.homeX-brute.x);brute.x+=Math.cos(a)*FRIENDLY_BRUTE.speed*dt;brute.y+=Math.sin(a)*FRIENDLY_BRUTE.speed*dt;}return;}
+  brute.combatTarget=target;
+  if(best>FRIENDLY_BRUTE.range){const a=Math.atan2(target.y-brute.y,target.x-brute.x);brute.x+=Math.cos(a)*FRIENDLY_BRUTE.speed*dt;brute.y+=Math.sin(a)*FRIENDLY_BRUTE.speed*dt;return;}
+  if(brute.attackCooldown<=0){brute.attackCooldown=FRIENDLY_BRUTE.rate;damageEnemy(target,FRIENDLY_BRUTE.damage,"#c5a1e8",10);sound(120,.12);}
+}
+
+// ── the capture yard ────────────────────────────────────────────────────────
+// Converting a carried light enemy is a change of OWNERSHIP, not of stats: the unit keeps its
+// authored ENEMY_TYPES record (type, variant, abilities) and its current HP, sheds every
+// hostile-only reference — statuses, tower retaliation, wave membership — and joins
+// controlledEnemies linked to the yard that turned it.
+function captureYardAtPoint(x,y){
+  for(const building of buildings){
+    if(building.type!=="captureYard")continue;
+    const cell=worldToCell(building.x,building.y),rect=footprintWorldRect(cell.cx,cell.cy,buildingFootprint(building.type));
+    if(x>=rect.x&&x<rect.x+rect.w&&y>=rect.y&&y<rect.y+rect.h)return building;
+  }
+  return null;
+}
+function captureYardOccupancy(yard){return controlledEnemies.reduce((count,unit)=>count+(unit.sourceYard===yard?1:0),0);}
+/** Where a fresh convert stands up: the first land point on a ring just outside the yard's own 3x3,
+ *  so a capture can never strand the unit on water or inside the footprint art. */
+function captureMusterPoint(yard){
+  for(let attempt=0;attempt<12;attempt++){
+    const angle=attempt*Math.PI/6;
+    const x=clamp(yard.x+Math.cos(angle)*64,BUILD_MARGIN,W-BUILD_MARGIN),y=clamp(yard.y+Math.sin(angle)*64,BUILD_MARGIN,H-BUILD_MARGIN);
+    if(terrainAtWorldPoint(x,y)===LAND)return {x,y};
+  }
+  return {x:yard.x,y:yard.y};
+}
+function captureEnemy(enemy,yard){
+  const spot=captureMusterPoint(yard);
+  // Deleting waveNightNumber is the wave-accounting exit: a captured scheduled enemy stops gating
+  // dawn the moment it turns, exactly like a killed one.
+  enemy.status={burn:null,slow:null};enemy.retaliationTower=null;delete enemy.waveNightNumber;
+  enemy.x=spot.x;enemy.y=spot.y;enemy.sourceYard=yard;enemy.combatTarget=null;enemy.attackCooldown=0;enemy.healCooldown=1;
+  controlledEnemies.push(enemy);
+  burst(yard.x,yard.y,"#75c86d",24);toast(ENEMY_TYPES[enemy.type].name+" turned — it fights for you now");sound(620,.2);
+}
+function damageControlledEnemy(unit,damage){
+  const at=controlledEnemies.indexOf(unit);if(at<0)return false;
+  unit.hp=Math.max(0,unit.hp-damage);addDamageNumber(unit,damage,{tone:"received"});burst(unit.x,unit.y,"#8f5141",6);
+  // Death frees the yard slot immediately: occupancy is derived from this collection, so the splice
+  // IS the reopening.
+  if(unit.hp<=0){controlledEnemies.splice(at,1);burst(unit.x,unit.y,"#3f5741",20);toast("controlled "+ENEMY_TYPES[unit.type].name+" fell");return false;}
+  return true;
+}
+function updateControlledEnemy(unit,dt){
+  const def=ENEMY_TYPES[unit.type],yard=unit.sourceYard;
+  unit.wob+=dt*7;unit.flash=Math.max(0,unit.flash-dt);unit.shotFlash=Math.max(0,unit.shotFlash-dt);unit.healFlash=Math.max(0,unit.healFlash-dt);unit.attackCooldown-=dt;unit.healCooldown-=dt;unit.combatTarget=null;
+  const moveToward=(x,y)=>{const angle=Math.atan2(y-unit.y,x-unit.x);unit.x+=Math.cos(angle)*def.speed*dt;unit.y+=Math.sin(angle)*def.speed*dt;};
+  if(def.archetype==="healer"){
+    // Allegiance flip of the authored kit: same amount and cadence, but patients come from the
+    // allied roster — controlled units and friendly Brutes — never from hostiles.
+    let patient=null,best=CAPTURE_YARD.healSearchRadius;
+    for(const ally of [...controlledEnemies,...friendlyBrutes]){if(ally===unit||ally.hp>=ally.max)continue;const d=distance(unit.x,unit.y,ally.x,ally.y);if(d<best){best=d;patient=ally;}}
+    if(patient){
+      if(best>def.range){moveToward(patient.x,patient.y);return;}
+      if(unit.healCooldown<=0){unit.healCooldown=def.healRate;patient.hp=Math.min(patient.max,patient.hp+def.healAmount);unit.healFlash=.3;unit.healX=patient.x;unit.healY=patient.y;burst(patient.x,patient.y,"#75c86d",5);}
+      return;
+    }
+  }else{
+    // Guard duty is anchored on the SOURCE yard, like a posted guard's leash: hostiles are engaged
+    // only while they stand inside the yard's guard radius, with authored range/damage/rate.
+    let target=null,best=Infinity;
+    for(const enemy of state.enemies){const yardDistance=distance(yard.x,yard.y,enemy.x,enemy.y),d=distance(unit.x,unit.y,enemy.x,enemy.y);if(yardDistance<=CAPTURE_YARD.guardRadius&&d<best){best=d;target=enemy;}}
+    if(target){
+      unit.combatTarget=target;
+      if(best>def.range){moveToward(target.x,target.y);return;}
+      if(def.damage&&unit.attackCooldown<=0){unit.attackCooldown=def.rate;unit.shotFlash=.14;unit.shotX=target.x;unit.shotY=target.y;damageEnemy(target,def.damage,"#75c86d",6);sound(def.range>60?520:400,.06);}
+      return;
+    }
+  }
+  if(distance(unit.x,unit.y,yard.x,yard.y)>CAPTURE_YARD.homeRadius)moveToward(yard.x,yard.y);
 }
 
 function updateKing(dt){
@@ -1720,30 +2102,16 @@ function updateTower(building,dt){
 }
 
 function updateGuard(worker,dt){
+  // A guard is only ever a garrison's guard. If the station was razed, recalled or never was one,
+  // the posting is void and the worker returns to free rather than standing watch over nothing.
+  // Showcase guards are inert authored poses with no station and are never updated here.
+  if(state.runMode==="normal"&&!isGuardStation(worker.jobTarget)){releaseWorkerToFree(worker);return;}
+  // Combat itself is unchanged: the same reach, cadence and retaliation as any worker. Only the
+  // effective damage query inside workerAttack knows the guard hits harder once it has arrived.
   let target=null,best=Infinity;
   for(const enemy of state.enemies){const postDistance=distance(worker.postX,worker.postY,enemy.x,enemy.y),d=distance(worker.x,worker.y,enemy.x,enemy.y);if(postDistance<=WORKER_LEASH&&d<best){best=d;target=enemy;}}
   if(target){worker.combatTarget=target;if(moveWorker(worker,target.x,target.y,dt,WORKER_MELEE-2))workerAttack(worker,target);return;}
   moveWorker(worker,worker.postX,worker.postY,dt);
-}
-function guardWalkPickup(worker){
-  if(!DBG.idleSeeksWork||state.runMode!=="normal"||(worker.job!=="guard"&&!worker.reposting)||worker.fleeing||workerLoad(worker)!==0)return;
-  let nearest=null,best=20;
-  for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<=best){nearest=resource;best=d;}}
-  if(!nearest)return;
-  nearest.claimedBy=worker;worker.taskTarget=nearest;
-  const at=resourceDrops.indexOf(nearest);if(at>=0){worker.carried[nearest.kind]++;resourceDrops.splice(at,1);}
-  delete nearest.claimedBy;worker.taskTarget=null;
-}
-function settleGuardPickup(worker){
-  if(workerLoad(worker)===0)return;
-  for(const kind of RESOURCE_KINDS){
-    if(!worker.carried[kind])continue;
-    const blueprint=buildings.find(building=>building!==BASE&&!building.complete&&distance(worker.postX,worker.postY,building.x,building.y)<=60&&buildNeed(building,kind,worker)>0);
-    if(blueprint){worker.carried[kind]--;blueprint.delivered[kind]++;blueprint.pulse=1;handoffParticles(blueprint.x,blueprint.y,kind,1,worker.x,worker.y);const cost=buildingCost(blueprint);if(blueprint.delivered.wood>=cost.wood&&blueprint.delivered.stone>=cost.stone)completeBuilding(blueprint);continue;}
-    const stockpile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(worker.postX,worker.postY,building.x,building.y)<=60);
-    if(stockpile){worker.carried[kind]--;stockpile.storage[kind]++;stockpile.pulse=1;continue;}
-    worker.carried[kind]--;spawnResource(kind,worker.postX,worker.postY);
-  }
 }
 function nearestWorkerSafety(worker){
   let safe=BASE,best=distance(worker.x,worker.y,BASE.x,BASE.y);
@@ -1757,15 +2125,26 @@ function updateWorkerFlee(worker,dt){
   worker.combatTarget=null;worker.retaliationTarget=null;const safe=nearestWorkerSafety(worker);moveWorker(worker,safe.x,safe.y,dt);return true;
 }
 function updateHauler(worker,dt){
-  const storage=worker.jobTarget,task=worker.taskTarget;
+  const storage=worker.jobTarget;
+  // An autonomous hauler's destination can vanish (a recalled stockpile); it has nothing to wait for.
+  if(storage!==BASE&&!buildings.includes(storage)){releaseWorkerToFree(worker);return;}
+  const task=worker.taskTarget;
+  // Stale claims release the moment a target disappears, is vacuumed away, or lifts off the ground.
   if(task&&(!resourceDrops.includes(task)||task.target||task.claimedBy!==worker))clearWorkerTask(worker);
   if(workerLoad(worker)>=workerCarry())worker.returning=true;
   if(!worker.returning&&!worker.taskTarget){
     let nearest=null,best=Infinity;
     for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||distance(storage.x,storage.y,resource.x,resource.y)>storageServiceRadius(storage))continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
-    if(nearest){worker.taskTarget=nearest;nearest.claimedBy=worker;}else if(workerLoad(worker)>0)worker.returning=true;
+    if(nearest){worker.taskTarget=nearest;nearest.claimedBy=worker;}
+    else if(workerLoad(worker)>0)worker.returning=true;
+    // One deposited batch is the whole autonomous job: with nothing claimed, nothing carried and
+    // nothing left in coverage, the worker is free again rather than idling at the storage post.
+    else if(worker.autonomous){releaseWorkerToFree(worker);return;}
   }
-  if(worker.returning){if(moveWorker(worker,worker.postX,worker.postY,dt,13))depositWorkerLoad(worker);return;}
+  if(worker.returning){
+    if(moveWorker(worker,worker.postX,worker.postY,dt,13)){depositWorkerLoad(worker);if(worker.autonomous)releaseWorkerToFree(worker);}
+    return;
+  }
   if(worker.taskTarget){
     const target=worker.taskTarget;if(moveWorker(worker,target.x,target.y,dt,10)){const at=resourceDrops.indexOf(target);if(at>=0){worker.carried[target.kind]++;resourceDrops.splice(at,1);}delete target.claimedBy;worker.taskTarget=null;if(workerLoad(worker)>=workerCarry())worker.returning=true;}return;
   }
@@ -1776,19 +2155,36 @@ function updateGatherer(worker,dt){
   if(worker.job==="harvest"){
     kind=worker.jobTarget?.kind;node=worker.jobTarget?.node;
     if(!kind)return;
-    if(!node||!resourceIsActive(node,kind)){node=nearestWorkerNode(worker,kind);worker.jobTarget={node,kind};}
+    if(!node||!resourceIsActive(node,kind)){
+      // Autonomous gathering is one node, one strike: an objective that dies first resolves to
+      // free without producing anything, and the next sweep picks fresh work.
+      if(worker.autonomous){releaseWorkerToFree(worker);return;}
+      node=nearestWorkerNode(worker,kind);worker.jobTarget={node,kind};
+    }
   }else{
     const building=worker.jobTarget;kind=BUILDING_TYPES[building?.type]?.resource;
-    if(!building||!buildings.includes(building)||!kind){worker.job="guard";worker.jobTarget=null;return;}
+    if(!building||!buildings.includes(building)||!kind){releaseWorkerToFree(worker);return;}
     node=worker.taskTarget;
     if(!node||!resourceIsActive(node,kind)){node=nearestWorkerNode(worker,kind,building.x,building.y,BUILDING_TYPES[building.type].serviceRadius);worker.taskTarget=node;}
   }
   if(!node){moveWorker(worker,worker.postX,worker.postY,dt);return;}
-  if(moveWorker(worker,node.x,node.y,dt,20)&&worker.hitCooldown<=0){worker.hitCooldown=WORKER_HIT_COOLDOWN;hitResource(node,kind,true);if(!resourceIsActive(node,kind)){if(worker.job==="harvest")worker.jobTarget={node:null,kind};else worker.taskTarget=null;}}
+  if(moveWorker(worker,node.x,node.y,dt,20)&&worker.hitCooldown<=0){
+    worker.hitCooldown=WORKER_HIT_COOLDOWN;hitResource(node,kind,true);
+    // Exactly one successful strike, then free: the physical drop it just made can now trigger hauling.
+    if(worker.job==="harvest"&&worker.autonomous){releaseWorkerToFree(worker);return;}
+    if(!resourceIsActive(node,kind)){if(worker.job==="harvest")worker.jobTarget={node:null,kind};else worker.taskTarget=null;}
+  }
 }
 function updateWorker(worker,dt){
+  // Reconcile the fortified kit against the predicate before anything reads health this frame: a
+  // station that was razed, recalled or completed out from under the worker settles here, so no
+  // other path has to remember to undo the bonus.
+  syncWorkerGarrisonBonus(worker);
   worker.step+=dt;worker.hitCooldown-=dt;worker.attackCooldown-=dt;worker.combatTarget=null;
-  if(state.runMode==="normal"&&!worker.fleeing&&worker.hp<=TUNE.fleeHpThreshold){
+  // The survival threshold scales with effective max HP (1 for a 5 HP worker, 2 for a 10 HP
+  // fortified guard) so an even-damage enemy can't step a guard from 2 straight to dead without
+  // ever crossing the absolute threshold.
+  if(state.runMode==="normal"&&!worker.fleeing&&worker.hp<=TUNE.fleeHpThreshold*workerMaxHp(worker)/WORKER_HP){
     for(const enemy of state.enemies)if(distance(worker.x,worker.y,enemy.x,enemy.y)<=WORKER_LEASH){clearWorkerSelfSupply(worker);worker.combatTarget=null;worker.fleeing=true;worker.fleeSafeTime=0;break;}
   }
   if(worker.fleeing&&updateWorkerFlee(worker,dt))return;
@@ -1801,20 +2197,26 @@ function updateWorker(worker,dt){
   }
   if(worker.retaliationTarget)worker.returnAfterCombat=true;
   worker.retaliationTarget=null;
-  if(worker.returnAfterCombat){clearWorkerTask(worker);guardWalkPickup(worker);if(moveWorker(worker,worker.postX,worker.postY,dt)){settleGuardPickup(worker);worker.returnAfterCombat=false;}return;}
+  // Returning from combat walks back to the recorded post, then the ordinary job update resumes the
+  // prior assignment; an autonomous objective that died meanwhile resolves to free on that resume.
+  if(worker.returnAfterCombat){clearWorkerTask(worker);if(moveWorker(worker,worker.postX,worker.postY,dt))worker.returnAfterCombat=false;return;}
   const staffingTarget=worker.jobTarget&&workerStaffsPost(worker,worker.jobTarget)&&durablePostStatus(worker.jobTarget)?worker.jobTarget:null;
-  if(worker.staffingArrivedAt&&worker.staffingArrivedAt!==staffingTarget)worker.staffingArrivedAt=null;
+  if(worker.staffingArrivedAt&&worker.staffingArrivedAt!==staffingTarget)setWorkerStationArrival(worker,null);
+  // The arrival edge fires ONCE: the branch is entered only while the gate does not yet name the
+  // station, so re-running the update on an arrived guard can never grant the delta a second time.
   if(staffingTarget&&worker.staffingArrivedAt!==staffingTarget){
-    if(worker.reposting)guardWalkPickup(worker);
-    if(moveWorker(worker,worker.postX,worker.postY,dt)){if(worker.reposting)settleGuardPickup(worker);worker.staffingArrivedAt=staffingTarget;worker.reposting=false;}
+    if(moveWorker(worker,worker.postX,worker.postY,dt))setWorkerStationArrival(worker,staffingTarget);
     else return;
   }
-  if(worker.job==="guard"&&worker.reposting){guardWalkPickup(worker);if(moveWorker(worker,worker.postX,worker.postY,dt)){settleGuardPickup(worker);worker.reposting=false;}return;}
   if(worker.job==="build")updateBuilder(worker,dt);
   else if(worker.job==="guard")updateGuard(worker,dt);
   else if(worker.job==="haul")updateHauler(worker,dt);
   else if(worker.job==="harvest"||worker.job==="staff")updateGatherer(worker,dt);
-  else{clearWorkerTask(worker);worker.job="guard";worker.jobTarget=null;updateGuard(worker,dt);}
+  // A free worker with no assignment is INERT at its position: it never runs guard AI, and only the
+  // melee self-defense above ever moves it into combat.
+  else if(worker.job==="free"){}
+  // An unknown or malformed job transitions safely to free — it can never silently become a guard.
+  else releaseWorkerToFree(worker);
 }
 
 // Only this function changes phase identity and owns both phase-boundary side effects. Normal dawn
@@ -1836,6 +2238,9 @@ function transitionPhase(){
   }else{
     // A long day drafted at night is banked here, so the card is never silently wasted.
     clock.phase="day";clock.remaining=DAY_DURATION+state.draft.dayBonus;state.draft.dayBonus=0;clock.completedNights++;
+    // THE dawn stand-down, on the real phase boundary and nowhere else: one transaction releases
+    // every guard the scheduler mustered during the night. Manual guards keep their posts.
+    releaseAutonomousGarrisonGuards();
     wave.activePlan=null;wave.threatBudget=0;wave.spawnedThreat=0;wave.remainingSpawns=0;wave.activeNightNumber=null;
     // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
     chooseUpcomingNight();
@@ -1892,13 +2297,15 @@ function selectEnemyTarget(enemy){
   }
   enemy.retaliationTower=null;
   let kind="base",object=BASE,best=distance(enemy.x,enemy.y,BASE.x,BASE.y);for(const worker of state.workers){const d=distance(enemy.x,enemy.y,worker.x,worker.y);if(d<best){best=d;kind="worker";object=worker;}}
+  for(const brute of friendlyBrutes){const d=distance(enemy.x,enemy.y,brute.x,brute.y);if(d<best){best=d;kind="friendly";object=brute;}}
+  for(const unit of controlledEnemies){const d=distance(enemy.x,enemy.y,unit.x,unit.y);if(d<best){best=d;kind="controlled";object=unit;}}
   if(!canDamage)return enemyTargetResult(enemy,kind,object);
   let blocker=null,bestBlocker=Infinity;for(const building of buildings){if(!building.complete||building.type!=="tower"||building.tower.hp<=0)continue;const d=distance(enemy.x,enemy.y,building.x,building.y);if(d<bestBlocker&&segmentDistance(building.x,building.y,enemy.x,enemy.y,object.x,object.y)<=26){blocker=building;bestBlocker=d;}}
   return blocker?enemyTargetResult(enemy,"tower",blocker):enemyTargetResult(enemy,kind,object);
 }
 function destroyTower(building){
   const at=buildings.indexOf(building);if(at<0)return;buildings.splice(at,1);for(const enemy of state.enemies){if(enemy.retaliationTower===building)enemy.retaliationTower=null;if(enemy.status?.burn?.source===building)enemy.status.burn=null;}
-  for(const worker of state.workers)if(worker.jobTarget===building)releaseWorkerHome(worker);
+  for(const worker of state.workers)if(worker.jobTarget===building)releaseWorkerToFree(worker);
   if(state.upgradeMenu.building===building)closeUpgradeMenu();burst(building.x,building.y,"#8f5141",22);toast(towerVariant(building).name+" destroyed");sound(70,.35);
 }
 function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;addDamageNumber(building,damage,{tone:"received"});tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
@@ -1921,19 +2328,41 @@ function updateResourceNodes(dt){
   const held=heldChest();if(held)held.shake=Math.max(0,held.shake-dt*7);
 }
 function updateLooseResources(dt,expire){
+  let recalled=null;
   for(let i=resourceDrops.length-1;i>=0;i--){
     const drop=resourceDrops[i];
     if(expire&&drop.ttl!==null&&!drop.target&&!drop.claimedBy){drop.ttl-=dt;if(drop.ttl<=0){resourceDrops.splice(i,1);continue;}}
     drop.spin+=dt*4;
-    if(drop.target==="hand"){drop.t+=dt*7;const ease=1-Math.pow(1-clamp(drop.t,0,1),3);drop.x+=(state.mouse.x-drop.x)*ease*.35;drop.y+=(state.mouse.y-drop.y)*ease*.35;if(drop.t>=1){resourceDrops.splice(i,1);state.carried[drop.kind]++;}continue;}
+    if(drop.target==="hand"||drop.target==="base"){
+      drop.t+=dt*(drop.target==="base"?2.8:7);const ease=1-Math.pow(1-clamp(drop.t,0,1),3),tx=drop.target==="base"?BASE.x:state.mouse.x,ty=drop.target==="base"?BASE.y:state.mouse.y;
+      drop.x+=(tx-drop.x)*ease*.35;drop.y+=(ty-drop.y)*ease*.35;
+      if(drop.t>=1){resourceDrops.splice(i,1);if(drop.target==="base"){recalled??=resourceCounts();recalled[drop.kind]++;}else state.carried[drop.kind]++;}continue;
+    }
     drop.vy+=170*dt;drop.x+=drop.vx*dt;drop.y+=drop.vy*dt;
     if(drop.y>=drop.groundY){drop.y=drop.groundY;drop.vx*=.72;drop.vy*=-.22;if(Math.abs(drop.vy)<10){drop.vy=0;drop.vx=0;drop.ground=true;}}
   }
+  // All arrivals from this simulation step become one atomic feed: one XP/level/draft transaction,
+  // one toast, and no detour through storage.
+  if(recalled)feedBase(recalled,BASE.x,BASE.y);
+}
+function updateTemporaryBuilding(building,dt,active=true){
+  if(building.orbs){
+    const orbs=building.orbs;orbs.remaining-=dt;orbs.angle+=dt*2.4;orbs.cooldown-=dt;
+    if(active&&orbs.cooldown<=0){
+      orbs.cooldown=DAMAGE_ORBS.cooldown;const centers=Array.from({length:orbs.count},(_,i)=>{const a=orbs.angle+i*Math.PI*2/orbs.count;return {x:building.x+Math.cos(a)*DAMAGE_ORBS.orbitRadius,y:building.y+Math.sin(a)*DAMAGE_ORBS.orbitRadius};});
+      for(const enemy of [...state.enemies])if(centers.some(center=>distance(center.x,center.y,enemy.x,enemy.y)<=DAMAGE_ORBS.aoeRadius))damageEnemy(enemy,DAMAGE_ORBS.damage,"#8fd9ee",4);
+    }
+    return orbs.remaining<=0;
+  }
+  if(building.summoning){building.summoning.remaining-=dt;return building.summoning.remaining<=0;}
+  return false;
 }
 function updateBuildings(dt,includeHazards){
-  for(const building of buildings){building.pulse=Math.max(0,building.pulse-dt*3);if(building.complete&&building.tower)updateTower(building,dt);if(includeHazards&&building.complete&&building.hazard)updateHazard(building,dt);}
-  if(includeHazards)for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove)buildings.splice(i,1);
-  const held=heldBuilding();if(held?.tower)updateTower(held,dt);
+  for(const building of buildings){building.pulse=Math.max(0,building.pulse-dt*3);if(building.complete&&building.tower)updateTower(building,dt);if(includeHazards&&building.complete&&building.hazard)updateHazard(building,dt);if(includeHazards&&updateTemporaryBuilding(building,dt))building.remove=true;}
+  if(includeHazards)for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove){const expired=buildings.splice(i,1)[0];burst(expired.x,expired.y,"#77638f",10);}
+  const held=heldBuilding();
+  if(held?.tower)updateTower(held,dt);
+  if(includeHazards&&held&&updateTemporaryBuilding(held,dt,false)){state.heldObject=null;burst(held.x,held.y,"#77638f",10);toast(BUILDING_TYPES[held.type].name+" expired");}
 }
 function updateParticles(dt){
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
@@ -1964,23 +2393,33 @@ function updateNormal(dt){
       enemy.attackCooldown=def.rate;enemy.shotFlash=.14;enemy.shotX=target.x;enemy.shotY=target.y;
       let workerDied=false;
       if(target.kind==="worker"){const worker=target.object;worker.retaliationTarget=enemy;addDamageNumber(worker,def.damage,{tone:"received"});worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)workerDied=killWorker(worker);}
+      else if(target.kind==="friendly")damageFriendlyBrute(target.object,def.damage);
+      else if(target.kind==="controlled")damageControlledEnemy(target.object,def.damage);
       else if(target.kind==="tower")damageTower(target.object,def.damage);
       // invulnerable base (debug) is checked at the damage site: the hit still lands,
       // flashes and toasts, it just subtracts nothing. baseHp/baseMax are never inflated.
       else{if(!DBG.invulnBase){addDamageNumber(BASE,def.damage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-def.damage);}state.basePulse=1;if(state.baseHp<=0){endGame();break;}}
-      toast(workerDied?"worker died — replacement in "+WORKER_SPAWN_TIME+"s":def.name+" hit "+(target.kind==="worker"?"a worker":target.kind==="tower"?towerVariant(target.object).name:"the base"));sound(def.range>60?180:95,.09);
+      toast(workerDied?"worker died — replacement in "+WORKER_SPAWN_TIME+"s":def.name+" hit "+(target.kind==="worker"?"a worker":target.kind==="friendly"?"the friendly Brute":target.kind==="controlled"?"a controlled "+ENEMY_TYPES[target.object.type].name:target.kind==="tower"?towerVariant(target.object).name:"the base"));sound(def.range>60?180:95,.09);
     }
   }
   if(state.gameOver)return;
   updateKing(dt);updateTransientTimers(dt);updateResourceNodes(dt);updateLooseResources(dt,true);
-  updateWorkerSpawns(dt);updateBuildings(dt,true);recruitWorkers();
+  // Ordering is the contract: garrison mustering resolves BEFORE the ordinary build/haul/gather
+  // sweep, so a worker with a hostile at its back takes the post instead of picking up a job.
+  updateWorkerSpawns(dt);updateBuildings(dt,true);updateGarrisonPostings(dt);scheduleFreeWorkers();
   for(const worker of state.workers)updateWorker(worker,dt);
+  for(const brute of [...friendlyBrutes])updateFriendlyBrute(brute,dt);
+  for(const unit of [...controlledEnemies])updateControlledEnemy(unit,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
   updateParticles(dt);updateDamageNumbers(dt);
   // Stable completion point: scheduled spawning plus every kill-capable stage (player/status/enemy,
   // king, towers, hazards, workers) has finished. The phase flip makes this condition false before
   // any later frame, so transitionPhase() owns exactly one dawn reward.
-  if(state.clock.phase==="night"&&state.nightWave.remainingSpawns===0&&livingActiveWaveEnemies()===0)transitionPhase();
+  if(state.clock.phase==="night"&&state.nightWave.remainingSpawns===0&&livingActiveWaveEnemies()===0){
+    // TEMPORARY win condition: clearing WIN_WAVE ends the run instead of dawning. See data.js.
+    if(state.nightWave.activeNightNumber>=WIN_WAVE)winGame();
+    else transitionPhase();
+  }
   effects.afterUpdate();
 }
 
@@ -2013,6 +2452,12 @@ function endGame(){
   if(state.gameOver)return;
   state.gameOver=true;stopGameplayInput(true);cancelHeldObject();closeUpgradeMenu();
   effects.gameOver();sound(65,.6);
+}
+// Victory rides the gameOver flag for every input/update guard; `victory` only picks the endcard.
+function winGame(){
+  if(state.gameOver)return;
+  state.gameOver=true;state.victory=true;stopGameplayInput(true);cancelHeldObject();closeUpgradeMenu();
+  effects.victory();sound(880,.5);
 }
 
 function burst(x,y,col,count){for(let i=0;i<count;i++)particles.push({x,y,vx:rand(-55,55),vy:rand(-90,-25),life:rand(.3,.7),col});}
@@ -2123,7 +2568,7 @@ function debugGrantXp(amount){
  *  drafted one — it goes through addToHand(), and a kit carries its authored charges. */
 function debugDealCard(id){
   const card=cardById[id];
-  if(!card||!["consumable","blueprint"].includes(card.category))return false;
+  if(!card||!["consumable","build"].includes(card.category))return false;
   addToHand(id);return true;
 }
 /** Apply one stack of an implemented buff, exactly as drafting it would (same applyBuff() path:
@@ -2179,8 +2624,8 @@ function debugClearEnemies(){
 function debugHealAll(){
   state.baseHp=state.baseMax;
   for(const building of [...buildings,heldBuilding()]) if(building?.tower){ const variant=towerVariant(building); building.tower.maxHp=variant.maxHp; building.tower.hp=variant.maxHp; }
-  for(const worker of state.workers) worker.hp=WORKER_HP;
-  const held=heldWorker(); if(held) held.hp=WORKER_HP;
+  for(const worker of state.workers) worker.hp=workerMaxHp(worker);
+  const held=heldWorker(); if(held) held.hp=workerMaxHp(held);
   toast("healed base, towers and workers"); sound(780,.12);
 }
 
@@ -2200,11 +2645,11 @@ export function setPointerOutside(){ state.mouse.inside=false; }
 // Press arms the held bar through leftClick()'s full priority chain; the modal
 // re-check between the two halves is the original ordering (leftClick may open
 // the upgrade panel, and a press that did so must not also start a swing).
-export function primaryPress(){if(heldChest())return;const action=resolvePrimaryAction(state.mouse.x,state.mouse.y);if(action?.target?.combatKind==="damage-dummy")state.showcaseFocus=action.target;leftClick();if(!effects.isModalOpen())startPrimaryClick();}
+export function primaryPress(){if(state.heldObject)return;const action=resolvePrimaryAction(state.mouse.x,state.mouse.y);if(action?.target?.combatKind==="damage-dummy")state.showcaseFocus=action.target;leftClick();if(!effects.isModalOpen())startPrimaryClick();}
 export function primaryRelease(){ stopPrimaryClick(); }
 
 // ── the secondary (right) action ──
-// Cancel placement first, then pick a movable up, and only then start vacuuming:
+// Cancel placement first, then pick an eligible unit/deployable up, and only then start vacuuming:
 // the same order the pointerdown handler used to run inline.
 export function secondaryPress(){
   if(cancelBuildMode())return;
@@ -2247,9 +2692,9 @@ export function offsetCamera(dx,dy){ state.camera.x+=dx; state.camera.y+=dy; }
 // it is owned here; the panel that displays it is not. openUpgradeMenu() reports
 // whether it opened, and announces its own refusals.
 export function openUpgradeMenu(building,kind){
-  // Tower variants now come only from blueprint cards. Keep this command-level guard as well as
+  // Tower variants now come only from build cards. Keep this command-level guard as well as
   // removing the click target, so another UI cannot accidentally restore direct tower upgrading.
-  if(kind==="tower"){toast("tower variants come from blueprint cards");return false;}
+  if(kind==="tower"){toast("tower variants come from build cards");return false;}
   if(building.activeUpgrade){toast("finish the active upgrade by depositing resources");return false;}
   stopGameplayInput();
   const list=upgradeList(kind);
@@ -2299,7 +2744,7 @@ export function selectSkillNode(id){
 /**
  * Show the skill-tree screen. It takes over input, so it lets go of whatever the pointer and the
  * keys were doing and clears placement through the SAME stopGameplayInput(true) the run-over path
- * uses — a blueprint left armed under a full-stage overlay would come back with the screen. The
+ * uses — a build left armed under a full-stage overlay would come back with the screen. The
  * upgrade panel goes first because two modals must never be on screen together.
  * Reports whether it actually opened; a second call while open changes nothing.
  */
@@ -2349,9 +2794,9 @@ function skillPoints(){return state.skillPoints;}
 export function simulationEntityDiagnostics(){
   const resourceNodes=trees.length+rocks.length+diamonds.length;
   const transients=particles.length+damageNumbers.length+workerCorpses.length;
-  const total=resourceNodes+grass.length+resourceDrops.length+chests.length+buildings.length+
+  const total=resourceNodes+grass.length+resourceDrops.length+chests.length+buildings.length+friendlyBrutes.length+controlledEnemies.length+
     state.workers.length+state.enemies.length+damageDummies.length+showcaseProps.length+transients;
-  return {total,workers:state.workers.length,enemies:state.enemies.length,buildings:buildings.length,
+  return {total,workers:state.workers.length,enemies:state.enemies.length,friendlies:friendlyBrutes.length,controlled:controlledEnemies.length,buildings:buildings.length,
     resourceNodes,drops:resourceDrops.length,transients};
 }
 /** The level bar: xp is progress INTO the current level, next is what the following one costs. */
@@ -2362,7 +2807,7 @@ export function draftPending(){return state.draft.offer;}
 export function draftKind(){return state.draft.offer?state.draft.offerKind:null;}
 /**
  * Take card `index` (0-2) of the pending offer. Routes the card through takeCard() — a buff applies,
- * a consumable or blueprint goes to the hand — consumes the offer and, if more rewards are queued,
+ * a consumable or build goes to the hand — consumes the offer and, if more rewards are queued,
  * deals the next one immediately, so the world stays frozen until the queue drains. Refusals are
  * silent, so a UI may call this on any click without pre-checking.
  */
@@ -2390,7 +2835,7 @@ export function playCard(index){
   // heldChest(): the same refusal the build dock used to make. A chest in hand owns the pointer
   // (right-click puts it down), so arming a placement under it would leave a ghost nothing can
   // commit — leftClick() returns early while a chest is held.
-  if(state.gameOver||state.paused||state.draftPaused||state.buildMode||state.cardTargeting||heldChest())return false;
+  if(state.gameOver||state.paused||state.draftPaused||state.buildMode||state.cardTargeting||state.heldObject)return false;
   const entry=state.hand[index],card=cardById[entry.id];
   if(!card)return false;
   if(TARGETED_CARDS[entry.id])return beginCardTargeting(entry);
@@ -2401,8 +2846,6 @@ export function playCard(index){
 }
 /** What the held-action timer is currently filling, or null. Read-only peek. */
 export function heldChopTarget(){ return chopState.target; }
-/** Whether temporary blueprint recruitment has saved an assignment for this worker. */
-function workerIsLoaned(worker){ return !!worker?.homePost; }
 /** Is the primary button down right now? */
 export function primaryHeld(){ return state.primaryClick.held; }
 
@@ -2422,7 +2865,7 @@ function skillTreeEdges(){
 
 export {
   // live collections — iterate, never mutate
-  state, trees, rocks, diamonds, grass, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers, lightningArcs,
+  state, trees, rocks, diamonds, grass, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers, lightningArcs,
   // debug flags (the gameplay pane's own bindings are the only writers)
   DBG,
   // the step
@@ -2439,11 +2882,16 @@ export {
   // costs and progress
   buildingCost, costText, upgradeList, towerUpgradeList, nextHouseCost,
   // world lookups the render layer projects
-  storageServiceRadius, workerAssignmentAt, heldWorker, heldBuilding, heldChest, heldProp,
-  workerOccupancyStatus, workerOccupancyAt, durablePostStatus, vacantDurablePosts,
-  workerIsLoaned, workerCoatColor, workerLoad, carriedTotal, resourceIsActive,
+  storageServiceRadius, workerAssignmentAt, heldWorker, heldEnemy, heldBuilding, heldChest, heldProp,
+  captureYardOccupancy,
+  workerOccupancyStatus, workerOccupancyAt, durablePostStatus,
+  workerCoatColor, workerLoad, carriedTotal, resourceIsActive,
+  // read-only effective health for presentation; every mutation of it stays inside this module
+  workerMaxHp,
   // skill tree — read-only projections of the authored graph over this run's two id sets
   skillTreeNodes, skillTreeEdges, xp, skillPoints, waveTier, waveThreatBudget, livingActiveWaveEnemies, levelCost, buffStacks,
+  // draft eligibility projections — read-only views over the authored catalog and this run's stacks
+  draftEligible, cardPrerequisitesMet,
   // the effective vacuum reach, buffs included — the drawn ring should read this, not TUNE alone
   vacuumRadius,
   // shared numeric helpers (defined here, so nothing restates them)

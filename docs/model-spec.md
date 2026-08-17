@@ -26,11 +26,18 @@ Accessory pivot = strap point on the body, never the accessory's center.
 
 | Worker | Coat (palette) | Accessory (pivot) | Job mapping |
 |---|---|---|---|
-| gatherer | tan `coat` | axe across back (shoulder strap) | harvest / staff |
+| gatherer | tan `coat` | axe across back (shoulder strap) | harvest / staff / free |
 | courier | dusty blue `jobHaul` | wicker basket worn as backpack | haul |
 | builder | ochre `jobBuild` | hammer tucked in belt (belt point) | build |
-| guard | brown `jobGuard` | round shield on back + spear angled behind (both back-mounted) | guard |
+| guard | brown `jobGuard` | round shield on back + spear angled behind (both back-mounted) | guard — every Garrison posting |
 | carrier | any coat | 3-log stack strapped on head (head top) | any worker with `carried > 0` |
+
+**Garrison guards reuse this exact guard dressing — there is no fortified variant model.** A manually
+posted guard, a mustered guard, a travelling guard and an arrived guard whose effective maximum is
+10 HP are all the same `guard` worker; the health difference reads through the ordinary overlay
+health bar (which sizes itself from `workerMaxHp`), never through a second mesh, a scale change or a
+palette swap. The only render-side tell that a guard has *arrived* lives on the station, not the
+unit: see the garrison's post pennants below.
 
 ### Worker motion vocabulary
 
@@ -93,6 +100,28 @@ pit and stop before the keep.
 | feed gulp | funnel scales down-in briefly; cracks flash brighter | delivery event (`basePulse`) | the thing noticed |
 | tier-up | one new crack ring appears; longer rumble pulse | xp tier crossing | "I just made it worse" |
 | orb (awake stage) | faceted orb hovers over pit, slow spin + bob | tier ≥ threshold | the guardian woke up |
+
+## The garrison — the guard station (1×1 footprint)
+
+A villager build, not a keep: the same timber / plaster / stone / metal / banner vocabulary as the
+house and the capture yard, plus the guard coat colour so the station reads as the home of the
+`guard` worker above. Compact hut pushed to the back (−Z) with a gabled roof and ridge beam, an open
+drill yard in front (+Z) — the simulation's `garrisonPost` sits at `y+18`, straight out the doorway,
+so nothing may block the +Z half of the pad. One wide door with a lintel, a shield either side in
+`jobGuard` with a `metal` boss, a muster standard at the back corner clearing the roofline, and a
+weapon rack of racked spears on the left flank.
+
+**Group tree:** `root → [footings, walls, cornerPosts, roof → ridge, door → lintel, shields, standard, weaponRack, flagstones → postMarkers]`
+
+| Part | What it encodes | Driver |
+|---|---|---|
+| flagstones | one per guard slot — count comes from `GARRISON.capacity` (3), never restated | authored |
+| pennant per flagstone (`userData.postMarkers`) | raised one per **arrived** guard | `durablePostStatus(building).arrived`, synced by `scene.js` |
+
+The pennants use the same contract as the Capture Yard's bay caps: the render layer reads derived
+occupancy and raises one marker per unit that is actually standing there. A reserved-but-travelling
+guard raises nothing. No new UI and no extra worker model are introduced — vacancy still reads
+through the existing worker-slot tray and its "! vacant" label.
 
 ## Verification
 

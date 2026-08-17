@@ -8,6 +8,7 @@ Living list of games to study for specific design problems. Copy principles, not
 | **Beaconfall** | Similar overall structure; especially workers and player actions. |
 | **Super Fantasy Kingdom** | Worker roles, assignment, automation, and readability. |
 | **Bills Must Be Paid** | How features are introduced incrementally without overwhelming the player. |
+| **Click Mage** | Mouse-driven resource pickup mechanic. |
 | **Thronefall** | Visual inspiration: vibrant popping colors, readable top-down view, unit/tower/projectile presentation, Steam page look. |
 
 ## Clikyland
@@ -55,6 +56,10 @@ Apply this pacing rule:
 5. Add the next pressure only after the prior system reads clearly.
 
 This supports the existing pressure curve: **overload → automate → brief surplus → new pressure → overload**. Also use its interaction presentation as reference for hover, pickup, and placement states; see [Open Thoughts and Ideas](idea.md#3d-hover-and-selection-visualization).
+
+## Click Mage
+
+Study its mouse-driven resource pickup mechanic: [Steam page](https://store.steampowered.com/app/3228180/Click_Mage/).
 
 ## Thronefall
 

@@ -36,8 +36,10 @@ Everything that is *placed* lands on one shared square lattice. `src/game/data.j
 | Stockpile | 1x1 | |
 | House | 1x1 | |
 | Obelisk | 1x1 | |
-| Basic tower chassis | 3x3 | The only multi-cell placement in the game |
+| Basic tower chassis | 3x3 | |
 | Every tower variant | 3x3 | Inherited from the chassis; variants declare no footprint of their own |
+| Capture yard | 3x3 | Constructed; converts dropped light enemies into controlled allies |
+| Garrison | 1x1 | Constructed; converts existing workers into fortified guards |
 | Blast charge | 1x1 | |
 | Spike trap | 1x1 | |
 | Land mine | 1x1 | |
@@ -108,14 +110,18 @@ base
 │   │       ├── elemental: fire / freeze / tar tower
 │   │       ├── control: teleport
 │   │       └── special: bomb / laser / pulse / shock
-│   └── deployables / cards
-│       ├── blast charge
-│       ├── spike trap
-│       ├── land mine
-│       └── tar
+│   ├── deployables / cards
+│   │   ├── blast charge
+│   │   ├── spike trap
+│   │   ├── land mine
+│   │   └── tar
+│   └── garrison
+├── units
+│   └── capture yard
 └── future
     ├── explorer building
-    └── repair building
+    ├── repair building
+    └── barracks (produces warriors of its own — NOT the garrison)
 ```
 
 ## Behavior Tags
@@ -172,8 +178,36 @@ Categories answer **what role does this building serve?** Tags answer **how does
 | Spike trap | Defense / Deployable | `free`, `contact`, `card`, `charges`, `persistent` |
 | Land mine | Defense / Deployable | `free`, `contact`, `card`, `charges`, `area`, `one-use` |
 | Tar | Defense / Deployable | `free`, `contact`, `card`, `charges`, `persistent` |
+| Capture yard | Units | `constructed`, `manual`, `friendly`, `persistent` |
+| Garrison | Defense | `constructed`, `staffed`, `friendly`, `persistent` |
 
-Footprints for every row above live in the [Footprints](#footprints) table. All of them are 1x1 except the tower chassis and its variants.
+Footprints for every row above live in the [Footprints](#footprints) table. All of them are 1x1 except the tower chassis, its variants, and the capture yard.
+
+### Capture Yard
+
+Acquisition: the rare `bpCaptureYard` build card (8 wood + 8 stone, 3 build slots). The card carries `requires: ["enemyPickup"]`, so the draft may only offer it after the Enemy Pickup buff is owned — the buff first, the yard afterward. Behavior: right-releasing a carried light enemy over a completed yard with fewer than three living linked allies converts it into a controlled enemy (see CONTEXT.md "Enemy Capture"); a full or unfinished yard rejects the drop and restores the enemy to its pickup origin. Occupancy is derived from living linked units — a slot reopens only when one dies.
+
+### Garrison
+
+Acquisition: the common `bpGarrison` build card (6 wood + 6 stone, 2 build slots, 1x1 footprint). The card is ungated and lives in the ordinary draft pool — it is drafted, never granted, and it is not part of the starting hand. Multiple garrisons are independent, each with its own three slots.
+
+**The garrison converts workers; it never creates them.** It produces no resource, has no attack of its own, adds no population, and mints no new unit. Its three `jobSlots` **are** its guard slots (`GARRISON.capacity`), and a guard is always one of the colony's existing workers standing in one of them. A worker on guard duty is a worker not gathering, hauling or building — that opportunity cost is the whole trade. The unimplemented **barracks** concept (`bpBarracks`, `ref:"concept:barracks"`) is deliberately kept separate: a barracks would *produce* warriors of its own, which is exactly what the garrison does not do.
+
+Two kinds of guard stand in the same slots:
+
+- **Manual guards** (`autonomous:false`) come from the player right-dragging a worker onto a completed garrison, or from a manual builder inheriting the durable post it just stood up. They are standing orders: they never auto-demobilize, dawn never releases them, and the muster never re-posts them.
+- **Autonomous guards** (`autonomous:true`) are temporary, raised by the muster below and released again by dawn or by a quiet day.
+
+Assignment reserves a slot immediately — before the worker has walked anywhere — because occupancy is derived from the workers pointing at the station (held workers included), never from a counter on the building. A full garrison rejects a drop outright and restores the held worker to its pickup origin and prior assignment, exactly like a full camp or a full Capture Yard.
+
+**The fortified kit is earned by arrival, not by orders.** A guard is fortified only while all three hold: its job is `guard`, its `jobTarget` is a live *completed* garrison, and it has physically reached that post. Only then does its effective maximum become `GARRISON.maxHp` (10, against the ordinary `WORKER_HP` 5) and its melee hit `GARRISON.damage` (2, against `WORKER_DAMAGE` 1). Attack cadence is untouched.
+
+The kit is granted as a max-HP **delta** and withdrawn as a **clamp**, so a status change can neither heal a wounded guard nor kill it by subtraction:
+
+- **On arrival** the guard gains the +5 delta: a full 5/5 becomes 10/10, a wounded 3/5 becomes 8/10. The edge fires once — later frames re-read the same predicate and grant nothing.
+- **On exit** (pickup, reassignment, demobilization, death of the station, a garrison that leaves the world) the pool clamps back to 5. A guard at 2/10 stays at 2/5; a guard at 10/10 drops to 5/5. Picking a guard up withdraws the kit immediately while keeping its slot reserved.
+
+The bigger pool is not immortality: zero is still death, the ordinary corpse is left behind, and the slot reopens on the spot.
 
 ## Deployable Cards
 
@@ -211,7 +245,7 @@ Slow rule: repeated slows retain the longest remaining duration and lowest (stro
 
 ## Worker Assignment
 
-Workers have no permanent specialization. Right-dragging and dropping assigns behavior from the target under the cursor:
+Workers have no permanent specialization. Every worker spawns **free** — the autonomous default role — and every assignment records explicit provenance: autonomous (chosen by the free-worker scheduler) or manual (placed by the player). Right-dragging and dropping assigns a manual job from the target under the cursor:
 
 | Target | Job |
 |---|---|
@@ -219,10 +253,35 @@ Workers have no permanent specialization. Right-dragging and dropping assigns be
 | Resource node | Harvest nearby nodes of that resource |
 | Lumber camp / quarry | Staff that production building |
 | Stockpile / base | Haul nearby physical drops to that storage |
-| House | Guard at that house, clearing the prior assignment |
-| Empty ground | Guard that region |
+| Garrison | Guard that station (rejected outright when its three guard slots are full) |
+| House | Reposition at that house as a free worker |
+| Empty ground | Reposition there as a free worker |
 
-A new run begins with zero workers. Each completed house owns two worker slots and produces one missing worker per `WORKER_SPAWN_TIME` (12-second) cycle, so multiple vacancies refill sequentially. Reassignment never changes a worker's source-house ownership, and a living worker held for dragging still reserves that house's slot. Worker death immediately frees the owning house's slot and starts replacement timing. Carried resources become physical ground drops on death, while a permanent, inert corpse remains as scenery. The base has no worker-production capacity, but remains a valid storage and hauling target. Jobs remain within the worker's home leash. Harvesting always creates physical ground drops.
+### Free workers and autonomous work
+
+A free worker searches for useful work every 0.5 simulated seconds, from its current position, in two distance tiers: local (`WORKER_LEASH`, 150px), then expanded (the tunable free-worker search radius, default 500px). One tier is evaluated completely before expanding, so nearby hauling beats a distant blueprint. Within a tier the priority is strict: **build → haul → gather**, taking the nearest viable candidate (exact-distance ties keep collection order). Viability respects build slots, stockpile staffing capacity, storage service radii, and drop reservations — a chosen hauling drop is reserved at assignment so two free workers can never pick it in one sweep.
+
+Autonomous jobs are bounded and always return to free:
+
+- **Gathering** is exactly one resource strike, creating the ordinary physical drop, then free — so a fresh drop can immediately trigger hauling. An objective that dies before impact resolves to free with no yield.
+- **Hauling** honors its reserved drop, collects up to carry capacity or exhaustion, deposits at its chosen base/completed-stockpile destination, then goes free.
+- **Building** lasts until the blueprint completes or becomes invalid, then goes free; autonomous builders never inherit the completed building's staff/haul post.
+
+Manual jobs remain persistent: a player-assigned hauler waits at its storage, a harvester keeps its job while its node is gone, and a manual builder inherits the durable post it stood up where capacity permits. Guards are never given autonomous economy work, never borrowed for construction, and never tidy drops. A free worker with no candidate simply stays free and inert (it defends itself in melee, but runs no guard AI).
+
+### The garrison muster
+
+Defense is the one autonomous job that outranks the economy sweep, and it runs every frame before build/haul/gather is considered. An **autonomous** worker that is not already a guard and is not fighting, retaliating, returning from combat, fleeing or held musters when a living hostile is inside `GARRISON.threatRadius` (180px) of it *and* a completed Garrison with a free guard slot sits within `GARRISON.musterRadius` (300px). The nearest such station wins (exact-distance ties keep collection order), and naming it reserves the slot immediately — occupancy stays derived from the workers pointing at the station, so two workers can never claim one slot in the same pass. The abandoned objective is released through the normal path: claims drop and any carried load is scattered as physical resources. Guard bonuses depend on physical arrival at the post, not on the reservation. The fortified pool also scales the survival interrupt: a guard breaks off and runs for safety at 2 HP, the same fifth of its maximum that sends an ordinary worker running at 1.
+
+Manual assignments are standing orders and are never overridden by the muster. Coming back off duty is symmetric:
+
+- **Night** postings are binding. Dawn releases every autonomous garrison guard in one transaction at the real phase boundary (forced debug phase changes included); manual guards keep their posts.
+- **Day** postings run a stand-down clock. Any living hostile inside the station's `GARRISON.guardRadius` (180px) resets it; `GARRISON.safeSeconds` (10s) of quiet releases the guard back to free.
+- A reserved station that stops being a completed Garrison releases its guard immediately, in any phase, and death, pickup, cancellation or reassignment reopen the derived slot on the spot.
+
+What a guard *gains* by standing there — the 10 HP / 2 damage kit, granted as a delta on arrival and clamped away on exit — is described once under [Garrison](#garrison); the muster only decides who walks to the post.
+
+A new run begins with zero workers. Each completed house owns `HOUSE_SLOTS` (4) worker slots and produces one missing worker per `WORKER_SPAWN_TIME` (12-second) cycle, so multiple vacancies refill sequentially. Reassignment never changes a worker's source-house ownership, and a living worker held for dragging still reserves that house's slot. Worker death immediately frees the owning house's slot and starts replacement timing. Carried resources become physical ground drops on death, while a permanent, inert corpse remains as scenery. The base has no worker-production capacity, but remains a valid storage and hauling target. Manual jobs remain within the worker's home leash. Harvesting always creates physical ground drops.
 
 ## Design Rule
 
