@@ -221,7 +221,7 @@ try{
       assert.equal(garrison.jobSlots,3,"a garrison holds exactly three guards");
       assert.equal(garrison.jobSlots,data.GARRISON.capacity,"garrison job slots must read the guard capacity, never restate it");
       assert.ok(Object.isFrozen(data.GARRISON),"garrison tuning must be immutable");
-      assert.deepEqual({...data.GARRISON},{capacity:3,musterRadius:300,threatRadius:180,guardRadius:180,safeSeconds:10,maxHp:10,damage:2});
+      assert.deepEqual({...data.GARRISON},{capacity:3,musterRadius:300,threatRadius:180,engagementRadius:400,guardRadius:180,safeSeconds:10,maxHp:10,damage:2});
       assert.ok(data.GARRISON.musterRadius>data.GARRISON.threatRadius,"the muster call must reach further than the threat that raises it");
       assert.equal(garrison.attackMode,undefined,"the garrison itself has no attack");
       assert.equal(garrison.resource,null,"the garrison produces no resource");
@@ -755,13 +755,13 @@ try{
           const station=building("garrison",400,400),idle=freeWorker(400,380);sim.buildings.push(station);sim.state.workers.push(idle);
           sim.spawnEnemy("raider");const foe=sim.state.enemies[0];foe.x=400;foe.y=260;
           step();assert.equal(idle.job,"guard");
-          // Pinned just inside the guard radius and unable to swing: the timer must keep resetting.
-          for(let i=0;i<data.GARRISON.safeSeconds*60+300;i++){foe.x=station.x+data.GARRISON.guardRadius-10;foe.y=station.y;foe.attackCooldown=99;step();}
+          // Pin both combatants so the wider pursuit radius cannot let the guard kill this timer fixture.
+          for(let i=0;i<data.GARRISON.safeSeconds*60+300;i++){foe.x=station.x+data.GARRISON.guardRadius-10;foe.y=station.y;foe.attackCooldown=idle.attackCooldown=99;step();}
           assert.equal(idle.job,"guard","a hostile inside the guard radius must hold the post open indefinitely");
           // Just outside it, the same hostile no longer counts as local threat.
-          for(let i=0;i<data.GARRISON.safeSeconds*60-60;i++){foe.x=station.x+data.GARRISON.guardRadius+10;foe.y=station.y;foe.attackCooldown=99;step();}
+          for(let i=0;i<data.GARRISON.safeSeconds*60-60;i++){foe.x=station.x+data.GARRISON.guardRadius+10;foe.y=station.y;foe.attackCooldown=idle.attackCooldown=99;step();}
           assert.equal(idle.job,"guard","the guard must hold its post for the full safe delay");
-          for(let i=0;i<120;i++){foe.x=station.x+data.GARRISON.guardRadius+10;foe.y=station.y;foe.attackCooldown=99;step();}
+          for(let i=0;i<120;i++){foe.x=station.x+data.GARRISON.guardRadius+10;foe.y=station.y;foe.attackCooldown=idle.attackCooldown=99;step();}
           assert.equal(idle.job,"free","a quiet day must demobilize the autonomous guard");
           assert.equal(idle.jobTarget,null);assert.equal(idle.autonomous,true);
           assert.equal(sim.durablePostStatus(station).assigned,0,"demobilization must reopen the derived slot");
@@ -1115,9 +1115,9 @@ try{
           assert.equal(sim.workerMaxHp(spare),data.WORKER_HP,"the muster reserves a slot, it does not fortify");
           assert.equal(extra.job,"free","the last slot is the last slot");
           assert.equal(sim.durablePostStatus(station).assigned,data.GARRISON.capacity);
-          // 6 · fortified combat — the hostile holds the stand-down clock open from inside the
-          // guard radius but stays outside the post leash, so the reserve walks in and arrives.
-          for(let i=0;i<600;i++){foe.x=station.x+data.GARRISON.guardRadius-10;foe.y=station.y;foe.attackCooldown=99;step();}
+          // 6 · fortified combat — pin attacks while the hostile holds the stand-down clock open,
+          // allowing the reserve to walk in and arrive despite the guard's wider pursuit radius.
+          for(let i=0;i<600;i++){foe.x=station.x+data.GARRISON.guardRadius-10;foe.y=station.y;foe.attackCooldown=spare.attackCooldown=alpha.attackCooldown=gamma.attackCooldown=99;step();}
           assert.equal(sim.durablePostStatus(station).arrived,data.GARRISON.capacity,"the mustered guard must reach its post");
           assert.equal(sim.workerMaxHp(spare),data.GARRISON.maxHp);assert.equal(spare.hp,data.GARRISON.maxHp);
           assert.equal(spare.job,"guard","a hostile inside the guard radius holds the post open");
@@ -1361,8 +1361,8 @@ try{
         }
         assert.equal(sim.buffStacks("critClicks"),1,"critClicks never appeared in a draft");
         while(sim.draftPending())sim.chooseDraft(0);
-        // Isolate crit yield: a randomly drafted Free Hit correctly adds a second full chop.
-        delete sim.state.draft.buffs.freeHit;
+        // Isolate crit yield from randomly drafted secondary-hit effects.
+        delete sim.state.draft.buffs.freeHit;delete sim.state.draft.buffs.chainLightning;
         Math.random=()=>0;const dropsBefore=sim.resourceDrops.length;
         sim.setPointerWorld(tree.x,tree.y);sim.primaryPress();sim.update(1);sim.primaryRelease();
         const critDrops=sim.resourceDrops.length-dropsBefore;

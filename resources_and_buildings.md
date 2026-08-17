@@ -200,7 +200,7 @@ Two kinds of guard stand in the same slots:
 
 Assignment reserves a slot immediately — before the worker has walked anywhere — because occupancy is derived from the workers pointing at the station (held workers included), never from a counter on the building. A full garrison rejects a drop outright and restores the held worker to its pickup origin and prior assignment, exactly like a full camp or a full Capture Yard.
 
-**The fortified kit is earned by arrival, not by orders.** A guard is fortified only while all three hold: its job is `guard`, its `jobTarget` is a live *completed* garrison, and it has physically reached that post. Only then does its effective maximum become `GARRISON.maxHp` (10, against the ordinary `WORKER_HP` 5) and its melee hit `GARRISON.damage` (2, against `WORKER_DAMAGE` 1). Attack cadence is untouched.
+**The fortified kit is earned by arrival, not by orders.** A guard is fortified only while all three hold: its job is `guard`, its `jobTarget` is a live *completed* garrison, and it has physically reached that post. Only then does its effective maximum become `GARRISON.maxHp` (10, against the ordinary `WORKER_HP` 5) and its melee hit `GARRISON.damage` (2, against `WORKER_DAMAGE` 1). A posted guard detects and pursues hostiles up to `GARRISON.engagementRadius` (400px) from its post; melee reach and attack cadence are untouched.
 
 The kit is granted as a max-HP **delta** and withdrawn as a **clamp**, so a status change can neither heal a wounded guard nor kill it by subtraction:
 

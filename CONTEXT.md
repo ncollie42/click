@@ -113,7 +113,7 @@ The autonomous defense pass that runs every frame *before* the free-worker build
 
 ### Fortified Guard Kit
 
-The stat upgrade a guard holds **only while standing at a live completed Garrison it is posted to** — job `guard`, valid station, and arrival recorded. Effective maximum health becomes `GARRISON.maxHp` (10, against `WORKER_HP` 5) and melee damage becomes `GARRISON.damage` (2, against `WORKER_DAMAGE` 1); attack cadence is unchanged, and the low-health survival interrupt scales with the pool (a fortified guard runs for safety at 2, an ordinary worker at 1). The kit is granted as a max-HP **delta** on arrival (5/5 → 10/10, a wounded 3/5 → 8/10) and withdrawn as a **clamp** on exit (10/10 → 5/5, 2/10 → 2/5). Orders and reservations grant nothing — only arrival does. Death at zero is unchanged.
+The stat upgrade a guard holds **only while standing at a live completed Garrison it is posted to** — job `guard`, valid station, and arrival recorded. Effective maximum health becomes `GARRISON.maxHp` (10, against `WORKER_HP` 5) and melee damage becomes `GARRISON.damage` (2, against `WORKER_DAMAGE` 1); a posted guard detects and pursues hostiles up to `GARRISON.engagementRadius` (400) from its post, while melee reach and attack cadence are unchanged. The low-health survival interrupt scales with the pool (a fortified guard runs for safety at 2, an ordinary worker at 1). The kit is granted as a max-HP **delta** on arrival (5/5 → 10/10, a wounded 3/5 → 8/10) and withdrawn as a **clamp** on exit (10/10 → 5/5, 2/10 → 2/5). Orders and reservations grant nothing — only arrival does. Death at zero is unchanged.
 
 ### Dawn Stand-Down
 

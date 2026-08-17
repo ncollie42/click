@@ -881,11 +881,12 @@ function dropHeldObject(){
 function activateManualTower(building){
   const tower=building.tower,variant=towerVariant(building);if(!variant.manual)return;
   if(tower.cooldown>0){toast(variant.name+" recharging: "+tower.cooldown.toFixed(1)+"s");return;}
-  if(state.runMode==="showcase"&&!damageDummies.some(dummy=>dummy.defeatedTimer<=0&&distance(building.x,building.y,dummy.x,dummy.y)<=variant.effectRadius))return;
+  const radius=towerAttackRadius(variant);
+  if(state.runMode==="showcase"&&!damageDummies.some(dummy=>dummy.defeatedTimer<=0&&distance(building.x,building.y,dummy.x,dummy.y)<=radius))return;
   tower.cooldown=towerCooldown(variant);tower.flash=.35;
   const damage=towerDamage(variant);
   eachTowerCombatTarget(enemy=>{
-    if(distance(building.x,building.y,enemy.x,enemy.y)<=variant.effectRadius)damageCombatTarget(enemy,damage,variant.accent,7,building);
+    if(distance(building.x,building.y,enemy.x,enemy.y)<=radius)damageCombatTarget(enemy,damage,variant.accent,7,building);
   });
   burst(building.x,building.y,variant.accent,24);toast("shock pulse fired");sound(variant.sound,.28);
 }
@@ -1314,7 +1315,7 @@ function recallResources(){
 // instant it is PLAYED out of the hand. Buff entries are deliberately empty: their whole effect is
 // the stack tally, layered over the authored numbers by the accessors below.
 const CARD_EFFECTS={
-  clickSpeed(){},critClicks(){},freeHit(){},enemyPickup(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},buildCapacity(){},towerDamage(){},towerSpeed(){},clickDamage(){},chainLightning(){},
+  clickSpeed(){},critClicks(){},freeHit(){},enemyPickup(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},buildCapacity(){},towerDamage(){},towerSpeed(){},towerRange(){},clickDamage(){},chainLightning(){},
   handCarry(){state.capacity+=CARD_BUFFS.handCarry;},
   baseHp(){state.baseMax+=CARD_BUFFS.baseHp;state.baseHp+=CARD_BUFFS.baseHp;},
   woodBundle(){state.stored.wood+=CARD_CONSUMABLES.woodBundle;state.basePulse=1;},
@@ -1471,6 +1472,7 @@ function workerSpeed(){return WORKER_SPEED*CARD_BUFFS.workerSpeed**buffStacks("w
 function workerCarry(){return WORKER_CARRY+CARD_BUFFS.workerCarry*buffStacks("workerCarry");}
 function towerDamage(variant){return Math.ceil(variant.damage*CARD_BUFFS.towerDamage**buffStacks("towerDamage"));}
 function towerCooldown(variant){return variant.cooldown/CARD_BUFFS.towerSpeed**buffStacks("towerSpeed");}
+function towerAttackRadius(variant){return (variant.range||variant.effectRadius)+CARD_BUFFS.towerRange*buffStacks("towerRange");}
 function dropToBase(){feedBase(state.carried,state.mouse.x,state.mouse.y);}
 
 function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
@@ -2072,7 +2074,7 @@ function fireTowerAttack(building,variant,target){
   if(variant.attackMode==="splash"){
     const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;eachTowerCombatTarget(enemy=>{if(distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageCombatTarget(enemy,damage,color,8,building);});burst(impactX,impactY,color,18);
   }else if(variant.attackMode==="line"){
-    const angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*variant.range,endY=building.y+Math.sin(angle)*variant.range;tower.targetX=endX;tower.targetY=endY;
+    const range=towerAttackRadius(variant),angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*range,endY=building.y+Math.sin(angle)*range;tower.targetX=endX;tower.targetY=endY;
     eachTowerCombatTarget(enemy=>{if(lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageCombatTarget(enemy,damage,color,7,building);});
   }else if(variant.attackMode==="chain"){
     // Full tower damage on every strike; jumps ignore the tower's own range and only obey
@@ -2095,10 +2097,10 @@ function updateTower(building,dt){
   const tower=building.tower,variant=towerVariant(building);tower.cooldown=Math.max(0,tower.cooldown-dt);tower.flash=Math.max(0,tower.flash-dt);tower.hitFlash=Math.max(0,(tower.hitFlash||0)-dt);
   if(variant.manual||tower.cooldown>0)return;
   if(variant.attackMode==="periodic area"){
-    let attacked=false;eachTowerCombatTarget(enemy=>{if(distance(building.x,building.y,enemy.x,enemy.y)>variant.effectRadius)return;if(!attacked){tower.cooldown=towerCooldown(variant);tower.flash=.4;attacked=true;}damageCombatTarget(enemy,towerDamage(variant),variant.accent,5,building);});
+    const radius=towerAttackRadius(variant);let attacked=false;eachTowerCombatTarget(enemy=>{if(distance(building.x,building.y,enemy.x,enemy.y)>radius)return;if(!attacked){tower.cooldown=towerCooldown(variant);tower.flash=.4;attacked=true;}damageCombatTarget(enemy,towerDamage(variant),variant.accent,5,building);});
     if(attacked)sound(variant.sound,.22);return;
   }
-  const target=nearestTowerTarget(building,variant.range);if(!target)return;tower.cooldown=towerCooldown(variant);fireTowerAttack(building,variant,target);
+  const target=nearestTowerTarget(building,towerAttackRadius(variant));if(!target)return;tower.cooldown=towerCooldown(variant);fireTowerAttack(building,variant,target);
 }
 
 function updateGuard(worker,dt){
@@ -2109,7 +2111,7 @@ function updateGuard(worker,dt){
   // Combat itself is unchanged: the same reach, cadence and retaliation as any worker. Only the
   // effective damage query inside workerAttack knows the guard hits harder once it has arrived.
   let target=null,best=Infinity;
-  for(const enemy of state.enemies){const postDistance=distance(worker.postX,worker.postY,enemy.x,enemy.y),d=distance(worker.x,worker.y,enemy.x,enemy.y);if(postDistance<=WORKER_LEASH&&d<best){best=d;target=enemy;}}
+  for(const enemy of state.enemies){const postDistance=distance(worker.postX,worker.postY,enemy.x,enemy.y),d=distance(worker.x,worker.y,enemy.x,enemy.y);if(postDistance<=GARRISON.engagementRadius&&d<best){best=d;target=enemy;}}
   if(target){worker.combatTarget=target;if(moveWorker(worker,target.x,target.y,dt,WORKER_MELEE-2))workerAttack(worker,target);return;}
   moveWorker(worker,worker.postX,worker.postY,dt);
 }
@@ -2462,7 +2464,7 @@ function winGame(){
 
 function burst(x,y,col,count){for(let i=0;i<count;i++)particles.push({x,y,vx:rand(-55,55),vy:rand(-90,-25),life:rand(.3,.7),col});}
 
-function towerRadius(building){const variant=towerVariant(building);return variant.range||variant.effectRadius;}
+function towerRadius(building){return towerAttackRadius(towerVariant(building));}
 
 function chopTarget(){
   const m = state.mouse;

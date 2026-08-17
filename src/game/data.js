@@ -92,7 +92,7 @@ export const XP_TIERS=[40,100,200,350];   // dead: superseded by LEVEL_CURVE, st
 // ids, rarities, texts and stack limits but none of the arithmetic. Read only by simulation.js;
 // no runtime path may assign into these tables — a taken card tallies a stack in run state and
 // the accessors layer these numbers over the authored values at read time.
-export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,buildCapacity:1,towerDamage:1.1,towerSpeed:1.1,baseHp:5,clickDamage:1,
+export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,buildCapacity:1,towerDamage:1.1,towerSpeed:1.1,towerRange:100,baseHp:5,clickDamage:1,
   // Chain lightning scales BOTH dials per stack: stack N procs a completed player swing at
   // chainChance+(N-1)*chainChanceStack and throws chainJumps+(N-1) jumps — 20%/1, 30%/2, 40%/3,
   // 50%/4 at the card's 4-stack cap. A jump is a full ordinary swing (its own crit roll) on the
@@ -118,11 +118,11 @@ export const CAPTURE_YARD=Object.freeze({capacity:3,guardRadius:300,homeRadius:7
 // construction and job slots — and this table owns everything GUARD-specific, so no other module may
 // restate a guard number: how many workers one garrison can hold (capacity, which IS its job-slot
 // count), how near a hostile must come to call the muster (threatRadius), how far that call reaches
-// for workers (musterRadius), how far an arrived guard engages from its post (guardRadius), how many
+// for workers (musterRadius), how far a posted guard detects and pursues hostiles from its post
+// (engagementRadius), how far station threats prevent daytime stand-down (guardRadius), how many
 // threat-free daylight seconds demobilize it (safeSeconds), and the stats an arrived guard fights
 // with (maxHp/damage). The garrison itself creates no workers and has no attack.
-// Only the card/registry layer reads this today; the mustering behavior is not built yet.
-export const GARRISON=Object.freeze({capacity:3,musterRadius:300,threatRadius:180,guardRadius:180,safeSeconds:10,maxHp:10,damage:2});
+export const GARRISON=Object.freeze({capacity:3,musterRadius:300,threatRadius:180,engagementRadius:400,guardRadius:180,safeSeconds:10,maxHp:10,damage:2});
 
 // ── houses and workers ──────────────────────────────────────────────────────
 // The first house is a cheap opening bootstrap. Later houses retain the regular progression below.
