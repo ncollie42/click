@@ -22,7 +22,7 @@ import {project} from "./scene.js";
 import {
   VIEW_W,VIEW_H,BASE,
   RESOURCE_KINDS,
-  BUILDING_TYPES,UPGRADES,DAMAGE_ORBS,SUMMONING_CIRCLE,CAPTURE_YARD,
+  BUILDING_TYPES,TOWER_VARIANTS,UPGRADES,DAMAGE_ORBS,SUMMONING_CIRCLE,CAPTURE_YARD,
   ENEMY_TYPES,
   NIGHT_TELEGRAPH_TIME
 } from "../game/data.js";
@@ -201,7 +201,8 @@ export function drawOverlay(){
     // Blueprints and upgrades are the same job — carry resources here — so they
     // share one name / bar / tally stack instead of two invented formats.
     if(!b.complete){
-      drawDelivery(b.x, b.y, BUILDING_TYPES[b.type].name, buildingCost(b), b.delivered);
+      const buildName=b.plannedVariant?TOWER_VARIANTS[b.plannedVariant].name:BUILDING_TYPES[b.type].name;
+      drawDelivery(b.x, b.y, buildName, buildingCost(b), b.delivered);
       if(occupancyVisible(b))drawOccupancy(b,74);
       if(b.starved) label("! starved", b.x, b.y, 22, "#e08a76");
       continue;

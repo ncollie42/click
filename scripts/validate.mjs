@@ -446,7 +446,7 @@ try{
       import {cellToWorld} from "./src/game/grid.js";
       let seed=0x51a7;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       const counts=()=>({wood:0,stone:0,dust:0,coin:0,diamond:0});
-      const building=(type,x,y,complete=true,cost={wood:1,stone:0})=>({type,x,y,complete,cost,delivered:{wood:0,stone:0},storage:counts(),upgrades:{},activeUpgrade:null,tower:null,hazard:null,pulse:0,starved:false});
+      const building=(type,x,y,complete=true,cost={wood:1,stone:0})=>({type,x,y,complete,cost,delivered:counts(),storage:counts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:null,pulse:0,starved:false});
       const worker=(job,target,x,y)=>({x,y,postX:x,postY:y+20,spawnSource:null,job,jobTarget:target,autonomous:false,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:counts(),hp:data.WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,guardSafeTime:0});
       const freeWorker=(x,y)=>({...worker("free",null,x,y),postY:y,autonomous:true});
       const drop=(kind,x,y)=>({kind,x,y,groundY:y,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null});
@@ -471,6 +471,7 @@ try{
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",104,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=false;step();assert.equal(builder.taskTarget,null);assert.ok(builder.carried.wood>0);assert.equal(loose.claimedBy,undefined);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",130,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.taskTarget,loose);assert.equal(loose.claimedBy,builder);assert.equal(store.storage.wood,3);sim.DBG.groundSourcing=false;sim.TUNE.builderSourceRadius=60;step();assert.equal(builder.taskTarget,loose);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=1;const builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.carried.wood,1);}
+        reset();{const site=building("tower",100,100,false,{wood:0,stone:0,dust:1}),store=building("stockpile",110,100),builder=worker("build",site,100,100);store.storage.dust=1;sim.buildings.push(site,store);sim.state.workers.push(builder);step();assert.equal(builder.carried.dust,1,"builders must haul variant materials");step();assert.equal(site.complete,true,"variant material did not finish the one tower build");}
         reset();{const site=building("lumber",100,100,false),builder=worker("build",site,100,100);sim.buildings.push(site);sim.state.workers.push(builder);step();assert.equal(builder.starved,true);}
         reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step();assert.equal(builder.job,"build");assert.equal(builder.jobTarget,site);assert.equal(builder.selfSupply.node,tree);step(600);assert.equal(site.complete,true);assert.equal(site.delivered.wood,1);assert.equal(builder.job,"staff","manual builder must inherit the durable post it stood up");assert.equal(builder.jobTarget,site);assert.equal(builder.autonomous,false);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);}
         reset();{const site=building("tower",100,100,false,{wood:1,stone:1}),tree={x:190,y:100,hp:3,max:3,stump:0,shake:0},rock={x:130,y:100,hp:3,max:3,depleted:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.rocks.push(rock);sim.state.workers.push(builder);step();assert.deepEqual(builder.selfSupply,{kind:"stone",node:rock},"nearest needed node must win across kinds");}
@@ -1475,9 +1476,8 @@ try{
         assert.equal(far.hp,farHp,"the fireball reached past its radius");
         assert.equal(held("fireball"),null);assert.equal(sim.state.buildMode,null);
 
-        // 6 · a build card targets like a kit, but what its click lands is an ordinary CONSTRUCTION
-        //     SITE promised to the variant — the player still carries every resource, and the total
-        //     is exactly the basic tower plus that variant's own authored upgrade cost.
+        // 6 · a fancy-tower card lands one CONSTRUCTION SITE. Its one displayed cost is exactly the
+        //     basic chassis plus variant materials, and completing it directly produces that variant.
         clearGround();for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;
         assert.equal(sim.DBG.freeCosts,false);
         assert.equal(sim.debugDealCard("bpSniper"),true);
@@ -1493,27 +1493,24 @@ try{
         assert.equal(sim.buildings.length,1,"the build placed nothing, or placed twice");
         assert.equal(sniper.type,"tower");assert.equal(sniper.x,sniperAnchor.x);assert.equal(sniper.y,sniperAnchor.y);
         assert.equal(sniper.complete,false,"a build card must land a site, not a finished tower");
-        assert.equal(sniper.tower,null);assert.equal(sniper.activeUpgrade,null,"the variant is designated, not yet accepted");
+        assert.equal(sniper.tower,null);assert.equal(sniper.activeUpgrade,null,"an unfinished tower exposed an upgrade job");
         assert.equal(sniper.plannedVariant,"sniper","the site was not promised to the card's variant");
-        assert.deepEqual(sniper.delivered,{wood:0,stone:0},"a fresh site has been delivered nothing");
-        assert.deepEqual(sniper.cost,data.BUILDING_TYPES.tower.cost,"a card must not rewrite an authored cost");
+        assert.deepEqual(sniper.delivered,counts(),"a fresh site has been delivered nothing");
+        const sniperCost=Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,(data.BUILDING_TYPES.tower.cost[kind]||0)+(data.TOWER_VARIANTS.sniper.cost[kind]||0)]));
+        assert.deepEqual(sniper.cost,sniperCost,"the site must combine chassis and variant materials");
         assert.equal(JSON.stringify(sim.state.stored),storedBeforeBlueprint,"placing a site must not touch storage");
         assert.equal(held("bpSniper"),null,"the build must leave the hand as its site lands");
         assert.equal(sim.state.buildMode,null);assert.equal(sim.state.cardTargeting,null);
         sim.validateSimulationInvariants();
-        // carry the chassis cost to it: the tower stands as a BASIC one and accepts the sniper job
+        // One delivery fills the one site and produces the requested full-health tower.
         const deliver=(building,cost)=>{
           for(const kind of data.RESOURCE_KINDS)sim.state.carried[kind]=cost[kind]||0;
           sim.setPointerWorld(building.x,building.y);sim.secondaryRelease();
         };
-        deliver(sniper,data.BUILDING_TYPES.tower.cost);
-        assert.equal(sniper.complete,true,"the authored chassis cost did not finish the site");
-        assert.equal(sniper.tower.variant,"basic");assert.equal(sniper.plannedVariant,null,"the designation must be spent on completion");
-        assert.deepEqual(sniper.activeUpgrade,{id:"sniper",kind:"tower",delivered:counts()},"the variant upgrade must be accepted for the player");
-        // and the variant's own authored cost finishes it, at full variant hp
-        deliver(sniper,data.TOWER_VARIANTS.sniper.cost);
-        assert.equal(sniper.tower.variant,"sniper","the designated upgrade never completed");
-        assert.equal(sniper.activeUpgrade,null);
+        deliver(sniper,sniperCost);
+        assert.equal(sniper.complete,true,"the combined cost did not finish the site");
+        assert.equal(sniper.tower.variant,"sniper");assert.equal(sniper.plannedVariant,null,"the designation must be spent on completion");
+        assert.equal(sniper.activeUpgrade,null,"completion created an unwanted second build");
         assert.equal(sniper.tower.maxHp,data.TOWER_VARIANTS.sniper.maxHp);
         assert.equal(sniper.tower.hp,data.TOWER_VARIANTS.sniper.maxHp,"a finished variant tower must be at full hp");
         assert.deepEqual(sim.state.carried,counts(),"the delivery spent exactly the authored costs");
@@ -1528,7 +1525,7 @@ try{
         const obelisk=sim.buildings.at(-1);
         assert.equal(obelisk.type,"obelisk");assert.equal(obelisk.complete,false,"the obelisk card must land a site to fill");
         assert.equal(obelisk.plannedVariant,null,"only a tower card designates a variant");
-        assert.deepEqual(obelisk.delivered,{wood:0,stone:0});
+        assert.deepEqual(obelisk.delivered,counts());
         assert.deepEqual(obelisk.cost,data.BUILDING_TYPES.obelisk.cost,"a card must not rewrite an authored cost");
         assert.equal(held("bpObelisk"),null,"the card is spent when the site is placed");
         deliver(obelisk,data.BUILDING_TYPES.obelisk.cost);

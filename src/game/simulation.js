@@ -1802,7 +1802,7 @@ function storageServiceRadius(storage){return storage===BASE?BASE_ZONE:BUILDING_
 function storageStock(storage){return storage===BASE?state.stored:storage.storage;}
 function nearestBuildStorage(building,worker){
   let choice=null,best=Infinity,covered=false;
-  for(const storage of [BASE,...buildings.filter(item=>item.complete&&item.type==="stockpile")]){const d=distance(storage.x,storage.y,building.x,building.y);if(d>storageServiceRadius(storage))continue;covered=true;const stock=storageStock(storage),available=["wood","stone"].some(kind=>stock[kind]>0&&buildNeed(building,kind,worker)>0);if(available&&d<best){choice=storage;best=d;}}
+  for(const storage of [BASE,...buildings.filter(item=>item.complete&&item.type==="stockpile")]){const d=distance(storage.x,storage.y,building.x,building.y);if(d>storageServiceRadius(storage))continue;covered=true;const stock=storageStock(storage),available=RESOURCE_KINDS.some(kind=>stock[kind]>0&&buildNeed(building,kind,worker)>0);if(available&&d<best){choice=storage;best=d;}}
   return {storage:choice,covered};
 }
 function buildNeed(building,kind,worker){
@@ -1811,7 +1811,7 @@ function buildNeed(building,kind,worker){
     reserved+=other.carried[kind]+(other.taskTarget?.kind===kind?1:0);
     if(other.selfSupply?.kind===kind&&!other.carried[kind]&&other.taskTarget?.kind!==kind)reserved++;
   }
-  return Math.max(0,buildingCost(building)[kind]-building.delivered[kind]-reserved);
+  return Math.max(0,(buildingCost(building)[kind]||0)-(building.delivered[kind]||0)-reserved);
 }
 // Completion inheritance is a MANUAL-builder privilege: a player-assigned builder keeps working the
 // thing it stood up when the finished building has a durable post with room. Autonomous builders,
@@ -1831,7 +1831,7 @@ function resolveBuildingCompletionWorkers(building){
 }
 function nearestBuildDrop(building,worker){
   let nearest=null,best=Infinity;
-  for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||!["wood","stone"].includes(resource.kind)||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>TUNE.builderSourceRadius)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
+  for(const resource of resourceDrops){if(resource.target||targetIsClaimed(resource)||!resource.ground||buildNeed(building,resource.kind,worker)<=0||distance(building.x,building.y,resource.x,resource.y)>TUNE.builderSourceRadius)continue;const d=distance(worker.x,worker.y,resource.x,resource.y);if(d<best){best=d;nearest=resource;}}
   return nearest;
 }
 function claimBuildDrop(worker,resource){if(!resource)return false;worker.starved=false;worker.taskTarget=resource;resource.claimedBy=worker;return true;}
@@ -1881,8 +1881,8 @@ function updateBuilder(worker,dt){
   if(building.complete){inheritBuiltJob(worker,building);return;}
   if(workerLoad(worker)>0){
     worker.selfSupply=null;worker.starved=false;if(!moveWorker(worker,building.x,building.y,dt,16))return;
-    const cost=buildingCost(building);for(const kind of ["wood","stone"]){const amount=Math.min(worker.carried[kind],cost[kind]-building.delivered[kind]);worker.carried[kind]-=amount;building.delivered[kind]+=amount;handoffParticles(building.x,building.y,kind,amount,worker.x,worker.y);}
-    building.pulse=1;if(building.delivered.wood>=cost.wood&&building.delivered.stone>=cost.stone)completeBuilding(building);return;
+    const cost=buildingCost(building);for(const kind of RESOURCE_KINDS){const amount=Math.min(worker.carried[kind],(cost[kind]||0)-(building.delivered[kind]||0));worker.carried[kind]-=amount;building.delivered[kind]+=amount;handoffParticles(building.x,building.y,kind,amount,worker.x,worker.y);}
+    building.pulse=1;if(constructionComplete(building))completeBuilding(building);return;
   }
   if(worker.selfSupply&&updateBuilderSelfSupply(worker,building,dt))return;
   if(worker.taskTarget&&(!resourceDrops.includes(worker.taskTarget)||worker.taskTarget.target||worker.taskTarget.claimedBy!==worker))clearWorkerTask(worker);
@@ -1891,14 +1891,14 @@ function updateBuilder(worker,dt){
   }
   if(DBG.groundSourcing&&claimBuildDrop(worker,nearestBuildDrop(building,worker)))return;
   const source=nearestBuildStorage(building,worker),storage=source.storage;
-  if(!source.covered){if(updateBuilderSelfSupply(worker,building,dt))return;worker.starved=["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);return;}
+  if(!source.covered){if(updateBuilderSelfSupply(worker,building,dt))return;worker.starved=RESOURCE_KINDS.some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);return;}
   if(storage){
     worker.starved=false;if(!moveWorker(worker,storage.x,storage.y,dt,storage===BASE?BASE.r-4:18))return;
-    const stock=storageStock(storage);let room=workerCarry();for(const kind of ["wood","stone"]){const amount=Math.min(room,stock[kind],buildNeed(building,kind,worker));stock[kind]-=amount;worker.carried[kind]+=amount;room-=amount;}if(storage!==BASE)storage.pulse=1;return;
+    const stock=storageStock(storage);let room=workerCarry();for(const kind of RESOURCE_KINDS){const amount=Math.min(room,stock[kind],buildNeed(building,kind,worker));stock[kind]-=amount;worker.carried[kind]+=amount;room-=amount;}if(storage!==BASE)storage.pulse=1;return;
   }
   if(claimBuildDrop(worker,nearestBuildDrop(building,worker)))return;
   if(updateBuilderSelfSupply(worker,building,dt))return;
-  worker.starved=["wood","stone"].some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);
+  worker.starved=RESOURCE_KINDS.some(kind=>buildNeed(building,kind,worker)>0);moveWorker(worker,worker.postX,worker.postY,dt);
 }
 
 function spawnFriendlyBrute(x,y){
