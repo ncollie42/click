@@ -213,7 +213,7 @@ for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of
 // One authored boss for now: brute behavior/model, but a 4× render/collision scale and fixed boss
 // stats. It is not a weighted variant; WAVE_BOSS_SPAWNS guarantees its one scheduled appearance.
 enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantColor:null,minWave:5,
-  hp:60,damage:20,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
+  hp:180,damage:60,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
 export const ENEMY_TYPES=Object.freeze(enemyVariants);
 export const WAVE_BOSS_SPAWNS=Object.freeze({5:"bruteBoss"});
 // Enemies spawn at a random angle on a ring around the base (small radial jitter in
