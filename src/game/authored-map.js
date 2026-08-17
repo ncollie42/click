@@ -6,10 +6,10 @@
 // Runtime entities, health, occupancy mutation, rendering, and movement policy
 // belong to consumers.
 
-import {W, H, BASE, CELL, GRID_ORIGIN_X, GRID_ORIGIN_Y, GRID_COLS, GRID_ROWS, BUILD_MARGIN, FOOTPRINT_1x1} from "./data.js";
+import {W, H, BASE, CELL, GRID_ORIGIN_X, GRID_ORIGIN_Y, GRID_COLS, GRID_ROWS, BUILD_MARGIN, FOOTPRINT_1x1, CHEST, MAP_TILES} from "./data.js";
 import {footprintWorldRectInGrid} from "./grid.js";
-import {parseMapDocument, inBounds} from "./map-document.js";
-import {resolveScatterRegions} from "./scatter-regions.js";
+import {parseMapDocument, cropMapDocumentCentered, serializeMapDocument, inBounds} from "./map-document.js";
+import {resolveScatterRegions, scatterCellHash} from "./scatter-regions.js";
 import STARTER_MAP_DATA from "./maps/starter.map.json" with {type: "json"};
 
 export const LAND = "land";
@@ -134,6 +134,40 @@ export function buildWorldFromMapData(mapData){
   for(const cell of resolved.trees) buckets.trees.push(Object.freeze({cx: cell.cx, cy: cell.cy, variant: cell.variant}));
   for(const cell of resolved.rocks) buckets.rocks.push(Object.freeze({cx: cell.cx, cy: cell.cy, variant: cell.variant}));
   const grass = Object.freeze(resolved.grass.map(cell => Object.freeze({cx: cell.cx, cy: cell.cy, variant: cell.variant})));
+
+  // Chests beyond whatever the map authors are WORLD policy, not editor data, resolved by
+  // rank-by-hash: eligible free land cells are ranked by the same deterministic per-cell hash
+  // grass scatter uses and the lowest ranks win, so counts are exact per map size while an
+  // unchanged map yields the same chest field every boot. Two passes: first the discover BAND is
+  // topped up to CHEST.startingCount (a map that authors its own starter chest gets no extra), then
+  // scatterPerTile*MAP_TILES exploration chests land strictly beyond the band. Scattered records
+  // carry `scattered:true` to stay distinguishable from authored chests.
+  {
+    const occupied = new Set();
+    for(const cells of [buckets.trees, buckets.rocks, buckets.diamonds, buckets.chests, grass])
+      for(const cell of cells) occupied.add(cell.cy * doc.width + cell.cx);
+    const region = {id: "world:chest-scatter", seed: 0, kind: "chest"};
+    const band = [], far = [];
+    for(let cy = 0; cy < doc.height; cy++) for(let cx = 0; cx < doc.width; cx++){
+      const address = cy * doc.width + cx;
+      if(doc.land[address] !== 1 || occupied.has(address)) continue;
+      const rect = footprintWorldRectInGrid(cx, cy, FOOTPRINT_1x1, placementGrid);
+      if(rect.x < BUILD_MARGIN || rect.y < BUILD_MARGIN || rect.x + rect.w > W - BUILD_MARGIN || rect.y + rect.h > H - BUILD_MARGIN) continue;
+      const radius = Math.hypot(cx * CELL + GRID_ORIGIN_X + CELL / 2 - BASE.x, cy * CELL + GRID_ORIGIN_Y + CELL / 2 - BASE.y);
+      if(radius < CHEST.discoverMinRadius) continue;
+      (radius <= CHEST.discoverMaxRadius ? band : far).push({cx, cy, address, hash: scatterCellHash(doc.seed, region, cx, cy)});
+    }
+    const byHash = (a, b) => a.hash - b.hash || a.address - b.address, byAddress = (a, b) => a.address - b.address;
+    const authoredInBand = buckets.chests.filter(cell => {
+      const radius = Math.hypot(cell.cx * CELL + GRID_ORIGIN_X + CELL / 2 - BASE.x, cell.cy * CELL + GRID_ORIGIN_Y + CELL / 2 - BASE.y);
+      return radius >= CHEST.discoverMinRadius && radius <= CHEST.discoverMaxRadius;
+    }).length;
+    const chosen = [
+      ...band.sort(byHash).slice(0, Math.max(0, CHEST.startingCount - authoredInBand)),
+      ...far.sort(byHash).slice(0, CHEST.scatterPerTile * MAP_TILES),
+    ].sort(byAddress);
+    for(const cell of chosen) buckets.chests.push(Object.freeze({cx: cell.cx, cy: cell.cy, variant: null, scattered: true}));
+  }
   const blueprint = {
     width: W, height: H,
     terrainCellSize: TERRAIN_CELL_SIZE, terrainOriginX: TERRAIN_ORIGIN_X, terrainOriginY: TERRAIN_ORIGIN_Y,
@@ -163,7 +197,12 @@ export function buildWorldFromMapData(mapData){
   return Object.freeze(blueprint);
 }
 
-// The world the game boots into.
+// The world the game boots into. When ?mapSize shrinks the world (data.js), the full authored
+// starter map is cropped to the centered GRID_COLS×GRID_ROWS window — the same window the smaller
+// W/H put the base in, so the base cell lands on the crop's exact center at every size.
 export function buildStarterWorld(){
-  return buildWorldFromMapData(STARTER_MAP_SOURCE);
+  let doc = parseMapDocument(STARTER_MAP_SOURCE);
+  if(doc.width > GRID_COLS || doc.height > GRID_ROWS)
+    doc = cropMapDocumentCentered(doc, GRID_COLS, GRID_ROWS);
+  return buildWorldFromMapData(serializeMapDocument(doc));
 }

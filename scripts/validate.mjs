@@ -38,9 +38,12 @@ try{
   assert.deepEqual(data.FEED_XP,{wood:1,stone:1,dust:5,coin:5,diamond:12});
   assert.deepEqual(Object.keys(data.FEED_XP),data.RESOURCE_KINDS);
   assert.deepEqual(Object.fromEntries(data.NIGHT_WAVE_RECIPES.map(recipe=>[recipe.id,recipe.minTier])),{raiderRush:0,archerLine:0,healerEscort:1,brutePush:2,twoFront:2});
-  assert.equal(data.NIGHT_TIER_BONUS_SPAWNS,3);
-  assert.equal(Object.isFrozen(data.ENEMY_TYPES),true);assert.equal(Object.values(data.ENEMY_TYPES).every(Object.isFrozen),true);
-  assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.spawns)&&recipe.spawns.every(Object.isFrozen)),true);
+  assert.deepEqual(data.WAVE_THREAT_CURVE,{startBudget:12,targetBudget:100,targetWave:8,power:1.5});assert.equal(Object.isFrozen(data.WAVE_THREAT_CURVE),true);
+  assert.equal(Object.isFrozen(data.ENEMY_TYPES),true);assert.equal(Object.values(data.ENEMY_TYPES).every(enemy=>Object.isFrozen(enemy)&&Number.isInteger(enemy.threatCost)&&enemy.threatCost>0&&enemy.spawnWeight>0),true);
+  for(const archetype of ["raider","archer","healer","brute"]){const variants=Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.archetype===archetype&&!enemy.boss).sort((a,b)=>a.variantTier-b.variantTier);assert.deepEqual(variants.map(enemy=>enemy.variantTier),[1,2,3]);assert.deepEqual(variants.map(enemy=>enemy.minWave),[1,4,7]);assert.ok(variants[1].hp>variants[0].hp&&variants[2].hp>variants[1].hp);assert.ok(variants[1].threatCost>variants[0].threatCost&&variants[2].threatCost>variants[1].threatCost);}
+  assert.deepEqual(new Set(Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.variantTier===2).map(enemy=>enemy.variantColor)),new Set(["#3568a8"]));assert.deepEqual(new Set(Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.variantTier===3).map(enemy=>enemy.variantColor)),new Set(["#a23e50"]));
+  {const boss=data.ENEMY_TYPES.bruteBoss;assert.equal(boss.archetype,"brute");assert.equal(boss.boss,true);assert.equal(boss.minWave,5);assert.equal(boss.modelScale,4);assert.equal(boss.size,data.ENEMY_TYPES.brute.size*4);assert.ok(boss.damage>data.ENEMY_TYPES.brute.damage&&boss.hp>data.ENEMY_TYPES.brute.hp);assert.equal(boss.threatCost,20);}assert.deepEqual(data.WAVE_BOSS_SPAWNS,{5:"bruteBoss"});
+  assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.pool)&&recipe.pool.every(type=>data.ENEMY_TYPES[type])),true);
   assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});assert.equal(data.SKILL_POINT_LEVELS,4);
   assert.deepEqual(data.XP_TIERS,[40,100,200,350]);   // dead table, still imported by docs/progression.html and render/scene.js
   assert.equal(Object.isFrozen(data.CHEST),true);assert.equal(Object.isFrozen(data.CHEST.weights),true);assert.equal(Object.isFrozen(data.CHEST.outcomeOdds),true);
@@ -67,16 +70,23 @@ try{
     const baseCell=grid.worldToCell(data.BASE.x,data.BASE.y);
     assert.equal(am.placementFootprintOnLand(authoredWorld,baseCell.cx,baseCell.cy,data.BASE.footprint,placementGrid),true,"base footprint is not entirely on authored land");
     assert.deepEqual([authoredWorld.trees.length,authoredWorld.rocks.length,authoredWorld.diamonds.length,authoredWorld.chests.length,authoredWorld.grass.length],[authoredWorld.targets.treeCount,authoredWorld.targets.rockCount,authoredWorld.targets.diamondCount,authoredWorld.targets.chestCount,authoredWorld.targets.grassCount]);
-    assert.deepEqual(authoredWorld.targets,{treeCount:166,rockCount:50,diamondCount:2,chestCount:1,grassCount:4200},"intentional starter scatter targets changed; review distribution before updating");
+    assert.deepEqual(authoredWorld.targets,{treeCount:225,rockCount:77,diamondCount:2,chestCount:data.CHEST.startingCount+data.CHEST.scatterPerTile*data.MAP_TILES,grassCount:657},"intentional starter scatter targets changed; review distribution before updating");
     for(const landmark of starterDoc.objects.filter(object=>object.kind==="tree"||object.kind==="rock")){const loaded=authoredWorld[`${landmark.kind}s`].find(cell=>cell.cx===landmark.cx&&cell.cy===landmark.cy);assert.ok(loaded,"explicit landmark was not loaded");assert.equal(loaded.variant,landmark.variant,"explicit landmark variant drifted");}
     const starterScatter=am.resolveAuthoredMapScatter(starterDoc);
-    assert.deepEqual(starterScatter.totals,{tree:163,rock:48,grass:4200});
+    assert.deepEqual(starterScatter.totals,{tree:222,rock:75,grass:657});
     const reordered=mapdoc.cloneMapDocument(starterDoc);reordered.scatterRegions.reverse();assert.deepEqual(am.resolveAuthoredMapScatter(reordered),starterScatter,"JSON region order changed resolved resources");
     const rerolled=mapdoc.cloneMapDocument(starterDoc),west=rerolled.scatterRegions.find(region=>region.id==="forest-west");west.seed=(west.seed+1)>>>0;const rerolledScatter=am.resolveAuthoredMapScatter(rerolled);
     assert.deepEqual(rerolledScatter.trees.filter(cell=>cell.regionId==="forest-east"),starterScatter.trees.filter(cell=>cell.regionId==="forest-east"),"local reroll perturbed a disjoint region");
-    assert.ok(authoredWorld.grass.length>1000,"starter vegetation is too sparse to read as Clickyland grass");
-    assert.equal(authoredWorld.chests.length,data.CHEST.startingCount,"starter map must place the starting chest count");
-    for(const cell of authoredWorld.chests){const p=grid.cellToWorld(cell.cx,cell.cy),radius=Math.hypot(p.x-data.BASE.x,p.y-data.BASE.y);assert.ok(radius>=data.CHEST.discoverMinRadius&&radius<=data.CHEST.discoverMaxRadius,"authored chest escaped the discover band");}
+    assert.ok(authoredWorld.grass.length>500,"starter vegetation is too sparse to read as Clickyland grass");
+    // The chest field is world scatter over whatever the map authors: exactly startingCount chests
+    // sit in the discover band (scatter tops the band up when the map authors none), every other
+    // chest is exploration loot strictly beyond it, and none crowd the base inside the minimum.
+    {
+      const radii=authoredWorld.chests.map(cell=>{const p=grid.cellToWorld(cell.cx,cell.cy);return Math.hypot(p.x-data.BASE.x,p.y-data.BASE.y);});
+      assert.equal(radii.filter(radius=>radius>=data.CHEST.discoverMinRadius&&radius<=data.CHEST.discoverMaxRadius).length,data.CHEST.startingCount,"the discover band must hold exactly the starting chest count");
+      assert.equal(radii.filter(radius=>radius>data.CHEST.discoverMaxRadius).length,data.CHEST.scatterPerTile*data.MAP_TILES,"exploration chest count drifted from the authored per-tile rate");
+      assert.equal(radii.some(radius=>radius<data.CHEST.discoverMinRadius),false,"a chest crowded the base inside the discover minimum");
+    }
     const occupied=new Set();
     for(const cell of [...authoredWorld.trees,...authoredWorld.rocks,...authoredWorld.diamonds,...authoredWorld.chests]){
       const address=cell.cy*data.GRID_COLS+cell.cx;
@@ -168,7 +178,7 @@ try{
       if(card.features!==undefined){assert.ok(Array.isArray(card.features)&&card.features.length>0,`card ${card.id} features must be a non-empty array`);assert.ok(card.features.every(feature=>cards.CARD_FEATURES.includes(feature)),`card ${card.id} has an unknown feature`);}
       if(card.ref.startsWith("tower:")){
         const tower=data.TOWER_VARIANTS[card.ref.slice(6)],scored=scoreTower(tower);
-        const targetTag=tower.attackMode==="line"?"piercing":["splash","periodic area","manual area"].includes(tower.attackMode)?"aoe":"single target";
+        const targetTag=tower.attackMode==="line"?"piercing":["splash","periodic area","manual area","chain"].includes(tower.attackMode)?"aoe":"single target";
         assert.ok(Number.isFinite(scored.score)&&scored.score>0,`card ${card.id} has invalid tower score`);
         assert.ok(card.tags?.includes(targetTag),`card ${card.id} must carry its ${targetTag} targeting tag`);
       }
@@ -192,8 +202,14 @@ try{
   assert.equal(sim.state.runMode,"normal");
   assert.equal(sim.damageDummies.length,0);
   assert.equal(sim.showcaseProps.length,0);
-  assert.equal(sim.chests.length,data.CHEST.startingCount);
-  {const chest=sim.chests[0],cell=grid.worldToCell(chest.x,chest.y),center=grid.cellToWorld(cell.cx,cell.cy),radius=sim.distance(chest.x,chest.y,sim.state.camera.x,sim.state.camera.y);assert.deepEqual({x:chest.x,y:chest.y},center);assert.ok(radius>=data.CHEST.discoverMinRadius&&radius<=data.CHEST.discoverMaxRadius);assert.equal(sim.canPlace(chest.x,chest.y,null,null,null,chest),true);assert.equal(sim.canPlace(chest.x,chest.y,"house"),false);assert.equal("contents" in chest,false);assert.equal("outcome" in chest,false);}
+  assert.equal(sim.chests.length,authoredWorld.targets.chestCount);
+  {
+    // Every materialized chest is cell-aligned, placeable in its own footprint, and unresolved.
+    for(const chest of sim.chests){const cell=grid.worldToCell(chest.x,chest.y);assert.deepEqual({x:chest.x,y:chest.y},grid.cellToWorld(cell.cx,cell.cy));assert.equal(sim.canPlace(chest.x,chest.y,null,null,null,chest),true);assert.equal(sim.canPlace(chest.x,chest.y,"house"),false);assert.equal("contents" in chest,false);assert.equal("outcome" in chest,false);}
+    // Exactly one starter chest is discoverable from the opening camera; the rest are exploration loot.
+    const inBand=sim.chests.filter(chest=>{const radius=sim.distance(chest.x,chest.y,sim.state.camera.x,sim.state.camera.y);return radius>=data.CHEST.discoverMinRadius&&radius<=data.CHEST.discoverMaxRadius;});
+    assert.equal(inBand.length,data.CHEST.startingCount);
+  }
   sim.initializeRunMode("normal");
   // ── the starting hand ──
   // With the build shop gone a fresh run can only build out of the hand, so normal initialization
@@ -308,6 +324,70 @@ try{
   }).trim());
   assert.equal(chestResult.cache,data.CHEST.cachePayout);assert.equal(chestResult.pinata,data.CHEST.pinataPayout);
 
+  // Chain lightning: the buff turns a completed swing into full extra swings (own crit rolls) that
+  // cross freely between enemies and resources; the lightning tower chains its authored damage
+  // between combat targets only. Math.random()=>0 forces the proc AND every crit deterministically.
+  const chainResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+    cwd:root,encoding:"utf8",input:`
+      import assert from "node:assert/strict";
+      import * as sim from "./src/game/simulation.js";
+      import * as data from "./src/game/data.js";
+      const oldRandom=Math.random;
+      const enemy=(x,y)=>({combatKind:"enemy",type:"raider",x,y,hp:5,max:5,attackCooldown:0,healCooldown:1,wob:0,flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null});
+      const swing=()=>{sim.primaryPress();sim.update(.02);sim.primaryRelease();};
+      try{
+        sim.initializeRunMode("normal");sim.TUNE.chopTime=.01;Math.random=()=>0;
+        sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=sim.resourceDrops.length=0;sim.state.enemies.length=sim.state.workers.length=0;
+        // A hand-built arena east of the base. Distances author the jump order: from A the tree (40)
+        // outranks B (105); from the tree only B (65) is in the 120 reach (C sits 125 away); from B,
+        // C (60); from C, D (60) — and D back to A is 165, out of reach, so 4 jumps is the ceiling.
+        const bx=data.BASE.x,by=data.BASE.y;
+        const tree={x:bx+256,y:by,hp:3,max:3,stump:0,shake:0,variant:0,footprint:data.RESOURCE_FOOTPRINT};sim.trees.push(tree);
+        const a=enemy(bx+216,by),b=enemy(bx+321,by),c=enemy(bx+381,by),d=enemy(bx+441,by);sim.state.enemies.push(a,b,c,d);
+        // Stacks applied through the debug dealer command — the same applyBuff() path a draft takes.
+        // Jumps EQUAL stacks (chance rises alongside, forced here by the zero roll).
+        assert.equal(sim.debugApplyBuff("bpHouse"),false,"debugApplyBuff must reject non-buffs");
+        for(const id of ["chainLightning","chainLightning","critClicks"])assert.equal(sim.debugApplyBuff(id),true);
+        assert.equal(sim.buffStacks("chainLightning"),2);
+        sim.setPointerWorld(a.x,a.y);swing();
+        assert.equal(sim.lightningArcs.length,2,"two stacks must yield exactly two jumps");
+        assert.equal(a.hp,2,"the initial swing must land a full x3 crit");
+        assert.equal(tree.hp,2,"the chain must strike the resource node");
+        assert.equal(sim.resourceDrops.filter(d=>d.kind==="wood").length,2,"a chained crit chop must add its bonus drop");
+        assert.equal(b.hp,2,"a chained combat hit must deal full crit damage");
+        assert.equal(c.hp,5,"a two-jump chain must not reach the third target");
+        // At the 4-stack cap the same swing runs the full chain: tree, B, C, D.
+        for(const id of ["chainLightning","chainLightning"])assert.equal(sim.debugApplyBuff(id),true);
+        a.hp=b.hp=c.hp=d.hp=5;
+        let arcsBefore=sim.lightningArcs.length;swing();
+        assert.equal(sim.lightningArcs.length-arcsBefore,4,"four stacks must yield exactly four jumps");
+        assert.equal(b.hp,2);assert.equal(c.hp,2);assert.equal(d.hp,2,"the capped chain must reach the fourth jump");
+        // One stack: a single jump into the tree, nothing further.
+        a.hp=b.hp=c.hp=d.hp=5;sim.state.draft.buffs.chainLightning=1;
+        arcsBefore=sim.lightningArcs.length;swing();
+        assert.equal(sim.lightningArcs.length-arcsBefore,1,"one stack must yield exactly one jump");
+        assert.equal(b.hp,5,"a one-jump chain must stop at the resource node");
+        // The tower: authored damage on the aimed target plus chainJumps more, combat targets only —
+        // the tree sits nearest to A and must be skipped in favor of B, then C, then D.
+        delete sim.state.draft.buffs.chainLightning;delete sim.state.draft.buffs.critClicks;
+        a.hp=b.hp=c.hp=d.hp=5;const treeHp=tree.hp;
+        const variant=data.TOWER_VARIANTS.lightning;
+        sim.buildings.push({type:"tower",x:bx+116,y:by,complete:true,pulse:0,tower:{variant:"lightning",cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp},hazard:null});
+        const towerArcsBefore=sim.lightningArcs.length;sim.update(.001);
+        assert.equal(sim.lightningArcs.length-towerArcsBefore,1+variant.chainJumps,"tower bolt must strike its target and every chained foe");
+        assert.equal(a.hp,3);assert.equal(b.hp,3);assert.equal(c.hp,3);assert.equal(d.hp,3);
+        assert.equal(tree.hp,treeHp,"the tower chain must never strike resources");
+        assert.ok(sim.buildings[0].tower.cooldown>0,"the strike must consume the tower cooldown");
+        sim.validateSimulationInvariants();
+        // Arcs are transient run state: they age out on their own and a mode reset clears them.
+        for(let i=0;i<30;i++)sim.update(1/60);
+        assert.equal(sim.lightningArcs.length,0,"arcs must age out");
+        console.log(JSON.stringify({checks:16,capJumps:4}));
+      }finally{Math.random=oldRandom;}
+    `
+  }).trim());
+  assert.equal(chainResult.capJumps,data.CARD_BUFFS.chainJumps+3);
+
   // Focused deterministic regressions run in a clean process so fixtures cannot leak into stress.
   const featureResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
@@ -328,7 +408,7 @@ try{
       try{
         sim.initializeRunMode("normal");
         assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);assert.equal(data.BLUEPRINT_JOB_SLOTS,2);
-        assert.equal(sim.DBG.groundSourcing,true);assert.equal(sim.TUNE.builderSourceRadius,300);
+        assert.equal(sim.DBG.groundSourcing,true);assert.equal(sim.TUNE.builderSourceRadius,400);
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",104,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=false;step();assert.equal(builder.taskTarget,null);assert.ok(builder.carried.wood>0);assert.equal(loose.claimedBy,undefined);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",130,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.taskTarget,loose);assert.equal(loose.claimedBy,builder);assert.equal(store.storage.wood,3);sim.DBG.groundSourcing=false;sim.TUNE.builderSourceRadius=60;step();assert.equal(builder.taskTarget,loose);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=1;const builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.carried.wood,1);}
@@ -384,7 +464,7 @@ try{
     cwd:root,encoding:"utf8",input:`
       import assert from "node:assert/strict";
       import * as sim from "./src/game/simulation.js";
-      import {BASE,FEED_XP,RESOURCE_KINDS,LEVEL_CURVE,SKILL_POINT_LEVELS,NIGHT_WAVE_SPAWNS,NIGHT_TIER_BONUS_SPAWNS} from "./src/game/data.js";
+      import {BASE,FEED_XP,RESOURCE_KINDS,LEVEL_CURVE,SKILL_POINT_LEVELS} from "./src/game/data.js";
       import {cardById} from "./src/game/cards.js";
       const counts=()=>Object.fromEntries(RESOURCE_KINDS.map(kind=>[kind,0]));
       const worker=(load)=>({x:BASE.x,y:BASE.y,postX:BASE.x,postY:BASE.y,spawnSource:null,job:"haul",jobTarget:BASE,homePost:null,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...counts(),...load},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,reposting:false});
@@ -410,26 +490,26 @@ try{
       assert.equal(sim.skillPoints(),0);while(sim.state.level<SKILL_POINT_LEVELS){sim.debugGrantXp(1);drain();}assert.equal(sim.skillPoints(),1);
       while(sim.state.level<6){sim.debugGrantXp(1);drain();}assert.equal(sim.waveTier(),2);assert.equal(sim.skillPoints(),1);
       const first=sim.skillTreeNodes().find(node=>node.status==="available");assert.equal(sim.selectSkillNode(first.id),true);assert.equal(sim.skillPoints(),0);assert.equal(sim.selectSkillNode(sim.skillTreeNodes().find(node=>node.status==="available").id),false);
-      sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,sequence=[];assert.equal(wave.totalSpawns,NIGHT_WAVE_SPAWNS+2*NIGHT_TIER_BONUS_SPAWNS);sim.update(.01);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber);sequence.push(sim.state.enemies[0].type);sim.state.enemies.length=0;sim.update(.01);assert.equal(sim.state.clock.phase,"night","an early clear skipped later scheduled spawns");
-      sim.debugGrantXp(2000);drain();assert.equal(sim.waveTier(),4);assert.equal(wave.totalSpawns,18,"active wave must retain its setup tier");
-      for(let i=1;i<18;i++){sim.update(30/18+.001);assert.equal(sim.state.enemies.length,1);const enemy=sim.state.enemies[0];assert.equal(enemy.waveNightNumber,wave.activeNightNumber,"bonus recipe cycle lost scheduled membership");sequence.push(enemy.type);sim.state.enemies.length=0;}assert.equal(wave.remainingSpawns,0);assert.deepEqual(sequence.slice(12),sequence.slice(0,6),"bonus spawns must cycle recipe types");
+      sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,plan=wave.activePlan,budget=wave.threatBudget;assert.equal(budget,sim.waveThreatBudget(1));assert.equal(plan.entries.reduce((sum,entry)=>sum+entry.threatCost,0),budget);sim.update(.01);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber);sim.state.enemies.length=0;sim.update(.01);assert.equal(sim.state.clock.phase,"night","an early clear skipped later scheduled spawns");
+      sim.debugGrantXp(2000);drain();assert.equal(sim.waveTier(),4);assert.equal(wave.activePlan,plan,"active wave plan changed after leveling");assert.equal(wave.threatBudget,budget);
+      while(wave.remainingSpawns>0){const next=plan.entries[wave.totalSpawns-wave.remainingSpawns];sim.update(Math.max(.001,next.at-wave.elapsed+.001));assert.equal(sim.state.enemies.length,1);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber,"scheduled enemy lost wave membership");sim.state.enemies.length=0;}assert.equal(wave.spawnedThreat,budget);
       // The cap holds however far the level runs.
       sim.debugGrantXp(2000000);drain();assert.ok(sim.state.level>=30);assert.equal(sim.waveTier(),4);
-      sim.validateSimulationInvariants();console.log(JSON.stringify({checks:44,waveSpawns:18,level:sim.state.level}));
+      sim.validateSimulationInvariants();console.log(JSON.stringify({checks:44,waveSpawns:wave.totalSpawns,waveThreat:budget,level:sim.state.level}));
     `
   }).trim());
   const tierOneResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
       import assert from "node:assert/strict";import * as sim from "./src/game/simulation.js";
-      // Level 3 is exactly wave tier 1: the healer escort unlocks and the night gains one bonus batch.
-      sim.initializeRunMode("normal");sim.debugGrantXp(22);assert.equal(sim.state.level,3);assert.equal(sim.waveTier(),1);sim.debugStartWave("healerEscort");assert.equal(sim.state.nightWave.totalSpawns,15);console.log(JSON.stringify({spawns:15}));
+      // Level 3 unlocks the healer pool; wave number—not level—owns its Threat Budget.
+      sim.initializeRunMode("normal");sim.debugGrantXp(22);assert.equal(sim.state.level,3);assert.equal(sim.waveTier(),1);sim.debugStartWave("healerEscort");assert.equal(sim.state.nightWave.activePlan.sourceId,"healerEscort");assert.equal(sim.state.nightWave.threatBudget,sim.waveThreatBudget(1));console.log(JSON.stringify({threat:sim.state.nightWave.threatBudget}));
     `
   }).trim());
   // A calm night measurably shrinks the NEXT wave, and only that one.
   const calmResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
       import assert from "node:assert/strict";import * as sim from "./src/game/simulation.js";
-      import {NIGHT_WAVE_SPAWNS,NIGHT_TIER_BONUS_SPAWNS,CARD_CONSUMABLES} from "./src/game/data.js";
+      import {CARD_CONSUMABLES} from "./src/game/data.js";
       let seed=0x0ca1;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       try{
         sim.initializeRunMode("normal");
@@ -440,11 +520,11 @@ try{
         assert.equal(sim.state.draft.calmNight,false,"a card in hand must not have applied itself");
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="calmNight")),"applied");
         assert.equal(sim.state.draft.calmNight,true);
-        const plain=NIGHT_WAVE_SPAWNS+sim.waveTier()*NIGHT_TIER_BONUS_SPAWNS;
+        const plain=sim.waveThreatBudget(1);
         if(sim.state.clock.phase==="night"){sim.transitionPhase();drainOffers();}
-        sim.transitionPhase();const calm=sim.state.nightWave.totalSpawns;
+        sim.transitionPhase();const calm=sim.state.nightWave.threatBudget;
         assert.equal(calm,Math.max(1,Math.floor(plain*CARD_CONSUMABLES.calmNightFactor)));assert.ok(calm<plain);
-        sim.transitionPhase();drainOffers();sim.transitionPhase();assert.equal(sim.state.nightWave.totalSpawns,plain,"the discount must not carry into a second night");
+        sim.transitionPhase();drainOffers();sim.transitionPhase();assert.equal(sim.state.nightWave.threatBudget,sim.waveThreatBudget(2),"the discount must not carry into a second night");
         console.log(JSON.stringify({plain,calm,levels:sim.state.level}));
       }finally{Math.random=old;}
     `
@@ -456,21 +536,21 @@ try{
     cwd:root,encoding:"utf8",input:`
       import assert from "node:assert/strict";
       import * as sim from "./src/game/simulation.js";
-      import {DAY_DURATION,NIGHT_ENEMY_CAP,NIGHT_WAVE_SPAWNS} from "./src/game/data.js";
+      import {DAY_DURATION,NIGHT_ENEMY_CAP} from "./src/game/data.js";
       let seed=0xc1ea;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       try{
         sim.initializeRunMode("normal");sim.DBG.invulnBase=true;
         sim.update(DAY_DURATION-1);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.remaining,1);sim.update(1);assert.equal(sim.state.clock.phase,"night","the day countdown did not reach dusk at 75 seconds");
-        sim.debugStartWave("raiderRush");const wave=sim.state.nightWave,night=wave.activeNightNumber;
+        sim.debugStartWave("raiderRush");const wave=sim.state.nightWave,night=wave.activeNightNumber,scheduled=wave.totalSpawns;
         assert.equal(sim.state.clock.phase,"night");assert.equal(sim.state.clock.remaining,0);assert.ok(Number.isInteger(night)&&night>0);
         for(let i=0;i<NIGHT_ENEMY_CAP;i++)sim.spawnEnemy("raider");
         assert.equal(sim.state.enemies.every(enemy=>enemy.waveNightNumber===undefined),true,"manual enemies joined the active wave");
         assert.equal(sim.livingActiveWaveEnemies(),0);
         const beforePause={elapsed:wave.elapsed,remaining:wave.remainingSpawns,run:sim.state.clock.elapsed};
         sim.togglePause();sim.update(60);assert.deepEqual({elapsed:wave.elapsed,remaining:wave.remainingSpawns,run:sim.state.clock.elapsed},beforePause,"pause advanced the wave");sim.togglePause();
-        sim.update(46);assert.equal(sim.state.clock.phase,"night","the former fixed boundary ended night");assert.equal(sim.state.clock.remaining,0);assert.equal(wave.remainingSpawns,NIGHT_WAVE_SPAWNS,"the enemy cap failed to delay scheduled spawns");
+        sim.update(46);assert.equal(sim.state.clock.phase,"night","the former fixed boundary ended night");assert.equal(sim.state.clock.remaining,0);assert.equal(wave.remainingSpawns,scheduled,"the enemy cap failed to delay scheduled spawns");
         sim.state.enemies.length=0;sim.update(.01);
-        assert.equal(wave.remainingSpawns,0);assert.equal(sim.livingActiveWaveEnemies(),NIGHT_WAVE_SPAWNS);assert.equal(sim.state.enemies.every(enemy=>enemy.waveNightNumber===night),true,"scheduled spawn lost active-wave membership");
+        assert.equal(wave.remainingSpawns,0);assert.equal(sim.livingActiveWaveEnemies(),scheduled);assert.equal(sim.state.enemies.every(enemy=>enemy.waveNightNumber===night),true,"scheduled spawn lost active-wave membership");
         // Exhausted schedule is insufficient while one wave member survives.
         const survivor=sim.state.enemies[0];sim.state.enemies.splice(1);sim.update(10);
         assert.equal(sim.state.clock.phase,"night");assert.equal(sim.livingActiveWaveEnemies(),1);assert.equal(sim.state.clock.remaining,0);
@@ -481,7 +561,7 @@ try{
         sim.update(1/60);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.completedNights,1);assert.equal(wave.activeNightNumber,null);assert.equal(sim.state.enemies.includes(manual),true,"manual enemy blocked or disappeared at dawn");
         assert.equal(sim.draftKind(),"dawn");const reward=sim.draftPending();assert.ok(reward);sim.update(10);assert.equal(sim.state.clock.completedNights,1);assert.equal(sim.draftPending(),reward,"clearance duplicated the dawn reward");
         sim.validateSimulationInvariants();
-        console.log(JSON.stringify({night,elapsed:wave.elapsed,spawns:NIGHT_WAVE_SPAWNS,rewards:1,manualSurvived:sim.state.enemies.includes(manual)}));
+        console.log(JSON.stringify({night,elapsed:wave.elapsed,spawns:scheduled,rewards:1,manualSurvived:sim.state.enemies.includes(manual)}));
       }finally{Math.random=old;}
     `
   }).trim());
@@ -748,7 +828,7 @@ try{
           };
           const first=houseAt(300,300);
           assert.equal(first.type,"house");
-          assert.deepEqual(first.cost,{wood:data.HOUSE_COST.wood,stone:data.HOUSE_COST.stone},"the first house card must charge the base house cost");
+          assert.deepEqual(first.cost,{...data.STARTING_HOUSE_COST},"the first house card must charge only the starting house cost");
           deliver(first,first.cost);assert.equal(first.complete,true);
           const second=houseAt(500,300);
           assert.deepEqual(second.cost,{wood:data.HOUSE_COST.wood+data.HOUSE_COST_ESCALATION.wood,stone:data.HOUSE_COST.stone+data.HOUSE_COST_ESCALATION.stone},"the second house card must charge the escalated cost");
@@ -892,7 +972,7 @@ try{
     `
   }).trim());
 
-  console.log(`validate ok | syntax ${jsFiles.length} | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level waves ${tierOneResult.spawns}/${xpResult.waveSpawns} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
+  console.log(`validate ok | syntax ${jsFiles.length} | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level wave threat ${tierOneResult.threat}/${xpResult.waveThreat} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

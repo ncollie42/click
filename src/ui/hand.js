@@ -68,7 +68,7 @@ let spendWatch=null;    // id of a card mid-placement; renderHand() flies it out
 // ── the card's picture ──────────────────────────────────────────────────────
 // src/game/cards.js authors the card's MEANING (category, rarity, text, charges) and no
 // presentation at all, so the three things a face needs beyond that are made here — for the whole
-// 57-card registry, not a hand-picked subset, because any inPool card can turn up in an offer.
+// card registry, not a hand-picked subset, because any inPool card can turn up in an offer.
 //
 // Card ids are camelCase and the whole UI is lowercase, so an id is split at its humps rather than
 // flattened into one word: chopYield -> "chop yield". Nothing else renames a card.

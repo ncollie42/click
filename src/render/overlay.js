@@ -477,7 +477,7 @@ function drawNightTelegraph(){
   // Spawning is a ring around the base with no direction, so the telegraph is the
   // full screen border rather than one warned edge.
   const clock=state.clock,wave=state.nightWave;
-  if(clock.phase!=="day"||clock.remaining>NIGHT_TELEGRAPH_TIME||!wave.upcomingRecipe)return;
+  if(clock.phase!=="day"||clock.remaining>NIGHT_TELEGRAPH_TIME||!wave.upcomingPlan)return;
   const thickness=18,alpha=.42+Math.sin(clock.remaining*5)*.14;
   ctx.fillStyle="rgba(202,72,48,"+alpha+")";
   ctx.fillRect(0,0,VIEW_W,thickness);ctx.fillRect(0,VIEW_H-thickness,VIEW_W,thickness);

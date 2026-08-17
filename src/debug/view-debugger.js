@@ -12,17 +12,19 @@
 //              write DBG (see that object's rule: never authored data) and its
 //              buttons call the same entry points play does. Its bindings are the
 //              last control group in this file, under the GAMEPLAY PANE banner.
-//   perf — read-only frame cadence and renderer resource counts.
+//   threat — live future-wave difficulty controls plus curve/timeline preview.
+//   perf — frame-stage timings, scene/entity census, and explicit render-isolation controls.
 // bindV() covers range / checkbox / select; bindBtn() covers plain buttons.
 //
 // Ownership / data flow
 //   Reads:    `state` and `view` for the two readouts that mirror live camera values, plus the
-//             authored tables (ENEMY_TYPES, NIGHT_WAVE_RECIPES, RESOURCE_KINDS) the selects and
-//             grant buttons are filled from. All read-only: nothing here may mutate authored data.
+//             authored tables (ENEMY_TYPES, NIGHT_WAVE_RECIPES, WAVE_THREAT_CURVE, RESOURCE_KINDS)
+//             the selects, curve preview, and grant buttons read. Authored data remains immutable.
 //   Writes:   every value a binding writes is either a property on a mutable holder exported by a
 //             render module (view, VIEW_TUNE, IND, BARS, DAMAGE_TEXT, BADGE), a property on the simulation's
 //             tunable holders (TUNE, DBG), or a setter a module exposes (setOrthoCamera,
-//             setShadows, setOutlines, setSelectorPreview, setCapacity, setPins). None of them is a
+//             setWaveThreatCurve, setShadows, setOutlines, setSelectorPreview, setCapacity, setPins).
+//             None of them is a
 //             bare imported binding: those are read-only, and assigning to one throws.
 //   Asks:     HOOKS.resizeView() — injected by main.js. Toggling the orthographic camera needs the
 //             ONE resize path (scene first, then the overlay with the same box), and main.js owns
@@ -46,24 +48,25 @@
 import {
   RESOURCE_KINDS,
   ENEMY_TYPES,
-  NIGHT_WAVE_RECIPES
+  NIGHT_WAVE_RECIPES,
+  WAVE_THREAT_CURVE,DAY_DURATION,NIGHT_WAVE_WINDOW
 } from "../game/data.js";
 // The card catalog, read for the dealer grid only: one chip per authored row, never a hand-picked
 // subset, so a card added to the registry is dealable the day it lands. Read-only, like every other
 // authored table this panel touches.
 import {CARDS} from "../game/cards.js";
 import {
-  TUNE, DBG, state, xp, waveTier, skillPoints, levelState,
-  setCameraZoom, setCapacity, openSkillTree,
+  TUNE, DBG, state, xp, waveTier, waveThreatBudget, skillPoints, levelState, simulationEntityDiagnostics, buffStacks,
+  setCameraZoom, setCapacity, openSkillTree, togglePause,
   // debug entry points (view panel > gameplay)
   spawnEnemy, debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
-  debugStartWave, debugClearEnemies, debugHealAll, debugDealCard, debugClearHand
+  setWaveThreatCurve, debugStartWave, debugClearEnemies, debugHealAll, debugDealCard, debugApplyBuff, debugClearHand
 } from "../game/simulation.js";
 import {
   view, VIEW_TUNE, IND,
   placeCamera, setOrthoCamera, setShadows, setSelectorPreview,
   setPins, scanSubjects, scanBlockers, countVisible, updateWorldMatrices,
-  terrainRenderDiagnostics
+  terrainRenderDiagnostics, setWaterPrepass, setRenderPixelRatio
 } from "../render/scene.js";
 import {setOutlines, outlineMat} from "../render/models.js";
 import {BARS, BADGE, BADGE_ICON_RATIO, DAMAGE_TEXT} from "../render/overlay.js";
@@ -78,8 +81,8 @@ const $v = id => document.getElementById(id);
 
 // Module-private orchestration state. None of it is exported: an importer cannot reassign an
 // imported binding, so every one of these would have to become a holder the moment it left.
-let scanData = [], scanTimer = 0, scanPending = false, frameTick = 0;
-let perfFrames = [], perfLastReadout = 0;
+let scanData = [], scanTimer = 0, scanPending = false, frameTick = 0, liveVisibility = false;
+let perfFrames = [], perfSamples = [], perfLastReadout = 0;
 let vPanes = [], subtabState = {};
 const boundDefaults = new Map();
 
@@ -249,12 +252,50 @@ function fillSelect(id, items){
 
 // ── the card dealer (gameplay > cards) ──────────────────────────────────────
 // A chip per registry card, grouped by category in the registry's own order, labelled with the id
-// because that is what the rest of the debugger speaks. Clicking one calls debugDealCard(), the
-// same command the ?draftDemo console helpers use, so a dealt card is an ordinary hand entry.
-// Only a consumable or a blueprint can be HELD — a buff applies on the draft and an aura has no
-// implementation yet — so those chips are drawn (the grid is the whole catalog) but disabled.
+// because that is what the rest of the debugger speaks. Clicking a consumable/blueprint calls
+// debugDealCard() — the same command the ?draftDemo console helpers use — so a dealt card is an
+// ordinary hand entry. Clicking an IMPLEMENTED buff calls debugApplyBuff(): one stack through the
+// ordinary applyBuff() path, uncapped on purpose, with the chip repainting its ×stacks tally.
+// (The tally repaints on click only, so it can go stale across a run reset — reopen to refresh.)
+// Auras and unimplemented buffs are drawn (the grid is the whole catalog) but disabled.
 const DEALER_GROUPS=[["blueprint","blueprints"],["consumable","consumables"],["aura","auras"],["buff","buffs"]];
 const DEALABLE=new Set(["consumable","blueprint"]);
+// ── threat-curve preview ────────────────────────────────────────────────────
+// Earliest means every prior wave clears by the end of its 30-second spawn window. Real timestamps
+// move later when enemies survive; this is a curve ruler, not a promise about combat duration.
+function formatTimelineTime(totalSeconds){
+  const seconds=Math.max(0,Math.round(totalSeconds)),minutes=Math.floor(seconds/60);
+  return minutes+":"+String(seconds%60).padStart(2,"0");
+}
+function earliestWaveStart(wave){return DAY_DURATION+(wave-1)*(DAY_DURATION+NIGHT_WAVE_WINDOW);}
+function drawThreatCurve(selectedWave){
+  const canvas=$v("vThreatChart"),g=canvas.getContext("2d"),width=canvas.width,height=canvas.height,pad=10,maxWave=Number($v("vThreatWave").max);
+  const budgets=Array.from({length:maxWave},(_,index)=>waveThreatBudget(index+1)),maxBudget=Math.max(...budgets);
+  g.clearRect(0,0,width,height);g.strokeStyle="#4d573b";g.lineWidth=1;g.beginPath();g.moveTo(pad,height-pad);g.lineTo(width-pad,height-pad);g.lineTo(width-pad,pad);g.stroke();
+  const point=wave=>({x:pad+(wave-1)/(maxWave-1)*(width-pad*2),y:height-pad-waveThreatBudget(wave)/maxBudget*(height-pad*2)});
+  g.strokeStyle="#d4a443";g.lineWidth=2;g.beginPath();
+  for(let wave=1;wave<=maxWave;wave++){const p=point(wave);if(wave===1)g.moveTo(p.x,p.y);else g.lineTo(p.x,p.y);}g.stroke();
+  const selected=point(selectedWave);g.fillStyle="#fff1c7";g.beginPath();g.arc(selected.x,selected.y,3,0,Math.PI*2);g.fill();
+}
+function renderThreatPreview(wave){
+  const threat=waveThreatBudget(wave),time=formatTimelineTime(earliestWaveStart(wave));
+  $v("vThreatHeroWave").textContent=wave;
+  $v("vThreatHeroBudget").textContent=threat;
+  $v("vThreatHeroTime").textContent=time;
+  const body=$v("vThreatGrid");body.replaceChildren();
+  const rows=Math.max(30,WAVE_THREAT_CURVE.targetWave);
+  for(let value=1;value<=rows;value++){
+    const row=document.createElement("tr");if(value===wave)row.className="on";
+    for(const text of [value,waveThreatBudget(value),formatTimelineTime(earliestWaveStart(value))]){const cell=document.createElement("td");cell.textContent=text;row.appendChild(cell);}
+    body.appendChild(row);
+  }
+  drawThreatCurve(wave);
+}
+function tuneThreatCurve(patch){
+  if(setWaveThreatCurve(patch))renderThreatPreview(Number($v("vThreatWave").value));
+}
+function describeThreatPower(value){return value.toFixed(2)+(Math.abs(value-1)<.001?" · linear":value>1?" · ease-in":" · front-loaded");}
+
 function buildCardDealer(){
   const root=$v("vCardDealer");
   root.replaceChildren();
@@ -269,7 +310,13 @@ function buildCardDealer(){
       chip.title=card.rarity+" · "+card.text+(card.inPool?"":" · out of pool");
       if(!card.inPool)chip.classList.add("off-pool");
       if(DEALABLE.has(category))chip.addEventListener("click",()=>{debugDealCard(card.id);});
-      else{chip.disabled=true;chip.title=card.rarity+" · "+card.text+" · not holdable (applies on draft)";}
+      else if(category==="buff"&&card.implemented){
+        const paint=()=>{const stacks=buffStacks(card.id);chip.textContent=stacks>0?card.id+" ×"+stacks:card.id;};
+        paint();
+        chip.title=card.rarity+" · "+card.text+" · applies one stack now (debug stacks ignore the cap)";
+        chip.addEventListener("click",()=>{if(debugApplyBuff(card.id))paint();});
+      }
+      else{chip.disabled=true;chip.title=card.rarity+" · "+card.text+(category==="buff"?" · not implemented yet":" · not holdable (applies on draft)");}
       grid.appendChild(chip);
     }
     root.appendChild(grid);
@@ -288,7 +335,8 @@ function bindControls(){
   bindV("vOrbit", v=>{ view.orbit=v; });
   bindV("vHeight",v=>{ view.heightScale=v; scheduleScan(); updateReadout(); }, v=>v+"%");
   bindV("vShadow",v=>{ setShadows(v); });
-  bindV("vPins",  v=>{ view.ghostPins=v; });
+  bindV("vPins",  v=>{ view.ghostPins=v; if(!v)setPins([]); });
+  bindV("vLiveVisibility",v=>{ liveVisibility=v; frameTick=0; if(!v)setPins([]); });
 
   // ── pickup / harvest: these drive real simulation constants, not just visuals ──
   bindV("vCap",   v=>{ setCapacity(v); },        v=>v);
@@ -302,6 +350,13 @@ function bindControls(){
   bindV("vShotSize",  v=>{ VIEW_TUNE.shotSize=v; },  v=>v.toFixed(1)+"x");
   bindV("vOutline",   v=>{ setOutlines(v); });
   bindV("vOutlineW",  v=>{ outlineMat.uniforms.thickness.value=v; }, v=>v.toFixed(3));
+  bindV("vWaterPrepass",v=>{ setWaterPrepass(v); });
+  // Unlike authored style controls, the initial ratio belongs to the current display. Seed the
+  // range before bindV captures its baseline; moving it then deliberately overrides device DPR.
+  $v("vPixelRatio").removeAttribute("value");
+  $v("vPixelRatio").value=terrainRenderDiagnostics().pixelRatio;
+  bindV("vPixelRatio",v=>{ setRenderPixelRatio(v); HOOKS.resizeView(); },v=>v.toFixed(2)+"x");
+  bindBtn("vPerfPause",togglePause);
   // ── ground selectors: presentation only, see the IND block in src/render/scene.js ──
   // Owned by the `selectors` pane (see the tab-ownership list above #vPanes; this block and that pane
   // are the two halves of the same concern and nothing else should write IND).
@@ -352,6 +407,13 @@ function bindControls(){
   bindV("vBadgeBox",  v=>{ BADGE.box=v; BADGE.icon=v*BADGE_ICON_RATIO; }, v=>v+"px");
   bindV("vBadgeDrop", v=>{ BADGE.drop=v; },                              v=>v+"px");
   bindV("vBadgeFill", v=>{ BADGE.fill="rgba("+BADGE.fillRGB+","+v+")"; }, v=>v.toFixed(2));
+
+  // ── threat curve: future plans update live; wave preview itself is read-only ──
+  bindV("vThreatStart", value=>tuneThreatCurve({startBudget:value}), value=>value+" threat");
+  bindV("vThreatTarget", value=>tuneThreatCurve({targetBudget:value}), value=>value+" threat");
+  bindV("vThreatTargetWave", value=>tuneThreatCurve({targetWave:value}), value=>"wave "+value);
+  bindV("vThreatPower", value=>tuneThreatCurve({power:value}), describeThreatPower);
+  bindV("vThreatWave", renderThreatPreview, null, false);
 
   // ═════════════════════════════════════════════════════════════════════════
   // GAMEPLAY PANE
@@ -493,7 +555,7 @@ function updateReadout(){
  * it raycasts every clickable thing. Must land BEFORE the draw call — it adds pins to the scene.
  */
 export function tickVisibility(){
-  if(++frameTick % 15 === 0) measureNow();
+  if(liveVisibility&&++frameTick % 15 === 0) measureNow();
 }
 /** Drain a scan a slider scheduled. Runs after the frame is on screen, never during it. */
 export function drainScans(){
@@ -505,10 +567,11 @@ export function drainScans(){
  * frame and must not inflate this number. DOM and renderer diagnostics refresh at 4 Hz; the frame
  * timestamps retain only the rolling one-second window.
  */
-export function tickPerformance(now){
-  perfFrames.push(now);
+export function tickPerformance(now,timings){
+  perfFrames.push(now);perfSamples.push({now,...timings});
   const cutoff=now-1000;
   while(perfFrames.length>1&&perfFrames[0]<cutoff)perfFrames.shift();
+  while(perfSamples.length>1&&perfSamples[0].now<cutoff)perfSamples.shift();
   if(now-perfLastReadout<250)return;
   perfLastReadout=now;
 
@@ -522,10 +585,28 @@ export function tickPerformance(now){
     $v("vPerfAverage").textContent=(elapsed/intervals.length).toFixed(1)+" ms";
     $v("vPerfP95").textContent=p95.toFixed(1)+" ms";
   }
-  const diagnostics=terrainRenderDiagnostics();
-  $v("vPerfDrawCalls").textContent=diagnostics.drawCalls;
-  $v("vPerfGeometries").textContent=diagnostics.geometries;
+  const mean=key=>perfSamples.reduce((sum,sample)=>sum+(sample[key]||0),0)/perfSamples.length;
+  for(const [id,key] of [["vPerfSimulation","simulationMs"],["vPerfSceneSync","sceneSyncMs"],
+    ["vPerfVisibility","visibilityMs"],["vPerfRender","renderMs"],["vPerfUi","uiMs"],["vPerfWork","workMs"]])
+    $v(id).textContent=mean(key).toFixed(2)+" ms";
+
+  const entities=simulationEntityDiagnostics(),diagnostics=terrainRenderDiagnostics();
+  $v("vPerfEntities").textContent=entities.total;
+  $v("vPerfUnits").textContent=entities.workers+" / "+entities.enemies;
+  $v("vPerfWorld").textContent=entities.buildings+" / "+entities.resourceNodes;
+  $v("vPerfTransient").textContent=entities.drops+" / "+entities.transients;
+  $v("vPerfSceneObjects").textContent=diagnostics.sceneObjects+" / "+diagnostics.meshes;
+  $v("vPerfVisibleMeshes").textContent=diagnostics.visibleMeshes+" / "+diagnostics.shadowCasters;
+  $v("vPerfMeshKinds").textContent=diagnostics.outlines+" / "+diagnostics.instancedMeshes;
+  $v("vPerfDrawCalls").textContent=diagnostics.drawCalls.toLocaleString();
+  $v("vPerfTriangles").textContent=diagnostics.triangles.toLocaleString();
+  $v("vPerfGeometries").textContent=diagnostics.geometries+" / "+diagnostics.materials;
   $v("vPerfTextures").textContent=diagnostics.textures;
+  $v("vPerfBuffer").textContent=diagnostics.bufferWidth+" × "+diagnostics.bufferHeight;
+  $v("vPerfPauseState").textContent=state.paused?"paused":"running";
+  $v("vPerfPause").textContent=state.paused?"resume simulation":"pause simulation";
+  const memory=performance.memory;
+  $v("vPerfHeap").textContent=memory?(memory.usedJSHeapSize/1048576).toFixed(1)+" / "+(memory.jsHeapSizeLimit/1048576).toFixed(0)+" MiB":"unsupported";
 }
 
 // ── registration ────────────────────────────────────────────────────────────

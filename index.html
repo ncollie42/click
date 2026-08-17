@@ -35,11 +35,11 @@
                           and the card dealer.
                           Its flags live in DBG and its buttons call the same
                           entry points play does; it authors nothing itself.
-             perf       — rolling RAF cadence and renderer resource readouts.
+             perf       — frame-stage timings, entity/scene census, and isolation switches.
              Contextual subgroup order: visibility scan/readability; input
              hand/click/projectiles; overlays damage/bars/badge; gameplay
-             economy/builders/time/combat/population/cards. Camera, selectors, and perf
-             intentionally have no subgroups.
+             economy/builders/time/combat/population/cards; perf frame/load/isolate. Camera and
+             selectors intentionally have no subgroups.
              Ownership is one-way and exclusive: non-gameplay panes only read diagnostics or write
              their own presentation bag (selectors -> IND / SEL_PREVIEW,
              overlays -> BARS / DAMAGE_TEXT / BADGE, and so on), never a simulation value;
@@ -73,10 +73,10 @@
           <h4>mitigations</h4>
           <label><span class="row"><span>object height</span><span id="o_vHeight"></span></span>
             <input autocomplete="off" type="range" id="vHeight" min="30" max="130" step="5" value="100"></label>
-          <label class="chk"><input autocomplete="off" type="checkbox" id="vShadow" checked><span>shadows</span></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vPins"><span>mark occluded</span></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vLiveVisibility"><span>continuous visibility scan</span></label>
+          <div class="vPerfNote">continuous scan is intentionally off: raycasts scale with subjects × mesh blockers</div>
           <h4>readability</h4>
-          <label class="chk"><input autocomplete="off" type="checkbox" id="vOutline" checked><span>mesh outlines</span></label>
           <label><span class="row"><span>outline weight</span><span id="o_vOutlineW"></span></span>
             <input autocomplete="off" type="range" id="vOutlineW" min="0.01" max="0.2" step="0.005" value="0.05"></label>
           </div>
@@ -265,16 +265,82 @@
           </div>
         </section>
 
+        <section class="pane" data-tab="threat">
+          <h4>difficulty controls</h4>
+          <label><span class="row"><span>starting threat</span><span id="o_vThreatStart"></span></span>
+            <input autocomplete="off" type="range" id="vThreatStart" min="1" max="50" step="1" value="12"></label>
+          <label><span class="row"><span>target threat</span><span id="o_vThreatTarget"></span></span>
+            <input autocomplete="off" type="range" id="vThreatTarget" min="50" max="500" step="5" value="100"></label>
+          <label><span class="row"><span>reach target at</span><span id="o_vThreatTargetWave"></span></span>
+            <input autocomplete="off" type="range" id="vThreatTargetWave" min="2" max="30" step="1" value="8"></label>
+          <label><span class="row"><span>curve power</span><span id="o_vThreatPower"></span></span>
+            <input autocomplete="off" type="range" id="vThreatPower" min="0.25" max="3" step="0.05" value="1.5"></label>
+          <canvas id="vThreatChart" width="220" height="80" aria-label="wave threat curve"></canvas>
+          <h4>curve preview</h4>
+          <label><span class="row"><span>wave</span><span id="o_vThreatWave"></span></span>
+            <input autocomplete="off" type="range" id="vThreatWave" min="1" max="30" step="1" value="8"></label>
+          <div id="vThreatHero">
+            <span>wave <b id="vThreatHeroWave">8</b></span>
+            <span><b id="vThreatHeroBudget">100</b> threat</span>
+            <span><b id="vThreatHeroTime">13:30</b> earliest</span>
+          </div>
+          <div class="vThreatFormula">budget = start + (target − start) × t<sup>power</sup></div>
+          <div class="vPerfNote">changes recompose the next wave; an active wave stays fixed</div>
+          <div class="vPerfNote">timestamps assume each prior wave clears within its 30s spawn window</div>
+          <h4>wave table</h4>
+          <table id="vThreatTable">
+            <thead><tr><th>wave</th><th>threat</th><th>earliest</th></tr></thead>
+            <tbody id="vThreatGrid"></tbody>
+          </table>
+        </section>
+
         <section class="pane" data-tab="perf">
-          <h4>frame</h4>
-          <div id="vPerfHero"><b id="vPerfFps">&mdash;</b><span>fps</span></div>
-          <div class="row"><span>average interval</span><span id="vPerfAverage">&mdash;</span></div>
-          <div class="row"><span>p95 interval</span><span id="vPerfP95">&mdash;</span></div>
-          <div class="vPerfNote">rolling 1s RAF cadence</div>
-          <h4>renderer</h4>
-          <div class="row"><span>draw calls</span><span id="vPerfDrawCalls">&mdash;</span></div>
-          <div class="row"><span>geometries</span><span id="vPerfGeometries">&mdash;</span></div>
-          <div class="row"><span>textures</span><span id="vPerfTextures">&mdash;</span></div>
+          <div class="vSubpane" data-subtab="frame">
+            <h4>frame cadence</h4>
+            <div id="vPerfHero"><b id="vPerfFps">&mdash;</b><span>fps</span></div>
+            <div class="row"><span>average interval</span><span id="vPerfAverage">&mdash;</span></div>
+            <div class="row"><span>p95 interval</span><span id="vPerfP95">&mdash;</span></div>
+            <h4>CPU stages · rolling mean</h4>
+            <div class="row"><span>simulation</span><span id="vPerfSimulation">&mdash;</span></div>
+            <div class="row"><span>scene sync</span><span id="vPerfSceneSync">&mdash;</span></div>
+            <div class="row"><span>visibility scan</span><span id="vPerfVisibility">&mdash;</span></div>
+            <div class="row"><span>render submit</span><span id="vPerfRender">&mdash;</span></div>
+            <div class="row"><span>2D + UI</span><span id="vPerfUi">&mdash;</span></div>
+            <div class="row"><span>measured CPU work</span><span id="vPerfWork">&mdash;</span></div>
+            <div class="vPerfNote">CPU wall times; render submit does not measure asynchronous GPU completion</div>
+          </div>
+          <div class="vSubpane" data-subtab="load">
+            <h4>simulation records</h4>
+            <div class="row"><span>total</span><span id="vPerfEntities">&mdash;</span></div>
+            <div class="row"><span>workers / enemies</span><span id="vPerfUnits">&mdash;</span></div>
+            <div class="row"><span>buildings / nodes</span><span id="vPerfWorld">&mdash;</span></div>
+            <div class="row"><span>drops / transients</span><span id="vPerfTransient">&mdash;</span></div>
+            <h4>submitted frame</h4>
+            <div class="row"><span>draw calls</span><span id="vPerfDrawCalls">&mdash;</span></div>
+            <div class="row"><span>triangles</span><span id="vPerfTriangles">&mdash;</span></div>
+            <h4>scene allocation</h4>
+            <div class="row"><span>objects / meshes</span><span id="vPerfSceneObjects">&mdash;</span></div>
+            <div class="row"><span>visible / shadow casters</span><span id="vPerfVisibleMeshes">&mdash;</span></div>
+            <div class="row"><span>outline / instanced meshes</span><span id="vPerfMeshKinds">&mdash;</span></div>
+            <div class="row"><span>geometries / materials</span><span id="vPerfGeometries">&mdash;</span></div>
+            <div class="row"><span>textures</span><span id="vPerfTextures">&mdash;</span></div>
+            <div class="row"><span>JS heap</span><span id="vPerfHeap">unsupported</span></div>
+          </div>
+          <div class="vSubpane" data-subtab="isolate">
+            <h4>simulation</h4>
+            <button id="vPerfPause" type="button">pause simulation</button>
+            <div class="row"><span>state</span><span id="vPerfPauseState">running</span></div>
+            <h4>render passes</h4>
+            <label class="chk"><input autocomplete="off" type="checkbox" id="vShadow" checked><span>shadows</span></label>
+            <label class="chk"><input autocomplete="off" type="checkbox" id="vOutline" checked><span>mesh outlines</span></label>
+            <label class="chk"><input autocomplete="off" type="checkbox" id="vWaterPrepass" checked><span>water depth pre-pass</span></label>
+            <h4>resolution</h4>
+            <label><span class="row"><span>pixel ratio</span><span id="o_vPixelRatio"></span></span>
+              <input autocomplete="off" type="range" id="vPixelRatio" min="0.5" max="2" step="0.25" value="2"></label>
+            <div class="row"><span>drawing buffer</span><span id="vPerfBuffer">&mdash;</span></div>
+            <h4>diagnosis</h4>
+            <div class="vPerfGuide">Pause first. Toggle one option, wait one second.<br><b>outline/shadow gain</b> → draw submission or raster cost.<br><b>pixel-ratio gain</b> → GPU/fill-rate cost.<br><b>pause gain</b> → simulation cost.<br><b>water gain</b> → depth-pass GPU cost.</div>
+          </div>
         </section>
 
       </div>
@@ -304,6 +370,7 @@
     </section>
     <div id="prompt"><kbd>release right</kbd><span></span></div>
     <div id="toast"></div>
+    <output id="buildVersion" aria-label="build version">build …</output>
     <!-- The hand row. src/ui/hand.js owns #handCards' children, fitted no-overlap geometry, and
          authored pose animations. #handDock scrolls only after cards reach their readable minimum;
          it is pointer-transparent and only cards take pointer hits, preserving battlefield gaps. -->

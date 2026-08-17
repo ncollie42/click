@@ -53,9 +53,9 @@ export const CARDS=[
   {id:"critClicks",   category:"buff", rarity:"rare",   text:"10% crit chance: +1 resource drop, ×3 combat damage",
    stacks:3, ref:"concept:crit", model:{target:"hand",mult:1.2},
    implemented:true, inPool:true, notes:"resource crits add one physical drop; combat crits multiply damage by three"},
-  {id:"chainLightning", category:"buff", rarity:"epic", text:"click hits have a chance to chain lightning",
-   tags:["chain","lightning"], stacks:1, ref:"concept:chainLightning", model:null,
-   implemented:false, inPool:false, notes:"proc chance, chain count, range, and chained damage TBD"},
+  {id:"chainLightning", category:"buff", rarity:"epic", text:"swings can arc lightning between nearby targets",
+   tags:["chain","lightning"], stacks:4, ref:"concept:chainLightning", model:null,
+   implemented:true, inPool:true, notes:"stack N procs at 20%+10%(N-1) and throws N jumps — 20%/1 to 50%/4 at cap; jumps are full swings (own crit roll) crossing freely between enemies and resources (CARD_BUFFS.chain* in data.js)"},
   {id:"loadedDrop", category:"buff", rarity:"epic", text:"dropping carried resources deals 1 area damage per resource",
    tags:["aoe","hand"], features:["resources","physical space"], stacks:1, ref:"concept:loadedDrop", model:null,
    implemented:false, inPool:false, notes:"uses hand count before the drop; prevent repeated pickup/drop from dealing free infinite damage"},
@@ -213,8 +213,9 @@ export const CARDS=[
   {id:"bpBomb",     category:"blueprint", rarity:"epic",   text:"place a bomb tower blueprint",    tags:["aoe"], features:["physical space"], charges:1, ref:"tower:bomb",     model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the bomb tower upgrade, accepted for you"},
   {id:"bpLaser",    category:"blueprint", rarity:"epic",   text:"place a laser tower blueprint",   tags:["piercing"], features:["physical space"], charges:1, ref:"tower:laser",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the laser tower upgrade, accepted for you"},
   {id:"bpPulse",    category:"blueprint", rarity:"epic",   text:"place a pulse tower blueprint",   tags:["aoe"], features:["physical space"], charges:1, ref:"tower:pulse",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the pulse tower upgrade, accepted for you"},
+  {id:"bpLightning",category:"blueprint", rarity:"epic",   text:"place a lightning tower blueprint",tags:["aoe","chain","lightning"], features:["physical space"], charges:1, ref:"tower:lightning", model:null, implemented:true, inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the lightning tower upgrade, accepted for you"},
   {id:"bpShock",    category:"blueprint", rarity:"legendary", text:"place a shock tower blueprint",tags:["aoe"], features:["physical space"], charges:1, ref:"tower:shock",    model:null, implemented:true,  inPool:true, notes:"one site on the tower footprint; materials still apply — basic tower cost, then the shock tower upgrade, accepted for you; the finished tower stays movable"},
-  {id:"bpObelisk",  category:"blueprint", rarity:"rare",   text:"place an obelisk blueprint",      features:["physical space"], charges:1, ref:"building:obelisk", model:null, implemented:true, inPool:true, notes:"one obelisk site at its authored cost; materials still apply. it carries the global-upgrade shop"},
+  {id:"bpObelisk",  category:"blueprint", rarity:"rare",   text:"place an obelisk blueprint",      features:["physical space"], charges:1, ref:"building:obelisk", model:null, implemented:true, inPool:false, notes:"disabled: direct tower upgrading is gone and the obelisk shop is not used"},
 
   // ── C · blueprints — workers (don't exist yet) ────────────────────────────
   {id:"bpBarracks", category:"blueprint", rarity:"rare", text:"makes warriors",

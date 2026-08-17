@@ -48,9 +48,16 @@ const manifest = {
     {id:"basic",x:96,y:96},{id:"turret",x:416,y:96},{id:"outpost",x:736,y:96},{id:"watch",x:1056,y:96},{id:"sniper",x:1376,y:96},
     {id:"brick",x:96,y:256},{id:"aggro",x:416,y:256},{id:"fire",x:736,y:256},{id:"freeze",x:1056,y:256},{id:"tarTower",x:1376,y:256},
     {id:"teleport",x:96,y:416},{id:"bomb",x:416,y:416},{id:"laser",x:736,y:416},{id:"pulse",x:1056,y:416},{id:"shock",x:1376,y:416},
+    // Row 4 sits below the grid, between the resources and units sections: the whole manifest must
+    // stay inside the 1-tile map (1536x1024 minus the build margin) so the showcase loads at every
+    // ?mapSize, and the three authored rows are full.
+    {id:"lightning",x:608,y:576},
   ].map(t=>({...t,section:"towers",label:t.id})),
   enemies:[
-    {id:"raider",x:960,y:640},{id:"archer",x:1088,y:640},{id:"healer",x:1216,y:640},{id:"brute",x:1344,y:640},
+    {id:"raider",x:960,y:544},{id:"archer",x:1088,y:544},{id:"healer",x:1216,y:544},{id:"brute",x:1344,y:544},
+    {id:"raiderVeteran",x:960,y:608},{id:"archerVeteran",x:1088,y:608},{id:"healerVeteran",x:1216,y:608},{id:"bruteVeteran",x:1344,y:608},
+    {id:"raiderElite",x:960,y:672},{id:"archerElite",x:1088,y:672},{id:"healerElite",x:1216,y:672},{id:"bruteElite",x:1344,y:672},
+    {id:"bruteBoss",x:1568,y:608},
   ].map(e=>({...e,section:"units",label:e.id})),
   workers:[
     {id:"guard",job:"guard",x:896,y:736,label:"worker · guard"},
@@ -70,9 +77,11 @@ const manifest = {
       ["basic",96,176],["turret",416,176],["outpost",736,176],["watch",1056,176],["sniper",1376,176],
       ["brick",96,336],["aggro",416,336],["fire",736,336],["freeze",1056,336],["tarTower",1376,336],
       ["teleport",96,496],["bomb",416,496],["laser",736,496],["pulse",1056,496],["shock",1376,496],
+      ["lightning",704,576],
     ].map(([id,x,y])=>({id:"dummy-"+id,x,y,homeX:x,homeY:y,section:"dummies",label:"dummy · "+id,hp:40})),
     {id:"dummy-splash-extra",x:448,y:488,homeX:448,homeY:488,section:"dummies",label:"dummy · splash pair",hp:40},
     {id:"dummy-line-extra",x:744,y:480,homeX:744,homeY:480,section:"dummies",label:"dummy · line pair",hp:40},
+    {id:"dummy-chain-extra",x:704,y:640,homeX:704,homeY:640,section:"dummies",label:"dummy · chain pair",hp:40},
   ],
   props:[
     {id:"crate",model:"crate",x:1088,y:896,section:"props",label:"pickable crate",footprint:{w:1,h:1}},

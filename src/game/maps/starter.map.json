@@ -354,13 +354,6 @@
       "variant": 1
     },
     {
-      "kind": "chest",
-      "cx": 134,
-      "cy": 78,
-      "rotation": 0,
-      "variant": null
-    },
-    {
       "kind": "tree",
       "cx": 129,
       "cy": 87,
@@ -459,66 +452,6 @@
       "height": 4,
       "density": 0.09718028632923963,
       "seed": 2163360731
-    },
-    {
-      "id": "forest-lakeshore",
-      "kind": "tree",
-      "cx": 97,
-      "cy": 88,
-      "width": 4,
-      "height": 4,
-      "density": 0.2650371445342899,
-      "seed": 314223369
-    },
-    {
-      "id": "forest-lakeshore-01",
-      "kind": "tree",
-      "cx": 102,
-      "cy": 88,
-      "width": 3,
-      "height": 3,
-      "density": 0.2650371445342899,
-      "seed": 314231288
-    },
-    {
-      "id": "forest-lakeshore-02",
-      "kind": "tree",
-      "cx": 103,
-      "cy": 89,
-      "width": 4,
-      "height": 3,
-      "density": 0.2650371445342899,
-      "seed": 314239207
-    },
-    {
-      "id": "forest-lakeshore-03",
-      "kind": "tree",
-      "cx": 106,
-      "cy": 89,
-      "width": 4,
-      "height": 3,
-      "density": 0.09718028632923963,
-      "seed": 314247126
-    },
-    {
-      "id": "forest-lakeshore-04",
-      "kind": "tree",
-      "cx": 110,
-      "cy": 89,
-      "width": 3,
-      "height": 3,
-      "density": 0.2650371445342899,
-      "seed": 314255045
-    },
-    {
-      "id": "forest-lakeshore-05",
-      "kind": "tree",
-      "cx": 112,
-      "cy": 90,
-      "width": 4,
-      "height": 3,
-      "density": 0.2650371445342899,
-      "seed": 314262964
     },
     {
       "id": "forest-lakeshore-06",
@@ -1081,66 +1014,6 @@
       "seed": 3328125899
     },
     {
-      "id": "grass-forest-lakeshore",
-      "kind": "grass",
-      "cx": 98,
-      "cy": 88,
-      "width": 3,
-      "height": 4,
-      "density": 1,
-      "seed": 2357925884
-    },
-    {
-      "id": "grass-forest-lakeshore-01",
-      "kind": "grass",
-      "cx": 101,
-      "cy": 88,
-      "width": 3,
-      "height": 3,
-      "density": 1,
-      "seed": 2357933803
-    },
-    {
-      "id": "grass-forest-lakeshore-02",
-      "kind": "grass",
-      "cx": 102,
-      "cy": 88,
-      "width": 4,
-      "height": 4,
-      "density": 1,
-      "seed": 2357941722
-    },
-    {
-      "id": "grass-forest-lakeshore-03",
-      "kind": "grass",
-      "cx": 103,
-      "cy": 89,
-      "width": 4,
-      "height": 3,
-      "density": 1,
-      "seed": 2357949641
-    },
-    {
-      "id": "grass-forest-lakeshore-04",
-      "kind": "grass",
-      "cx": 106,
-      "cy": 88,
-      "width": 3,
-      "height": 4,
-      "density": 1,
-      "seed": 2357957560
-    },
-    {
-      "id": "grass-forest-lakeshore-05",
-      "kind": "grass",
-      "cx": 109,
-      "cy": 88,
-      "width": 3,
-      "height": 4,
-      "density": 1,
-      "seed": 2357965479
-    },
-    {
       "id": "grass-forest-lakeshore-06",
       "kind": "grass",
       "cx": 110,
@@ -1149,26 +1022,6 @@
       "height": 3,
       "density": 1,
       "seed": 2357973398
-    },
-    {
-      "id": "grass-forest-lakeshore-07",
-      "kind": "grass",
-      "cx": 113,
-      "cy": 88,
-      "width": 3,
-      "height": 4,
-      "density": 1,
-      "seed": 2357981317
-    },
-    {
-      "id": "grass-forest-lakeshore-08",
-      "kind": "grass",
-      "cx": 114,
-      "cy": 90,
-      "width": 4,
-      "height": 4,
-      "density": 1,
-      "seed": 2357989236
     },
     {
       "id": "grass-forest-lakeshore-09",
@@ -1951,16 +1804,6 @@
       "seed": 3609004237
     },
     {
-      "id": "grassland",
-      "kind": "grass",
-      "cx": 0,
-      "cy": 0,
-      "width": 241,
-      "height": 161,
-      "density": 0.1322616841644049,
-      "seed": 31
-    },
-    {
       "id": "rock-1",
       "kind": "rock",
       "cx": 118,
@@ -2129,6 +1972,66 @@
       "height": 3,
       "density": 0.0891043443093255,
       "seed": 2534364455
+    },
+    {
+      "id": "tree-1",
+      "kind": "tree",
+      "cx": 107,
+      "cy": 69,
+      "width": 10,
+      "height": 8,
+      "density": 0.12,
+      "seed": 1
+    },
+    {
+      "id": "tree-2",
+      "kind": "tree",
+      "cx": 137,
+      "cy": 66,
+      "width": 24,
+      "height": 14,
+      "density": 0.12,
+      "seed": 1
+    },
+    {
+      "id": "tree-3",
+      "kind": "tree",
+      "cx": 94,
+      "cy": 60,
+      "width": 16,
+      "height": 9,
+      "density": 0.12,
+      "seed": 1
+    },
+    {
+      "id": "tree-4",
+      "kind": "tree",
+      "cx": 99,
+      "cy": 89,
+      "width": 15,
+      "height": 11,
+      "density": 0.12,
+      "seed": 1
+    },
+    {
+      "id": "tree-5",
+      "kind": "tree",
+      "cx": 116,
+      "cy": 99,
+      "width": 19,
+      "height": 9,
+      "density": 0.12,
+      "seed": 1
+    },
+    {
+      "id": "tree-6",
+      "kind": "rock",
+      "cx": 130,
+      "cy": 85,
+      "width": 10,
+      "height": 17,
+      "density": 0.12,
+      "seed": 1
     }
   ]
 }

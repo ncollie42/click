@@ -17,6 +17,7 @@ import {
   initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, tickPerformance, drainScans
 } from "./debug/view-debugger.js";
 import {initShowcaseUi, updateShowcaseUi} from "./ui/showcase.js";
+import {initBuildVersion} from "./ui/build-version.js";
 
 // The overlay canvas is the input surface, the 2D overlay and the raycast target all at once.
 const surface = document.getElementById("overlay");
@@ -48,7 +49,8 @@ connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...DRAFT_EFFECTS,
   buildHudChanged(){SIM_EFFECTS.buildHudChanged();syncHandTargeting();}
 });
 // ── Mode-selection data flow ──
-// Browser URL is read only here. The simulation receives one initialization command and remains
+// Browser URL is read only here, with one documented exception: data.js reads ?mapSize at import
+// time (W/H must exist before any module body runs). The simulation receives one initialization command and remains
 // independent of window/location; absent or unknown values preserve the normal default lifecycle.
 const search=new URLSearchParams(window.location.search);
 const requestedMode=search.get("mode")==="showcase"?"showcase":"normal";
@@ -67,6 +69,7 @@ initInput(surface, {
   uiVisibilityChanged(hidden){document.body.classList.toggle("ui-hidden",hidden);},
 });
 initViewDebugger({resizeView});
+initBuildVersion();
 // Initialize after adapters bind their authored defaults, so showcase camera/fixtures are the final
 // boot state; normal initialization remains a no-op and leaves production startup untouched.
 initializeRunMode(requestedMode);
@@ -75,9 +78,13 @@ window.addEventListener("resize", resizeView);
 
 // Visibility may add scene pins before rendering; debugger scans drain only after the visible frame.
 function draw(){
+  const started=performance.now();
   if(drawScene()) syncViewInputs();   // orbit advanced the yaw; push it back into the slider
+  const synced=performance.now();
   tickVisibility();
+  const visibilityDone=performance.now();
   renderScene();
+  const rendered=performance.now();
   drawOverlay();
   // The hand's peek/collapse state is the one card thing no simulation effect can raise: it depends
   // on the clock phase AND on enemies being alive, which move inside update() without any card
@@ -85,6 +92,9 @@ function draw(){
   syncHandPeek();
   updateShowcaseUi();
   drainScans();
+  const finished=performance.now();
+  return {sceneSyncMs:synced-started,visibilityMs:visibilityDone-synced,
+    renderMs:rendered-visibilityDone,uiMs:finished-rendered,drawWorkMs:finished-started};
 }
 
 // ── boot ──────────────────────────────────────────────────────────────
@@ -93,13 +103,14 @@ syncBuildHud();syncPhaseHud();syncLevelHud();
 let previous=performance.now();
 function frame(now){
   const dt=Math.min(.033,(now-previous)/1000);previous=now;
+  const workStarted=performance.now();
   // Speed-up runs extra whole steps rather than stretching dt — a 3x-longer dt
   // would let enemies skip past melee range and break contact-damage checks.
   for(let i=0;i<TUNE.gameSpeed;i++)update(dt);
-  draw();
-  // Sample after rendering so the perf pane reads this frame's renderer counters. RAF cadence stays
-  // independent of game speed because extra simulation steps happen inside this one frame.
-  tickPerformance(now);
+  const simulationDone=performance.now(),drawTiming=draw(),workDone=performance.now();
+  // Stage timings are CPU wall time. WebGL submission may return before GPU completion; resolution
+  // and pass isolation controls in the perf pane distinguish that case better than this clock can.
+  tickPerformance(now,{simulationMs:simulationDone-workStarted,...drawTiming,workMs:workDone-workStarted});
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

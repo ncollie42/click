@@ -3,7 +3,21 @@
 
 // ── frame and world dimensions ──────────────────────────────────────────────
 export const VIEW_W=960,VIEW_H=540;          // Fixed 16:9 logical frame; CSS scales both axes together.
-export const W=1536*5,H=1024*5;              // 5× each axis; explored through camera pan/zoom.
+// World size in 1536×1024 tiles. buildStarterWorld() crops a centered subsection of the full
+// authored starter map to match — a size lever, not a second authored world. This is the one URL
+// read outside main.js: W/H must exist at import time, before any composition code runs.
+// Defaults: the PLAYABLE game boots the small 1-tile map; the showcase keeps the full canvas its
+// fixture layout is authored on, and off-browser harnesses (validate.mjs, tools) keep the full map
+// their expectations are pinned to. An explicit ?mapSize=1..5 always wins over both.
+// Any tile count keeps BASE=W/2 on a cell center (768k = 24k·CELL), so the grid alignment notes
+// below hold at every size.
+export const MAP_TILES=(()=>{
+  const search=new URLSearchParams(globalThis.location?.search??"");
+  const raw=Number(search.get("mapSize"));
+  if(Number.isInteger(raw)&&raw>=1&&raw<=5)return raw;
+  return globalThis.location&&search.get("mode")!=="showcase"?1:5;
+})();
+export const W=1536*MAP_TILES,H=1024*MAP_TILES;
 
 // ── the base ────────────────────────────────────────────────────────────────
 // Authored anchor, radius and reserved footprint. Not run state: base HEALTH is
@@ -59,6 +73,10 @@ export const CHEST=Object.freeze({
   pinataPayout:12,
   discoverMinRadius:128,
   discoverMaxRadius:352,
+  // World chest scatter (authored-map.js): scatterPerTile*MAP_TILES chests land on the free land
+  // cells with the lowest deterministic hashes outside the discover band — exploration loot that
+  // scales with map size (3 on the default 1-tile map, 15 on the full map), editor untouched.
+  scatterPerTile:3,
   weights:Object.freeze({wood:38,stone:36,dust:12,coin:11,diamond:3}),
 });
 // Feeding values are read only by simulation.js; no runtime path may assign into this table.
@@ -74,7 +92,12 @@ export const XP_TIERS=[40,100,200,350];   // dead: superseded by LEVEL_CURVE, st
 // ids, rarities, texts and stack limits but none of the arithmetic. Read only by simulation.js;
 // no runtime path may assign into these tables — a taken card tallies a stack in run state and
 // the accessors layer these numbers over the authored values at read time.
-export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,towerDamage:1.1,towerSpeed:1.1,baseHp:5,clickDamage:1};
+export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,towerDamage:1.1,towerSpeed:1.1,baseHp:5,clickDamage:1,
+  // Chain lightning scales BOTH dials per stack: stack N procs a completed player swing at
+  // chainChance+(N-1)*chainChanceStack and throws chainJumps+(N-1) jumps — 20%/1, 30%/2, 40%/3,
+  // 50%/4 at the card's 4-stack cap. A jump is a full ordinary swing (its own crit roll) on the
+  // nearest unstruck enemy OR resource within chainRange of the previous strike.
+  chainChance:.2,chainChanceStack:.1,chainJumps:1,chainRange:120};
 export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay:20,calmNightFactor:.75};
 // The fireball card's cast: an instant area hit that leaves nothing behind. The radius matches the
 // blast charge's effectRadius on purpose — the cast borrows the blast placement ghost, so the ring
@@ -82,7 +105,8 @@ export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay
 export const FIREBALL={damage:6,radius:135};
 
 // ── houses and workers ──────────────────────────────────────────────────────
-export const HOUSE_SLOTS=4,HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
+// The first house is a cheap opening bootstrap. Later houses retain the regular progression below.
+export const HOUSE_SLOTS=4,STARTING_HOUSE_COST={wood:2,stone:0},HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
 // Worker capacities are authored here; future upgrades may modify their effective values at runtime.
 export const RESOURCE_NODE_JOB_SLOTS=1,BLUEPRINT_JOB_SLOTS=2;
 export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
@@ -130,38 +154,62 @@ export const TOWER_VARIANTS={
   bomb:{icon:"●",name:"bomb tower",family:"Special",description:"slow shells damage groups clustered around the selected target.",cost:{wood:8,stone:10,dust:2},attackMode:"splash",range:210,damage:3,cooldown:2.6,splashRadius:55,maxHp:16,manual:false,movable:false,accent:"#e39a3f",impactColor:"#e38a38",sound:80},
   laser:{icon:"╱",name:"laser tower",family:"Special",description:"a focused beam pierces every enemy intersecting its line.",cost:{stone:10,dust:3,diamond:2},attackMode:"line",range:320,damage:2,cooldown:1.7,beamWidth:18,maxHp:16,manual:false,movable:false,accent:"#78e3df",impactColor:"#78e3df",sound:720},
   pulse:{icon:"◉",name:"pulse tower",family:"Special",description:"automatically strikes every enemy in its pulse radius.",cost:{wood:4,stone:6,dust:2},attackMode:"periodic area",effectRadius:145,damage:2,cooldown:5,maxHp:20,manual:false,movable:false,accent:"#b18be5",sound:125},
+  lightning:{icon:"ϟ",name:"lightning tower",family:"Special",description:"a bolt strikes the nearest enemy and chains between nearby foes.",cost:{stone:8,dust:3,diamond:1},attackMode:"chain",range:240,damage:2,cooldown:2.1,chainJumps:3,chainRange:110,maxHp:16,manual:false,movable:false,accent:"#a9c4f5",impactColor:"#cfe4ff",sound:660},
   shock:{icon:"↯",name:"shock tower",family:"Special",description:"movable tower with a manually triggered reusable shock pulse.",cost:{wood:2,stone:4,coin:1,diamond:1},attackMode:"manual area",effectRadius:150,damage:2,cooldown:8,maxHp:15,manual:true,movable:true,accent:"#70d8d1",sound:105}
 };
 
 // ── enemies and the night schedule ──────────────────────────────────────────
-export const ENEMY_TYPES=Object.freeze({
-  raider:Object.freeze({name:"raider",hp:5,speed:52,damage:2,range:40,rate:1,size:1}),
-  archer:Object.freeze({name:"archer",hp:4,speed:42,damage:1,range:155,rate:1.8,size:1}),
-  healer:Object.freeze({name:"healer",hp:5,speed:38,damage:0,range:180,rate:0,size:1}),
-  brute:Object.freeze({name:"brute",hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35})
-});
+// Variants are authored fixed-stat enemies, never runtime stat multipliers. Every archetype has the
+// same three visual/difficulty bands: base, blue veteran (wave 4+), red elite (wave 7+).
+const ENEMY_ARCHETYPES={
+  raider:{hp:5,speed:52,damage:2,range:40,rate:1,size:1,threatCost:1,spawnWeight:10},
+  archer:{hp:4,speed:42,damage:1,range:155,rate:1.8,size:1,threatCost:2,spawnWeight:6},
+  healer:{hp:5,speed:38,damage:0,range:180,rate:0,healAmount:2,healRate:2.3,size:1,threatCost:3,spawnWeight:2},
+  brute:{hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35,threatCost:4,spawnWeight:3}
+};
+const ENEMY_VARIANT_BANDS=Object.freeze([
+  Object.freeze({suffix:"",label:"",tier:1,minWave:1,hp:1,speed:1,damage:1,rate:1,cost:1,weight:1,color:null}),
+  Object.freeze({suffix:"Veteran",label:"veteran ",tier:2,minWave:4,hp:1.6,speed:1.08,damage:1.5,rate:.9,cost:2,weight:.4,color:"#3568a8"}),
+  Object.freeze({suffix:"Elite",label:"elite ",tier:3,minWave:7,hp:2.5,speed:1.15,damage:2.5,rate:.8,cost:4,weight:.2,color:"#a23e50"})
+]);
+const enemyVariants={};
+for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of ENEMY_VARIANT_BANDS){
+  const id=archetype+band.suffix;
+  enemyVariants[id]=Object.freeze({...base,name:band.label+archetype,archetype,variantTier:band.tier,variantColor:band.color,minWave:band.minWave,
+    hp:Math.ceil(base.hp*band.hp),speed:Math.round(base.speed*band.speed),damage:Math.ceil(base.damage*band.damage),
+    rate:base.rate===0?0:Number((base.rate*band.rate).toFixed(2)),...(base.healAmount?{healAmount:Math.ceil(base.healAmount*band.damage),healRate:Number((base.healRate*band.rate).toFixed(2))}:{}),
+    threatCost:base.threatCost*band.cost,spawnWeight:base.spawnWeight*band.weight});
+}
+// One authored boss for now: brute behavior/model, but a 4× render/collision scale and fixed boss
+// stats. It is not a weighted variant; WAVE_BOSS_SPAWNS guarantees its one scheduled appearance.
+enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantColor:null,minWave:5,
+  hp:60,damage:20,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
+export const ENEMY_TYPES=Object.freeze(enemyVariants);
+export const WAVE_BOSS_SPAWNS=Object.freeze({5:"bruteBoss"});
 // Enemies spawn at a random angle on a ring around the base (small radial jitter in
 // simulation.js), preferring land. No directional/shoreline spawning.
 export const ENEMY_SPAWN_RADIUS=800;
 export const ENEMY_POOL=Object.freeze(["raider","raider","archer","healer","brute"]);
-export const NIGHT_WAVE_SPAWNS=12,NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
-// Per-tier bonus spawns are read only by simulation.js; no runtime path may assign into this value.
-export const NIGHT_TIER_BONUS_SPAWNS=3;
-// Authored order/composition shapes the forecast (spawn TYPES only — spawning is a
-// random ring around the base). Freeze every level so a live wave can retain a recipe
-// reference without any runtime or debugger path changing later spawn types.
-const freezeWaveRecipe=recipe=>Object.freeze({...recipe,spawns:Object.freeze([...recipe.spawns])});
+export const NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
+// Normalized power curve: wave 1 starts at startBudget, targetWave reaches targetBudget, and later
+// waves hold there until another authored segment is added. Raise `power` for a slower start and
+// steeper finish; lower it toward 1 for a more linear ramp.
+export const WAVE_THREAT_CURVE=Object.freeze({startBudget:12,targetBudget:100,targetWave:8,power:1.5});
+// Each recipe defines an unlock tier and an archetype Spawn Pool. The composer expands each member
+// to variants unlocked for that wave; spawnWeight controls frequency while threatCost spends budget.
+// Freeze every level so no runtime path can mutate authored pool membership.
+const freezeWaveRecipe=recipe=>Object.freeze({...recipe,pool:Object.freeze([...recipe.pool])});
 export const NIGHT_WAVE_RECIPES=Object.freeze([
-  {id:"raiderRush",minTier:0,spawns:["raider","raider","raider","raider","raider","raider","raider","raider","raider","raider","raider","raider"]},
-  {id:"archerLine",minTier:0,spawns:["raider","archer","archer","archer","raider","archer","archer","raider","archer","archer","raider","archer"]},
-  {id:"healerEscort",minTier:1,spawns:["raider","raider","healer","raider","raider","healer","raider","raider","healer","raider","raider","raider"]},
-  {id:"brutePush",minTier:2,spawns:["raider","brute","raider","brute","raider","brute","raider","brute","raider","brute","raider","brute"]},
-  {id:"twoFront",minTier:2,spawns:["raider","raider","archer","archer","raider","raider","brute","brute","archer","archer","raider","raider"]}
+  {id:"raiderRush",minTier:0,pool:["raider"]},
+  {id:"archerLine",minTier:0,pool:["raider","archer"]},
+  {id:"healerEscort",minTier:1,pool:["raider","healer"]},
+  {id:"brutePush",minTier:2,pool:["raider","brute"]},
+  {id:"twoFront",minTier:2,pool:["raider","archer","brute"]}
 ].map(freezeWaveRecipe));
 
 // ── day / night pacing ──────────────────────────────────────────────────────
 export const DAY_DURATION=75;
-export const NIGHT_OVERLAY_ALPHA=.5,LIGHT_FADE_TIME=6;
+export const NIGHT_OVERLAY_ALPHA=.35,LIGHT_FADE_TIME=6;
 
 // ── the king ────────────────────────────────────────────────────────────────
 export const KING={range:95,damage:2,rate:.85};

@@ -48,7 +48,7 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, grass, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles,
+  trees, rocks, diamonds, grass, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs,
   badgeAction, hoveredBuilding,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
   heldWorker, heldBuilding, heldChest, heldProp, workerLoad,
@@ -114,8 +114,14 @@ export function setOrthoCamera(on){
 /** The vShadow switch's single write path; materials must recompile when shadows toggle. */
 export function setShadows(on){
   renderer.shadowMap.enabled = on;
-  scene.traverse(o=>{ if(o.isMesh) o.material.needsUpdate = true; });
+  scene.traverse(o=>{
+    if(!o.isMesh)return;
+    for(const material of Array.isArray(o.material)?o.material:[o.material])
+      if(material)material.needsUpdate=true;
+  });
 }
+/** Perf isolation control. Resize remains composition-owned so the overlay follows the same box. */
+export function setRenderPixelRatio(value){renderer.setPixelRatio(clamp(value,.5,2));}
 
 export function placeCamera(){
   const cam = state.camera;
@@ -308,10 +314,13 @@ export const waterDebug={
   layerMasks:()=>({top:terrainTop?.layers.mask,skirts:shorelineSkirts?.layers.mask,floor:waterFloor.layers.mask,far:waterFar.layers.mask,camera:camera3.layers.mask}),
 };
 
-let waterDepthTarget=null;
+let waterDepthTarget=null,waterPrepassEnabled=true;
 const waterDepthOverride=new THREE.MeshBasicMaterial();
 const _waterBufSize=new THREE.Vector2();
+/** Diagnostic isolation switch: disabled water keeps the last depth sample, intentionally. */
+export function setWaterPrepass(on){waterPrepassEnabled=!!on;}
 function waterPrePass(){
+  if(!waterPrepassEnabled)return;
   const size=renderer.getDrawingBufferSize(_waterBufSize);
   if(!waterDepthTarget||waterDepthTarget.width!==size.x||waterDepthTarget.height!==size.y){
     waterDepthTarget?.depthTexture?.dispose();waterDepthTarget?.dispose();
@@ -464,9 +473,25 @@ function rebuildTerrainPresentation(){
 rebuildTerrainPresentation();
 
 export function terrainRenderDiagnostics(){
+  let sceneObjects=-1,meshes=0,visibleMeshes=0,shadowCasters=0,outlines=0,instancedMeshes=0;
+  const materials=new Set();
+  // This 4 Hz census is diagnostic-only. renderer.info supplies submitted work; traversal explains
+  // what scene structure produced it without making the render layer expose its private pools.
+  scene.traverse(object=>{
+    sceneObjects++;
+    if(!object.isMesh)return;
+    meshes++;if(object.visible)visibleMeshes++;if(object.castShadow)shadowCasters++;
+    if(object.userData.outline===true)outlines++;if(object.isInstancedMesh)instancedMeshes++;
+    for(const material of Array.isArray(object.material)?object.material:[object.material])if(material)materials.add(material);
+  });
+  const buffer=renderer.getDrawingBufferSize(new THREE.Vector2());
   return Object.freeze({...staticBuildStats,terrainRevision:builtTerrainRevision,
     terrainTextureBytes:GRASS_TEXTURE_BYTES,placementGridVisible:terrainGrid?.visible===true,
-    drawCalls:renderer.info.render.calls,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures});
+    drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,
+    geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures,
+    sceneObjects,meshes,visibleMeshes,shadowCasters,outlines,instancedMeshes,materials:materials.size,
+    pixelRatio:renderer.getPixelRatio(),bufferWidth:buffer.x,bufferHeight:buffer.y,
+    shadows:renderer.shadowMap.enabled,waterPrepass:waterPrepassEnabled});
 }
 
 // ─────────────────────────────────────────────────────────── pooling
@@ -610,18 +635,18 @@ function syncEnemies(list){
     else if(e.shotFlash>0 && e.shotX!==undefined) rec.targetYaw = Math.atan2(e.shotX-e.x, e.shotY-e.y);
     rec.px = e.x; rec.py = e.y;
     if(rec.targetYaw!==undefined) rec.yaw += yawWrap(rec.targetYaw-rec.yaw)*.2;
-    const def = ENEMY_TYPES[e.type];
+    const def = ENEMY_TYPES[e.type],archetype=def.archetype;
     const engaged = e.attackCooldown>0;      // cycling combat timer; 0 = never attacked / fixture
     const combatPhase = strike =>
       (strike + (1 - clamp(e.attackCooldown,0,def.rate)/def.rate)) % 1;
-    if(e.type==="healer"){
+    if(archetype==="healer"){
       if(e.healFlash>0 && t-rec.healT>1.2) rec.healT = t;   // rising edge: one cast cycle
       if(t-rec.healT<.9 && anims.heal) anims.heal(inner, (t-rec.healT)/.9, t);
       else anims.hover(inner, 0, t);
-    } else if(e.type==="archer"){
+    } else if(archetype==="archer"){
       if(engaged && anims.fire) anims.fire(inner, combatPhase(.5), t);
       else anims.sway(inner, 0, t);
-    } else if(e.type==="brute"){
+    } else if(archetype==="brute"){
       // thump is both gait and swing: landing (~.55) syncs to the sim's hit when engaged,
       // and to the wob clock while lumbering.
       if(engaged && anims.thump) anims.thump(inner, combatPhase(.55), t);
@@ -635,8 +660,10 @@ function syncEnemies(list){
       m.emissive.setHex(e.flash>0 ? PAL.flash : burning ? PAL.emberGlow : 0x000000);
     setXZ(g, e, 0);
     g.rotation.set(0, rec.yaw, 0);
-    // ENEMY_TYPES.size is baked into the models — S only, plus the debug height slider.
-    g.scale.set(S, S*view.heightScale/100, S);
+    // Archetype size is baked into reviewed models. modelScale is reserved for explicit authored
+    // scale variants such as the brute boss; collision size is authored independently in data.js.
+    const modelScale=def.modelScale||1;
+    g.scale.set(S*modelScale, S*modelScale*view.heightScale/100, S*modelScale);
   }
   for(const [e,rec] of enemyStore){
     if(seen.has(e)) continue;
@@ -938,7 +965,7 @@ function drawAttacks(){
       if(v.attackMode==="splash" && t.impactX!==undefined)
         spawnShot(b.x,b.y,topH, t.impactX,t.impactY, .35, col, 1.6, 2.4,
                   {x:t.impactX, y:t.impactY, r:v.splashRadius||40, col});
-      else if(!area && v.attackMode!=="line" && t.targetX!==undefined)
+      else if(!area && v.attackMode!=="line" && v.attackMode!=="chain" && t.targetX!==undefined)
         spawnShot(b.x,b.y,topH, t.targetX,t.targetY, .7, col, 1, 1.0, null);
     }
     lastFlash.set(b, t.flash);
@@ -971,6 +998,27 @@ function drawAttacks(){
   for(const w of state.workers)
     if(w.combatTarget && w.attackCooldown > WORKER_ATTACK_RATE-.2)
       beam(w.x, w.y, .8, w.combatTarget.x, w.combatTarget.y, .7, .06, "#f3dfa3", .85);
+
+  // Lightning arcs (chainLightning buff + lightning tower). Damage already landed in the sim;
+  // each record is one jump, drawn as a short-lived jagged bolt. The per-arc seed keeps the
+  // kinks still while the bolt fades, so it reads as one strike rather than a flickering wire.
+  for(const arc of lightningArcs){
+    const a = clamp(1 - arc.age/.4, 0, 1);
+    if(a <= 0) continue;
+    const dx = arc.x2-arc.x1, dy = arc.y2-arc.y1, len = Math.hypot(dx,dy) || 1;
+    const nx = -dy/len, ny = dx/len;                  // unit normal for the kink offsets
+    const kinks = 3;
+    let px = arc.x1, py = arc.y1, ph = 1.1;
+    for(let i=1; i<=kinks+1; i++){
+      const t = i/(kinks+1), last = i===kinks+1;
+      // deterministic pseudo-random kink from the arc's seed; end points stay exact
+      const wob = last ? 0 : (Math.sin((arc.seed*97+i)*12.9898)*.5)*Math.min(28, len*.3);
+      const x = arc.x1+dx*t+nx*wob, y = arc.y1+dy*t+ny*wob, h = last ? 1.1 : 1.1+Math.abs(wob)*.02;
+      beam(px,py,ph, x,y,h, .07, "#cfe4ff", a);
+      px=x; py=y; ph=h;
+    }
+    muzzle(arc.x2, arc.y2, 1.0, .14+.3*a, "#cfe4ff", a);
+  }
 
   endAttacks();
 }

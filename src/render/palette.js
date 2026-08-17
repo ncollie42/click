@@ -98,6 +98,7 @@ export const PAL = {
   towSniper:  0xd9e3c2,
   towBrick:   0x9b7f60,
   towOutpost: 0x7d6b52,
+  towLightning:0x9db9e6,
 
   // ── feedback / rings ───────────────────────────────────
   flash:      0xd25b49,   // enemy hit tint
@@ -135,5 +136,5 @@ export const TOWER_TOP = {
   fire:PAL.towFire,     freeze:PAL.towFreeze, tar:PAL.tar,
   teleport:PAL.towTeleport, bomb:PAL.towBomb, sniper:PAL.towSniper,
   watch:PAL.coin,       brick:PAL.towBrick,   aggro:PAL.taunt,
-  turret:PAL.timber,    outpost:PAL.towOutpost,
+  turret:PAL.timber,    outpost:PAL.towOutpost, lightning:PAL.towLightning,
 };

@@ -392,6 +392,14 @@ Open questions:
 - Decide whether it targets ground drops, stockpiles, collectors, or the main base.
 - A successful thief may attempt to escape the map with its stolen resources.
 
+## Stomper Enemy: Damage Everything Nearby
+
+**Tags:** `Core Gameplay`, `Game Feel / Juice`, `Immersion`
+
+Add a large enemy with a clearly telegraphed radial stomp. Its impact uses one world hitbox that damages everything in range—not only combat targets—including workers, buildings, trees, rocks, diamonds, and other damageable props.
+
+This makes the battlefield itself vulnerable: fighting near valuable resource clusters can destroy future income. Decide whether the stomp also damages allied enemies, whether resource destruction produces ordinary drops, and whether damage is flat or falls off from the center.
+
 ## King and Base Defense
 
 - Add a king who lives at the castle and automatically defends the main base.

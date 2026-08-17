@@ -17,7 +17,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
 import {PAL, DROP_COLOR} from "./palette.js";
-import {W,H,BASE,CELL} from "../game/data.js";
+import {W,H,BASE,CELL,ENEMY_TYPES} from "../game/data.js";
 import {buildingFootprint} from "../game/grid.js";
 // Reviewed sim-px models (see docs/quality-bar.md): standalone modules the model viewer also
 // loads. Adopted into the game's scale/shadow/outline conventions by adoptModel() below.
@@ -243,17 +243,18 @@ export function makePegWorker(key){
   g.userData = {inner, anims: def.anims};
   return g;
 }
-// Enemy type -> adopted shard model. The models bake the brute's ×1.35 (ENEMY_TYPES.size), so the
-// wrapper applies S only — never multiply by def.size again in scene.js. userData.tintMats collects
+// Enemy type -> adopted shard model. Models bake archetype size (the brute's ×1.35); scene.js applies
+// only explicit ENEMY_TYPES.modelScale (the boss), never collision `size`. userData.tintMats collects
 // the unique BODY materials (lit, zero-emissive Lambert) so hit-flash/burn tint the rock and never
 // the seam floors, eyes or ability FX (those are unlit/emissive and are excluded by the filter).
 // The sim draws its own shot beam (scene.js beam() off shotFlash/shotX), so the archer's modelled
 // bolt is hidden at build; its charge flash and recoil remain.
 export function makeEnemy(type){
-  const def = ENEMY_MODELS["enemy-"+type] || ENEMY_MODELS["enemy-raider"];
+  const enemy=ENEMY_TYPES[type],archetype=enemy?.archetype||"raider";
+  const def = ENEMY_MODELS["enemy-"+archetype] || ENEMY_MODELS["enemy-raider"];
   const inner = def.build();
   adoptModel(inner);
-  if(type==="archer"){ const bolt = inner.getObjectByName("bolt"); if(bolt) bolt.visible = false; }
+  if(archetype==="archer"){ const bolt = inner.getObjectByName("bolt"); if(bolt) bolt.visible = false; }
   const tintMats = [], seenMats = new Set();
   inner.traverse(o=>{
     if(!o.isMesh || isOutline(o)) return;
@@ -262,6 +263,7 @@ export function makeEnemy(type){
       if(m.isMeshLambertMaterial && m.emissive && m.emissive.getHex()===0) tintMats.push(m);
     }
   });
+  if(enemy?.variantColor){const tint=new THREE.Color(enemy.variantColor);for(const material of tintMats)material.color.lerp(tint,.38);}
   const g = new THREE.Group();
   g.add(inner);
   g.scale.setScalar(S);

@@ -129,6 +129,32 @@ export function assertMapInvariants(doc){
   return doc;
 }
 
+// Centered crop to width×height cells (same cellSize/seed). Objects shift with the window and
+// drop when outside it; scatter regions clip to the window and drop when nothing remains.
+// Land/raised values copy unchanged, so every surviving object is still on land by construction.
+export function cropMapDocumentCentered(doc, width, height){
+  assertMapInvariants(doc);
+  checkedDimensions({width, height, cellSize: doc.cellSize});
+  if(width > doc.width || height > doc.height) fail(`crop ${width}x${height} exceeds document ${doc.width}x${doc.height}`);
+  const offsetX = Math.floor((doc.width - width) / 2), offsetY = Math.floor((doc.height - height) / 2);
+  const out = createMapDocument({width, height, cellSize: doc.cellSize, seed: doc.seed});
+  for(let cy = 0; cy < height; cy++) for(let cx = 0; cx < width; cx++){
+    const src = (cy + offsetY) * doc.width + (cx + offsetX), dst = cy * width + cx;
+    out.land[dst] = doc.land[src];
+    out.raised[dst] = doc.raised[src];
+  }
+  out.objects = doc.objects
+    .filter(o => o.cx >= offsetX && o.cx < offsetX + width && o.cy >= offsetY && o.cy < offsetY + height)
+    .map(o => ({kind: o.kind, cx: o.cx - offsetX, cy: o.cy - offsetY, rotation: o.rotation ?? 0, variant: o.variant ?? null}));
+  out.scatterRegions = doc.scatterRegions.flatMap(region => {
+    const x0 = Math.max(region.cx, offsetX), y0 = Math.max(region.cy, offsetY);
+    const x1 = Math.min(region.cx + region.width, offsetX + width), y1 = Math.min(region.cy + region.height, offsetY + height);
+    if(x1 <= x0 || y1 <= y0) return [];
+    return [{...region, cx: x0 - offsetX, cy: y0 - offsetY, width: x1 - x0, height: y1 - y0}];
+  });
+  return assertMapInvariants(out);
+}
+
 export function cloneMapDocument(doc){
   assertMapInvariants(doc);
   return {

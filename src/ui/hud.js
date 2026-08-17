@@ -34,10 +34,7 @@
 // That keeps <canvas id="overlay"> at its documented three owners: main.js (listeners, classes and focus),
 // src/render/overlay.js (2D context and backing store) and src/render/scene.js (client rect).
 // ═══════════════════════════════════════════════════════════════════════════
-import {
-  NIGHT_WAVE_RECIPES,
-  DAY_DURATION
-} from "../game/data.js";
+import {DAY_DURATION} from "../game/data.js";
 import {
   state,
   // commands — the only writes this file can make into the world
@@ -111,7 +108,7 @@ function formatDuration(totalSeconds){
 }
 export function syncPhaseHud(){
   const clock=state.clock,wave=state.nightWave,isDay=clock.phase==="day";
-  const recipeState=isDay?wave.upcomingRecipe:wave.activeRecipe,recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===recipeState?.id),panel=document.getElementById("phaseHud");
+  const plan=isDay?wave.upcomingPlan:wave.activePlan,panel=document.getElementById("phaseHud");
   const setText=(id,text)=>{const element=document.getElementById(id);if(element.textContent!==text)element.textContent=text;};
   const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber,living=isDay?0:livingActiveWaveEnemies();
   setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",isDay?Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"elapsed "+formatDuration(wave.elapsed));
@@ -125,11 +122,11 @@ export function syncPhaseHud(){
   document.getElementById("phaseProgressFill").style.width=(100*progress).toFixed(2)+"%";
   setText("forecastLabel",isDay?"next attack":"current wave");
   setText("forecastRemaining",isDay?"":living===0&&wave.remainingSpawns===0?"wave clear · 0 enemies alive · 0 scheduled spawns remaining":living+" wave enem"+(living===1?"y":"ies")+" alive · "+wave.remainingSpawns+" scheduled spawn"+(wave.remainingSpawns===1?"":"s")+" remaining");
-  const signature=[clock.phase,recipe?.id].join("|");
+  const signature=[clock.phase,plan?.id].join("|");
   if(panel.dataset.forecast!==signature){
     panel.dataset.forecast=signature;
     const summary=document.getElementById("recipeSummary");summary.replaceChildren();
-    if(recipe){const counts={};for(const spawn of recipe.spawns)counts[spawn]=(counts[spawn]||0)+1;for(const [type,count] of Object.entries(counts)){const item=document.createElement("li");item.textContent=count+"× "+type;summary.appendChild(item);}}
+    if(plan){const threat=document.createElement("li");threat.textContent=plan.threatBudget+" threat";summary.appendChild(threat);const counts={};for(const entry of plan.entries)counts[entry.type]=(counts[entry.type]||0)+1;for(const [type,count] of Object.entries(counts)){const item=document.createElement("li");item.textContent=count+"× "+type;summary.appendChild(item);}}
   }
 }
 

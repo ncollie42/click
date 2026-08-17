@@ -6,12 +6,12 @@ import {
   CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
   FOOTPRINT_1x1,RESOURCE_FOOTPRINT,
   RESOURCE_KINDS,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
-  HOUSE_SLOTS,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,BLUEPRINT_JOB_SLOTS,
+  HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,BLUEPRINT_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
   ENEMY_TYPES,ENEMY_SPAWN_RADIUS,
   ENEMY_POOL,
-  NIGHT_WAVE_SPAWNS,NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_TIER_BONUS_SPAWNS,NIGHT_WAVE_RECIPES,
+  NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,WAVE_THREAT_CURVE,WAVE_BOSS_SPAWNS,
   DAY_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
   KING,STEADY_HAND_RATE,FIREBALL
 } from "./data.js";
@@ -138,6 +138,10 @@ const particles = [];
 // Detached impact snapshots. Damage owns creation/age; overlay.js only projects and styles them.
 // `critical` is carried now so future crit resolution changes the hit call, not this data flow.
 const damageNumbers = [];
+// Lightning segments, one per jump, shared by the chainLightning buff and the lightning tower.
+// Damage resolved the instant an arc is pushed; scene.js only draws {x1,y1,x2,y2,age,seed} and
+// `seed` keeps a bolt's jitter stable while it fades.
+const lightningArcs = [];
 let damageNumberSequence=0;
 // Deterministic validation/debug seam: only the next outcome tag is held, never resource contents.
 // Destruction consumes and clears it before rolling the authored weighted payout.
@@ -169,7 +173,7 @@ const state = {
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
   // activeNightNumber owns the generation currently eligible to gate dawn. Scheduled enemies copy
   // it to enemy.waveNightNumber; manual/showcase enemies deliberately omit that field.
-  nightWave:{upcomingRecipe:null,activeRecipe:null,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0,activeNightNumber:null},
+  nightWave:{upcomingPlan:null,activePlan:null,threatBudget:0,spawnedThreat:0,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0,activeNightNumber:null},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
   upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,showcaseFocus:null,
   // revealed: every node the player can SEE; selected: the subset taken, always a subset of it.
@@ -208,12 +212,48 @@ const DBG={
 // Gameplay reads:    globalUpgradeEnabled() is pure obelisk ownership; there is no override map.
 function legitimateGlobalUpgradeOwned(id){return buildings.some(building=>building.complete&&building.type==="obelisk"&&building.upgrades[id]);}
 function globalUpgradeEnabled(id){return legitimateGlobalUpgradeOwned(id);}
-// THE night difficulty dial, re-derived from the level rather than stored: every third level opens
-// the next recipe tier and adds a bonus spawn batch, and tier 4 is the authored ceiling.
+// Level still unlocks broader authored Spawn Pools. Quantity/difficulty no longer comes from this
+// tier: waveThreatBudget() owns that independently, so enemy stats never need hidden scaling.
 function waveTier(){return Math.min(4,Math.floor(state.level/3));}
-// One night's spawn quota, calm-night discount included. The discount is consumed by whoever sets
-// a wave up, so a card drafted at night shrinks the NEXT wave, never the one already running.
-function nightSpawnTotal(){const total=NIGHT_WAVE_SPAWNS+waveTier()*NIGHT_TIER_BONUS_SPAWNS;return state.draft.calmNight?Math.max(1,Math.floor(total*CARD_CONSUMABLES.calmNightFactor)):total;}
+// Runtime curve holder. WAVE_THREAT_CURVE remains the authored reset/default; only the debugger's
+// setter below writes this holder, and an active Spawn Plan remains an immutable snapshot.
+const WAVE_TUNE={...WAVE_THREAT_CURVE};
+/** Normalized power ramp with explicit endpoints. This is the one mathematical difficulty knob:
+ *   B(w)=B0+(BX-B0)*clamp((w-1)/(X-1),0,1)^p
+ * `power` >1 delays growth then steepens it; 1 is linear; 0<p<1 front-loads growth. */
+function waveThreatBudget(waveNumber){
+  const {startBudget,targetBudget,targetWave,power}=WAVE_TUNE;
+  const t=clamp((waveNumber-1)/Math.max(1,targetWave-1),0,1);
+  const curveBudget=Math.max(1,Math.round(startBudget+(targetBudget-startBudget)*t**power));
+  const boss=ENEMY_TYPES[WAVE_BOSS_SPAWNS[waveNumber]];
+  return Math.max(curveBudget,boss?.threatCost||0);
+}
+let spawnPlanRevision=0;
+/** Spend an integer Threat Budget against one recipe's archetype pool. Wave number unlocks fixed-stat
+ * color variants; each enemy's spawnWeight says how often. A base cost-1 raider guarantees exact spend. */
+function composeSpawnPlan(recipe,waveNumber,{budget=waveThreatBudget(waveNumber),immediateFirst=false}={}){
+  const archetypes=new Set(recipe.pool);
+  const pool=Object.entries(ENEMY_TYPES).filter(([,def])=>!def.boss&&archetypes.has(def.archetype)&&def.minWave<=waveNumber).map(([type,def])=>({type,...def}));
+  invariant(pool.length>0&&pool.every(enemy=>Number.isInteger(enemy.threatCost)&&enemy.threatCost>0&&enemy.spawnWeight>0),"invalid threat pool "+recipe.id);
+  invariant(pool.some(enemy=>enemy.threatCost===1),"threat pool cannot spend every integer budget: "+recipe.id);
+  const bossType=WAVE_BOSS_SPAWNS[waveNumber],boss=bossType&&{type:bossType,...ENEMY_TYPES[bossType]};
+  invariant(!boss||boss.threatCost<=budget,"boss exceeds wave threat budget: "+bossType);
+  const entries=[];let remaining=budget-(boss?.threatCost||0);
+  while(remaining>0){
+    const eligible=pool.filter(enemy=>enemy.threatCost<=remaining);
+    const totalWeight=eligible.reduce((sum,enemy)=>sum+enemy.spawnWeight,0);
+    let roll=Math.random()*totalWeight,selected=eligible.at(-1);
+    for(const enemy of eligible){roll-=enemy.spawnWeight;if(roll<0){selected=enemy;break;}}
+    entries.push({type:selected.type,threatCost:selected.threatCost,at:0});remaining-=selected.threatCost;
+  }
+  // Forced bosses close the schedule rather than displacing the opening pressure.
+  if(boss)entries.push({type:boss.type,threatCost:boss.threatCost,at:0});
+  let spent=0;
+  for(let index=0;index<entries.length;index++){
+    const entry=entries[index];entry.at=immediateFirst&&index===0?0:NIGHT_WAVE_WINDOW*(spent+entry.threatCost/2)/budget;spent+=entry.threatCost;Object.freeze(entry);
+  }
+  return Object.freeze({id:"plan-"+(++spawnPlanRevision),sourceId:recipe.id,waveNumber,threatBudget:budget,entries:Object.freeze(entries)});
+}
 /** Living scheduled enemies from this night only. Manual/debug and showcase enemies have no
  * waveNightNumber, while survivors from a force-ended older night retain their retired identity. */
 function livingActiveWaveEnemies(){
@@ -222,7 +262,19 @@ function livingActiveWaveEnemies(){
 }
 function chooseUpcomingNight(){
   const recipes=NIGHT_WAVE_RECIPES.filter(recipe=>recipe.minTier<=waveTier());
-  state.nightWave.upcomingRecipe=recipes[(Math.random()*recipes.length)|0];
+  const recipe=recipes[(Math.random()*recipes.length)|0],waveNumber=state.nightWave.nightNumber+1;
+  state.nightWave.upcomingPlan=composeSpawnPlan(recipe,waveNumber);
+}
+/** Debug-authoring command: update future difficulty and recompose only the upcoming plan. The active
+ * plan is never touched, so moving a slider cannot add or remove work from a wave in progress. */
+function setWaveThreatCurve(patch){
+  const next={...WAVE_TUNE,...patch};
+  if(!Number.isInteger(next.startBudget)||next.startBudget<1||!Number.isInteger(next.targetBudget)||next.targetBudget<next.startBudget||!Number.isInteger(next.targetWave)||next.targetWave<2||!Number.isFinite(next.power)||next.power<=0)return false;
+  if(Object.keys(WAVE_TUNE).every(key=>WAVE_TUNE[key]===next[key]))return true;
+  Object.assign(WAVE_TUNE,next);
+  const plan=state.nightWave.upcomingPlan,recipe=plan&&NIGHT_WAVE_RECIPES.find(item=>item.id===plan.sourceId);
+  if(recipe){state.nightWave.upcomingPlan=composeSpawnPlan(recipe,state.nightWave.nightNumber+1);effects.phaseHudChanged();}
+  return true;
 }
 chooseUpcomingNight();
 
@@ -284,7 +336,7 @@ function makeShowcaseWorker(f,index){
 }
 function clearShowcaseLive(){
   cancelHeldObject();closeUpgradeMenu();resetChop();state.showcaseFocus=null;
-  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=0;replaceGrass([]);state.workers.length=state.enemies.length=0;
+  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=lightningArcs.length=0;replaceGrass([]);state.workers.length=state.enemies.length=0;
   invariant(!state.heldObject,"held object survived showcase teardown");
 }
 function buildShowcaseFixtures(){
@@ -337,7 +389,7 @@ export function initializeRunMode(mode="normal"){
     validateSimulationInvariants();return;
   }
   installAllLandTerrain();
-  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.activeRecipe=null;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
+  state.gameOver=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.upcomingPlan=null;state.nightWave.activePlan=null;state.nightWave.threatBudget=0;state.nightWave.spawnedThreat=0;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
 }
 export function rebuildShowcase(){if(state.runMode!=="showcase")return false;resetShowcaseEconomy();installAllLandTerrain();buildShowcaseFixtures();return true;}
 
@@ -384,7 +436,12 @@ export function validateSimulationInvariants(){
   invariant((state.clock.phase==="night")===(wave.activeNightNumber!==null),"active wave identity disagrees with phase");
   invariant(Number.isInteger(wave.totalSpawns)&&wave.totalSpawns>=0,"illegal wave total");
   invariant(Number.isInteger(wave.remainingSpawns)&&wave.remainingSpawns>=0&&wave.remainingSpawns<=wave.totalSpawns,"illegal remaining wave spawns");
-  if(state.clock.phase==="night")invariant(NIGHT_WAVE_RECIPES.includes(wave.activeRecipe)&&wave.totalSpawns>0,"night has no authored active recipe");
+  const validPlan=plan=>plan&&Number.isInteger(plan.threatBudget)&&plan.threatBudget>0&&Object.isFrozen(plan)&&Object.isFrozen(plan.entries)&&plan.entries.length>0&&plan.entries.every(entry=>Object.isFrozen(entry)&&ENEMY_TYPES[entry.type]?.threatCost===entry.threatCost&&entry.at>=0&&entry.at<=NIGHT_WAVE_WINDOW)&&plan.entries.reduce((sum,entry)=>sum+entry.threatCost,0)===plan.threatBudget;
+  if(state.runMode==="normal")invariant(validPlan(wave.upcomingPlan),"normal run has no valid upcoming Spawn Plan");
+  if(state.clock.phase==="night"){
+    invariant(validPlan(wave.activePlan)&&wave.totalSpawns===wave.activePlan.entries.length,"night has no valid active Spawn Plan");
+    invariant(Number.isInteger(wave.spawnedThreat)&&wave.spawnedThreat>=0&&wave.spawnedThreat<=wave.threatBudget&&wave.threatBudget===wave.activePlan.threatBudget,"active threat schedule disagrees with its budget");
+  }
   for(const enemy of state.enemies){
     invariant(assertCombatKind(enemy)==="enemy","non-enemy in enemy collection");
     invariant(ENEMY_TYPES[enemy.type],"unknown enemy type "+enemy.type);
@@ -415,6 +472,7 @@ export function validateSimulationInvariants(){
     invariant(canPlace(chest.x,chest.y,null,null,null,chest),"placed chest overlaps another occupant");
   }
   for(const number of damageNumbers){invariant(Number.isFinite(number.amount)&&number.amount>0,"illegal damage number amount");invariant(Number.isFinite(number.age)&&number.age>=0,"illegal damage number age");invariant(typeof number.critical==="boolean","illegal damage number crit tag");invariant(["dealt","received"].includes(number.tone),"illegal damage number tone");}
+  for(const arc of lightningArcs)invariant([arc.x1,arc.y1,arc.x2,arc.y2,arc.age,arc.seed].every(Number.isFinite)&&arc.age>=0,"illegal lightning arc");
   for(const drop of resourceDrops){
     invariant(RESOURCE_KIND_SET.has(drop.kind),"unknown resource drop kind "+drop.kind);
     invariant(drop.target===null||drop.target==="hand","invalid resource drop target "+drop.target);
@@ -516,6 +574,45 @@ function hitCombatTarget(target,quiet=false){
   else if(kind==="enemy")damageEnemy(target,damage,"#d25b49",5,null,{announce:true,critical});
   else invariant(false,"unhandled combat kind "+kind);
   if(!quiet)sound(critical?820:610,.045);
+  maybeChainLightning(target);
+}
+
+// ── chain lightning ─────────────────────────────────────────────────────────
+// The chainLightning buff turns a completed player swing into up to N more swings, each landing on
+// the nearest unstruck target within reach of the previous strike. A jump re-enters the ordinary
+// hit paths (hitCombatTarget / hitResource) so it IS a full swing — its own crit roll, its own
+// drops — and `chainResolving` is what stops those re-entered swings from proccing again.
+let chainResolving=false;
+function chainCombatRoster(){return state.runMode==="showcase"?damageDummies.filter(dummy=>dummy.defeatedTimer<=0):state.enemies;}
+/** Jump order resolved BEFORE any damage lands, so a kill mid-chain cannot re-aim later jumps. */
+function chainLightningTargets(fromX,fromY,jumps,range,visited,combatOnly=false){
+  const targets=[];
+  let x=fromX,y=fromY;
+  for(let i=0;i<jumps;i++){
+    let next=null,best=range;
+    for(const enemy of chainCombatRoster()){const d=distance(x,y,enemy.x,enemy.y);if(!visited.has(enemy)&&enemy.hp>0&&d<best){best=d;next={target:enemy,combat:true,resource:null};}}
+    if(!combatOnly)for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){const d=distance(x,y,node.x,node.y);if(!visited.has(node)&&resourceIsActive(node,kind)&&d<best){best=d;next={target:node,combat:false,resource:kind};}}
+    if(!next)break;
+    visited.add(next.target);targets.push(next);x=next.target.x;y=next.target.y;
+  }
+  return targets;
+}
+function addLightningArc(x1,y1,x2,y2){lightningArcs.push({x1,y1,x2,y2,age:0,seed:Math.random()});}
+function maybeChainLightning(origin){
+  const jumps=chainLightningJumps();
+  if(jumps<=0||chainResolving||Math.random()>=chainLightningChance())return;
+  const targets=chainLightningTargets(origin.x,origin.y,jumps,CARD_BUFFS.chainRange,new Set([origin]));
+  if(!targets.length)return;
+  let fromX=origin.x,fromY=origin.y;
+  chainResolving=true;
+  try{
+    for(const jump of targets){
+      addLightningArc(fromX,fromY,jump.target.x,jump.target.y);fromX=jump.target.x;fromY=jump.target.y;
+      if(jump.combat)hitCombatTarget(jump.target,true);
+      else hitResource(jump.target,jump.resource,false,true);
+    }
+  }finally{chainResolving=false;}
+  sound(940,.1);
 }
 function blastButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-34&&y<=building.y+34;}
 function manualTowerButtonHit(building,x,y){return x>=building.x-30&&x<=building.x+30&&y>=building.y-42&&y<=building.y+34;}
@@ -773,8 +870,6 @@ function leftClick(){
   if(manualTower){activateManualTower(manualTower);return;}
   const obelisk=buildings.find(building=>building.complete&&building.type==="obelisk"&&upgradeButtonHit(building,m.x,m.y));
   if(obelisk){openUpgradeMenu(obelisk,"obelisk");return;}
-  const tower=buildings.find(building=>building.complete&&building.type==="tower"&&building.tower.variant==="basic"&&!building.activeUpgrade&&upgradeButtonHit(building,m.x,m.y));
-  if(tower){openUpgradeMenu(tower,"tower");return;}
   const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
   if(pile){unloadStockpile(pile,m.x);return;}
   if(!action){toast("left click a chest, resource, or enemy");return;}
@@ -856,14 +951,19 @@ function hitResource(target,kind,automatic,quiet=false){
     burst(target.x,target.y,kind==="diamond"?"#78d7e5":"#8b8985",11);
     if(!automatic)toast(kind==="diamond"?"diamond deposit exhausted":"rock cleared");
   }
+  if(!automatic)maybeChainLightning(target);
 }
 
 function spawnResource(kind,x,y,ttl=null){
   resourceDrops.push({kind,x,y,groundY:clamp(y+rand(10,22),35,H-20),vx:rand(-35,35),vy:rand(-75,-35),ground:false,target:null,t:0,spin:rand(0,6),ttl});
 }
 function spawnCoin(){
+  // On or just past the player's screen, not anywhere on the 5x map: ±1.15× the visible
+  // half-extents around the camera target (the same numbers clampCamera() frames with),
+  // so an 8s coin is actually findable before it despawns.
+  const camera=state.camera,halfW=VIEW_W/(2*camera.zoom)*1.15,halfH=VIEW_H/(2*camera.zoom)*1.15;
   for(let attempt=0;attempt<300;attempt++){
-    const x=rand(40,W-40),y=rand(40,H-40);
+    const x=clamp(camera.x+rand(-halfW,halfW),40,W-40),y=clamp(camera.y+rand(-halfH,halfH),40,H-40);
     if(distance(x,y,BASE.x,BASE.y)<80)continue;
     spawnResource("coin",x,y,8);toast("a gold coin appeared nearby");return;
   }
@@ -1048,7 +1148,7 @@ function queueDawnReward(){
 // instant it is PLAYED out of the hand. Buff entries are deliberately empty: their whole effect is
 // the stack tally, layered over the authored numbers by the accessors below.
 const CARD_EFFECTS={
-  clickSpeed(){},critClicks(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},towerDamage(){},towerSpeed(){},clickDamage(){},
+  clickSpeed(){},critClicks(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},towerDamage(){},towerSpeed(){},clickDamage(){},chainLightning(){},
   handCarry(){state.capacity+=CARD_BUFFS.handCarry;},
   baseHp(){state.baseMax+=CARD_BUFFS.baseHp;state.baseHp+=CARD_BUFFS.baseHp;},
   woodBundle(){state.stored.wood+=CARD_CONSUMABLES.woodBundle;state.basePulse=1;},
@@ -1185,6 +1285,8 @@ function chopFillRate(){return (globalUpgradeEnabled("autoClick")?STEADY_HAND_RA
 function vacuumRadius(){return TUNE.vacuumRadius+CARD_BUFFS.vacuumRadius*buffStacks("vacuumRadius");}
 function clickDamage(){return TUNE.clickDamage+CARD_BUFFS.clickDamage*buffStacks("clickDamage");}
 function critHit(){const stacks=buffStacks("critClicks");return stacks>0&&Math.random()<CARD_BUFFS.critChance*stacks;}
+function chainLightningJumps(){const stacks=buffStacks("chainLightning");return stacks>0?CARD_BUFFS.chainJumps+stacks-1:0;}
+function chainLightningChance(){const stacks=buffStacks("chainLightning");return stacks>0?CARD_BUFFS.chainChance+CARD_BUFFS.chainChanceStack*(stacks-1):0;}
 function workerSpeed(){return WORKER_SPEED*CARD_BUFFS.workerSpeed**buffStacks("workerSpeed");}
 function workerCarry(){return WORKER_CARRY+CARD_BUFFS.workerCarry*buffStacks("workerCarry");}
 function towerDamage(variant){return Math.ceil(variant.damage*CARD_BUFFS.towerDamage**buffStacks("towerDamage"));}
@@ -1209,7 +1311,7 @@ function completeBuilding(building){
   // an earlier builder unresolved until the next tick would expose its durable vacancy to autofill.
   resolveBuildingCompletionWorkers(building);
   burst(building.x,building.y-12,"#ead28d",18);
-  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?"basic tower complete — "+TOWER_VARIANTS[planned].name+" already accepted, keep delivering":"basic tower complete — hover it to choose one variant"):def.name+" complete";
+  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?"basic tower complete — "+TOWER_VARIANTS[planned].name+" already accepted, keep delivering":"basic tower complete"):def.name+" complete";
   toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);effects.buildHudChanged();
 }
 function dropToBuilding(building){
@@ -1280,7 +1382,7 @@ function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null,ignoreChest=
 }
 
 function completeHouses(){return buildings.filter(building=>building.complete&&building.type==="house");}
-function nextHouseCost(){const count=completeHouses().length;return {wood:HOUSE_COST.wood+HOUSE_COST_ESCALATION.wood*count,stone:HOUSE_COST.stone+HOUSE_COST_ESCALATION.stone*count};}
+function nextHouseCost(){const count=completeHouses().length;if(count===0)return {...STARTING_HOUSE_COST};return {wood:HOUSE_COST.wood+HOUSE_COST_ESCALATION.wood*count,stone:HOUSE_COST.stone+HOUSE_COST_ESCALATION.stone*count};}
 function sourceWorkerCount(source){const held=heldWorker();return state.workers.filter(worker=>worker.spawnSource===source).length+(held?.spawnSource===source?1:0);}
 /** Durable-post compatibility view adds arrival to shared occupancy. */
 function durablePostStatus(building){
@@ -1590,6 +1692,14 @@ function fireTowerAttack(building,variant,target){
   }else if(variant.attackMode==="line"){
     const angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*variant.range,endY=building.y+Math.sin(angle)*variant.range;tower.targetX=endX;tower.targetY=endY;
     eachTowerCombatTarget(enemy=>{if(lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageCombatTarget(enemy,damage,color,7,building);});
+  }else if(variant.attackMode==="chain"){
+    // Full tower damage on every strike; jumps ignore the tower's own range and only obey
+    // chainRange, so the bolt may run past the ring the player aimed with — like the buff does.
+    const jumps=chainLightningTargets(target.x,target.y,variant.chainJumps,variant.chainRange,new Set([target]),true);
+    addLightningArc(building.x,building.y,target.x,target.y);
+    damageCombatTarget(target,damage,color,7,building);
+    let fromX=target.x,fromY=target.y;
+    for(const jump of jumps){addLightningArc(fromX,fromY,jump.target.x,jump.target.y);fromX=jump.target.x;fromY=jump.target.y;damageCombatTarget(jump.target,damage,color,7,building);}
   }else{
     const alive=damageCombatTarget(target,damage,color,["burn","slow","push"].includes(variant.attackMode)?8:5,building);
     if(alive&&variant.attackMode==="burn")applyBurn(target,building,variant);
@@ -1713,17 +1823,24 @@ function transitionPhase(){
   const clock=state.clock,wave=state.nightWave;
   if(clock.phase==="day"){
     clock.phase="night";clock.remaining=0;
-    // Tier is snapshotted at night setup: leveling mid-wave changes the next telegraphed night only.
-    const totalSpawns=nightSpawnTotal();state.draft.calmNight=false;
-    wave.activeRecipe=wave.upcomingRecipe;wave.totalSpawns=totalSpawns;wave.remainingSpawns=totalSpawns;wave.elapsed=0;wave.nextSpawnAt=NIGHT_WAVE_WINDOW/totalSpawns;wave.nightNumber++;wave.activeNightNumber=wave.nightNumber;
+    // The plan snapshots budget, pool, order, and timing. Leveling mid-wave can only affect the next
+    // plan. Calm Night discounts the budget and recomposes before its one-shot flag is consumed.
+    let plan=wave.upcomingPlan;
+    if(state.draft.calmNight){
+      const recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===plan.sourceId);
+      const budget=Math.max(1,Math.floor(plan.threatBudget*CARD_CONSUMABLES.calmNightFactor));
+      plan=composeSpawnPlan(recipe,plan.waveNumber,{budget});
+    }
+    state.draft.calmNight=false;wave.activePlan=plan;wave.threatBudget=plan.threatBudget;wave.spawnedThreat=0;
+    wave.totalSpawns=plan.entries.length;wave.remainingSpawns=wave.totalSpawns;wave.elapsed=0;wave.nextSpawnAt=plan.entries[0].at;wave.nightNumber++;wave.activeNightNumber=wave.nightNumber;
   }else{
     // A long day drafted at night is banked here, so the card is never silently wasted.
     clock.phase="day";clock.remaining=DAY_DURATION+state.draft.dayBonus;state.draft.dayBonus=0;clock.completedNights++;
-    wave.activeRecipe=null;wave.remainingSpawns=0;wave.activeNightNumber=null;
+    wave.activePlan=null;wave.threatBudget=0;wave.spawnedThreat=0;wave.remainingSpawns=0;wave.activeNightNumber=null;
     // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
     chooseUpcomingNight();
-    // Surviving the night IS the reward: one pick of three consumables or blueprints, straight into
-    // the hand. It queues behind a level offer that is somehow already live rather than replacing it.
+    // Surviving the night earns one permanent-buff pick. It queues behind a building offer that is
+    // somehow already live rather than replacing it.
     queueDawnReward();
   }
 }
@@ -1742,15 +1859,16 @@ function updateClock(dt){
 
 function updateNightEnemyWave(dt){
   if(state.clock.phase!=="night")return;
-  const wave=state.nightWave,interval=NIGHT_WAVE_WINDOW/wave.totalSpawns;
-  wave.elapsed+=dt;
-  // Scheduled thresholds, rather than random frame rolls, keep the quota stable across frame rates.
+  const wave=state.nightWave;wave.elapsed+=dt;
+  // Plan timestamps are cumulative-threat midpoints: many cheap bodies stream steadily while one
+  // expensive enemy occupies proportionally more of the 30-second window.
   while(wave.remainingSpawns>0&&wave.elapsed>=wave.nextSpawnAt&&state.enemies.length<NIGHT_ENEMY_CAP){
-    const index=(wave.totalSpawns-wave.remainingSpawns)%wave.activeRecipe.spawns.length;
+    const index=wave.totalSpawns-wave.remainingSpawns,entry=wave.activePlan.entries[index];
     // This is the sole membership writer. spawnEnemy() stays membership-neutral for debugger calls
     // and preserves its command-style undefined return contract.
-    spawnEnemy(wave.activeRecipe.spawns[index]);state.enemies[state.enemies.length-1].waveNightNumber=wave.activeNightNumber;
-    wave.remainingSpawns--;wave.nextSpawnAt+=interval;
+    spawnEnemy(entry.type);state.enemies[state.enemies.length-1].waveNightNumber=wave.activeNightNumber;
+    wave.spawnedThreat+=entry.threatCost;wave.remainingSpawns--;
+    wave.nextSpawnAt=wave.remainingSpawns?wave.activePlan.entries[index+1].at:NIGHT_WAVE_WINDOW;
   }
 }
 
@@ -1823,6 +1941,7 @@ function updateParticles(dt){
 function updateDamageNumbers(dt){
   // Renderer owns configurable lifetime; retain past its maximum slider range, then it can decide opacity.
   for(let i=damageNumbers.length-1;i>=0;i--){damageNumbers[i].age+=dt;if(damageNumbers[i].age>5)damageNumbers.splice(i,1);}
+  for(let i=lightningArcs.length-1;i>=0;i--){lightningArcs[i].age+=dt;if(lightningArcs[i].age>.4)lightningArcs.splice(i,1);}
 }
 function updateNormal(dt){
   // A pending draft freezes the world on its own flag: the player's pause may be on or off under it.
@@ -1833,11 +1952,11 @@ function updateNormal(dt){
     if(!updateEnemyStatuses(enemy,dt))continue;
     const def=ENEMY_TYPES[enemy.type];
     enemy.wob+=dt*7;enemy.flash=Math.max(0,enemy.flash-dt);enemy.shotFlash=Math.max(0,enemy.shotFlash-dt);enemy.healFlash=Math.max(0,enemy.healFlash-dt);enemy.attackCooldown-=dt;enemy.healCooldown-=dt;
-    if(enemy.type==="healer"&&enemy.healCooldown<=0){
+    if(def.archetype==="healer"&&enemy.healCooldown<=0){
       let patient=null,best=150;
       for(const ally of state.enemies){if(ally===enemy||ally.hp>=ally.max)continue;const dd=distance(enemy.x,enemy.y,ally.x,ally.y);if(dd<best){best=dd;patient=ally;}}
-      if(patient){patient.hp=Math.min(patient.max,patient.hp+2);enemy.healFlash=.3;enemy.healX=patient.x;enemy.healY=patient.y;burst(patient.x,patient.y,"#75c86d",5);}
-      enemy.healCooldown=2.3;
+      if(patient){patient.hp=Math.min(patient.max,patient.hp+def.healAmount);enemy.healFlash=.3;enemy.healX=patient.x;enemy.healY=patient.y;burst(patient.x,patient.y,"#75c86d",5);}
+      enemy.healCooldown=def.healRate;
     }
     const target=selectEnemyTarget(enemy);
     if(target.distance>def.range){const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x),speedMultiplier=enemy.status.slow?.multiplier??1;enemy.x+=Math.cos(angle)*def.speed*speedMultiplier*dt;enemy.y+=Math.sin(angle)*def.speed*speedMultiplier*dt;}
@@ -1961,15 +2080,13 @@ function hoveredBuilding(){
   if(state.camera.panning || state.heldObject || state.buildMode) return null;
   const m = state.mouse;
   if(!m.inside) return null;
-  // ── leftClick()'s order: blast, manual tower, obelisk menu, tower menu, stockpile pull ──
+  // ── leftClick()'s order: blast, manual tower, obelisk menu, stockpile pull ──
   const blast = buildings.find(b=>b.complete && b.type==="blast" && blastButtonHit(b,m.x,m.y));
   if(blast) return blast;
   const manualTower = buildings.find(b=>b.complete && b.type==="tower" && towerVariant(b).manual && manualTowerButtonHit(b,m.x,m.y));
   if(manualTower) return manualTower;
   const obelisk = buildings.find(b=>b.complete && b.type==="obelisk" && upgradeButtonHit(b,m.x,m.y));
   if(obelisk) return obelisk;
-  const tower = buildings.find(b=>b.complete && b.type==="tower" && b.tower.variant==="basic" && !b.activeUpgrade && upgradeButtonHit(b,m.x,m.y));
-  if(tower) return tower;
   const pile = buildings.find(b=>b.complete && b.type==="stockpile" && distance(m.x,m.y,b.x,b.y)<38);
   if(pile) return pile;
   // ── hoverTarget()'s order: base first, then one pass over buildings with its three branches ──
@@ -2009,6 +2126,14 @@ function debugDealCard(id){
   if(!card||!["consumable","blueprint"].includes(card.category))return false;
   addToHand(id);return true;
 }
+/** Apply one stack of an implemented buff, exactly as drafting it would (same applyBuff() path:
+ *  stack tally + effect + toast). DEBUG ONLY: repeated calls stack past the authored `stacks` cap —
+ *  the card dealer is a test bench, not a draft. */
+function debugApplyBuff(id){
+  const card=cardById[id];
+  if(!card||card.category!=="buff")return false;
+  return applyBuff(id);
+}
 /** Empty the hand. RUN STATE ONLY, exactly like every other debug command: it drops held cards and
  *  the placement they may have armed, and touches no authored table, no pool flag and no store. */
 function debugClearHand(){
@@ -2032,19 +2157,16 @@ function debugGoToPhase(phase){
   effects.phaseHudChanged();
 }
 function debugAdvancePhase(){ transitionPhase(); effects.phaseHudChanged(); }
-/** Start the chosen recipe's wave immediately: force night through the real transition
- *  (which does the side/telegraph bookkeeping), then hand the schedule this recipe with
- *  its first spawn already due. The recipe object itself is never modified. */
+/** Start a freshly composed plan from the chosen authored pool. Force night through the real
+ * transition first, retain that night's snapshotted budget, then make its first spawn immediately
+ * due. Neither the authored recipe nor the ordinary upcoming plan is modified. */
 function debugStartWave(id){
-  const recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===id); if(!recipe) return;
-  // A real transition already sized (and spent) the night; only a re-roll inside an ongoing night
-  // has to size one itself, so a calm night is neither double-counted nor thrown away here.
-  const transitioned=state.clock.phase!=="night"; if(transitioned) transitionPhase();
-  const wave=state.nightWave;
-  wave.activeRecipe=recipe;
-  wave.totalSpawns=transitioned?wave.totalSpawns:nightSpawnTotal();
-  wave.remainingSpawns=wave.totalSpawns; wave.elapsed=0; wave.nextSpawnAt=0;
-  effects.phaseHudChanged(); toast("debug wave: "+recipe.id);
+  const recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===id);if(!recipe)return;
+  if(state.clock.phase!=="night")transitionPhase();
+  const wave=state.nightWave,plan=composeSpawnPlan(recipe,wave.nightNumber,{budget:wave.threatBudget,immediateFirst:true});
+  wave.activePlan=plan;wave.threatBudget=plan.threatBudget;wave.spawnedThreat=0;
+  wave.totalSpawns=plan.entries.length;wave.remainingSpawns=wave.totalSpawns;wave.elapsed=0;wave.nextSpawnAt=0;
+  effects.phaseHudChanged();toast("debug threat pool: "+recipe.id);
 }
 /** Debug removal, not a kill: no dust roll, no defeat toast — just the same status and
  *  retaliation teardown killEnemy() does so nothing keeps a reference to a gone enemy. */
@@ -2125,8 +2247,10 @@ export function offsetCamera(dx,dy){ state.camera.x+=dx; state.camera.y+=dy; }
 // it is owned here; the panel that displays it is not. openUpgradeMenu() reports
 // whether it opened, and announces its own refusals.
 export function openUpgradeMenu(building,kind){
+  // Tower variants now come only from blueprint cards. Keep this command-level guard as well as
+  // removing the click target, so another UI cannot accidentally restore direct tower upgrading.
+  if(kind==="tower"){toast("tower variants come from blueprint cards");return false;}
   if(building.activeUpgrade){toast("finish the active upgrade by depositing resources");return false;}
-  if(kind==="tower"&&building.tower.variant!=="basic"){toast("this tower already has a permanent variant");return false;}
   stopGameplayInput();
   const list=upgradeList(kind);
   state.upgradeMenu.building=building;state.upgradeMenu.kind=kind;
@@ -2220,6 +2344,16 @@ export function showcaseLabels(){return state.runMode==="showcase"?{revision:sho
 /** XP economy read-only peeks; state mutations remain inside feeding and skill commands. */
 function xp(){return state.xp;}
 function skillPoints(){return state.skillPoints;}
+/** Perf/debug census of simulation-owned records. `total` includes short-lived particles and damage
+ * numbers because they still consume update/render work; the named fields explain the useful load. */
+export function simulationEntityDiagnostics(){
+  const resourceNodes=trees.length+rocks.length+diamonds.length;
+  const transients=particles.length+damageNumbers.length+workerCorpses.length;
+  const total=resourceNodes+grass.length+resourceDrops.length+chests.length+buildings.length+
+    state.workers.length+state.enemies.length+damageDummies.length+showcaseProps.length+transients;
+  return {total,workers:state.workers.length,enemies:state.enemies.length,buildings:buildings.length,
+    resourceNodes,drops:resourceDrops.length,transients};
+}
 /** The level bar: xp is progress INTO the current level, next is what the following one costs. */
 export function levelState(){return {level:state.level,xp:state.levelXp,next:levelCost(state.level)};}
 /** The live offer as three card ids, or null when no draft is pending. Never mutate the array. */
@@ -2288,7 +2422,7 @@ function skillTreeEdges(){
 
 export {
   // live collections — iterate, never mutate
-  state, trees, rocks, diamonds, grass, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers,
+  state, trees, rocks, diamonds, grass, resourceDrops, chests, buildings, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers, lightningArcs,
   // debug flags (the gameplay pane's own bindings are the only writers)
   DBG,
   // the step
@@ -2309,7 +2443,7 @@ export {
   workerOccupancyStatus, workerOccupancyAt, durablePostStatus, vacantDurablePosts,
   workerIsLoaned, workerCoatColor, workerLoad, carriedTotal, resourceIsActive,
   // skill tree — read-only projections of the authored graph over this run's two id sets
-  skillTreeNodes, skillTreeEdges, xp, skillPoints, waveTier, livingActiveWaveEnemies, levelCost, buffStacks,
+  skillTreeNodes, skillTreeEdges, xp, skillPoints, waveTier, waveThreatBudget, livingActiveWaveEnemies, levelCost, buffStacks,
   // the effective vacuum reach, buffs included — the drawn ring should read this, not TUNE alone
   vacuumRadius,
   // shared numeric helpers (defined here, so nothing restates them)
@@ -2318,6 +2452,6 @@ export {
   togglePause, cancelBuildMode, clampCamera, stopGameplayInput, cancelHeldObject,
   spawnEnemy, transitionPhase,
   // debug commands (view panel > gameplay)
-  debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
-  debugStartWave, debugClearEnemies, debugHealAll, debugForceNextChestOutcome, debugDealCard, debugClearHand,
+  debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase, setWaveThreatCurve,
+  debugStartWave, debugClearEnemies, debugHealAll, debugForceNextChestOutcome, debugDealCard, debugApplyBuff, debugClearHand,
 };
