@@ -268,7 +268,7 @@ try{
   // is dealt through the ordinary hand writer, so every entry is a real one-copy stack.
   {
     const opening=sim.hand();
-    assert.deepEqual(opening.map(entry=>entry.id),["bpHouse","bpQuarry","bpTower"],"a normal run must open with workers, renewable stone, and the first tower");
+    assert.deepEqual(opening.map(entry=>entry.id),["bpHouse","bpTower"],"a normal run must open with workers and the first tower");
     assert.equal(opening.every(entry=>entry.count===1&&entry.charges===null),true,"a seeded card must be an ordinary untouched stack");
     assert.equal(opening.every(entry=>cardCatalog.cardById[entry.id].category==="build"),true);
     assert.equal(sim.initializeRunMode("normal"),undefined);
@@ -1429,10 +1429,10 @@ try{
       try{
         sim.initializeRunMode("normal");clearGround();
         // 0 · the opening kit, and the debug command that takes it away again
-        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpHouse","bpQuarry","bpTower"],"a normal run must open with workers, renewable stone, and the first tower");
+        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpHouse","bpTower"],"a normal run must open with workers and the first tower");
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpTower")),"targeting","a seeded card must play like any other");
         assert.equal(sim.state.buildMode,"tower");assert.equal(sim.cancelBuildMode(),true);
-        assert.equal(sim.debugClearHand(),3,"clearing the hand must report what it dropped");
+        assert.equal(sim.debugClearHand(),2,"clearing the hand must report what it dropped");
         assert.deepEqual(sim.hand(),[],"debugClearHand must empty the hand");
         assert.equal(sim.state.cardTargeting,null);assert.equal(sim.state.buildMode,null);
         assert.equal(sim.debugClearHand(),0,"clearing an empty hand is a no-op");

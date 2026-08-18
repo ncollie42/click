@@ -384,10 +384,9 @@ function buildShowcaseFixtures(){
 function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
 // ── STRAWMAN, for owner tuning ──────────────────────────────────────────────
 // With the build shop gone, cards are the ONLY way to put a building on the ground. XP will offer
-// later blueprints, but the first economy and wave need a seed kit: one house (workers), one quarry
-// (renewable stone), and one basic tower chassis (the first night). It is a DESIGN GUESS — change
-// the ids, counts, or delete the line entirely; nothing else reads it.
-const STARTING_HAND=["bpHouse","bpQuarry","bpTower"];
+// later blueprints, but the opening needs one house (workers) and one basic tower chassis (the first
+// night). It is a DESIGN GUESS — change the ids/counts or delete the line; nothing else reads it.
+const STARTING_HAND=["bpHouse","bpTower"];
 let startingHandDealt=false;
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
