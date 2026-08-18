@@ -58,9 +58,9 @@ const manifest = {
     {id:"lightning",x:608,y:576},
   ].map(t=>({...t,section:"towers",label:t.id})),
   enemies:[
-    {id:"raider",x:960,y:544},{id:"archer",x:1088,y:544},{id:"healer",x:1216,y:544},{id:"brute",x:1344,y:544},
-    {id:"raiderVeteran",x:960,y:608},{id:"archerVeteran",x:1088,y:608},{id:"healerVeteran",x:1216,y:608},{id:"bruteVeteran",x:1344,y:608},
-    {id:"raiderElite",x:960,y:672},{id:"archerElite",x:1088,y:672},{id:"healerElite",x:1216,y:672},{id:"bruteElite",x:1344,y:672},
+    {id:"bomber",x:832,y:544},{id:"raider",x:960,y:544},{id:"archer",x:1088,y:544},{id:"healer",x:1216,y:544},{id:"brute",x:1344,y:544},
+    {id:"bomberVeteran",x:832,y:608},{id:"raiderVeteran",x:960,y:608},{id:"archerVeteran",x:1088,y:608},{id:"healerVeteran",x:1216,y:608},{id:"bruteVeteran",x:1344,y:608},
+    {id:"bomberElite",x:832,y:672},{id:"raiderElite",x:960,y:672},{id:"archerElite",x:1088,y:672},{id:"healerElite",x:1216,y:672},{id:"bruteElite",x:1344,y:672},
     {id:"bruteBoss",x:1568,y:608},
   ].map(e=>({...e,section:"units",label:e.id})),
   workers:[

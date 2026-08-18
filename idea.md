@@ -259,6 +259,35 @@ Add placeable, destructible wall segments. Start with grid-aligned pieces that e
 
 Manual clicks and steady-hand holding share one player-work cooldown, tuned by `PLAYER_CLICK_CPS`. The rate applies only to direct enemy attacks and tree, rock, or diamond gathering; other interactions remain immediate.
 
+### On-Click and On-Death Spectacle
+
+**Tags:** `Core Gameplay`, `Game Feel / Juice`
+
+Clicks can gain chance-based spatial procs. Favor effects that visibly travel through or alter the world—not invisible damage modifiers—and occasionally let a proc become excessive enough to create a memorable screen-clearing moment.
+
+**On enemy click candidates:**
+
+- **Chain lightning:** arcs to nearby enemies, with rare extra jumps or a fork into two chains.
+- **Piercing beam:** continues through the clicked enemy in the cursor-to-target direction and hits everything in a narrow line.
+- **Ground fissure:** a crack races away from the target, damaging and briefly staggering enemies it crosses.
+- **Shockwave:** an expanding ring damages or knocks enemies outward; clusters scatter visibly.
+- **Gravity pulse:** pulls nearby enemies into the clicked point, then bursts after a short telegraph.
+- **Ricochet shard:** launches toward several nearby targets with clear target-to-target trails.
+- **Delayed sky strike:** marks the ground, then drops a large bolt or meteor; enemies can move into or out of it.
+- **Echo click:** repeats the hit at the same world position after a short delay, potentially creating rhythmic cascades.
+- **Storm jackpot:** a very rare proc repeatedly strikes random enemies across the visible battlefield for a few seconds.
+
+**On enemy death candidates:**
+
+- Chance to explode, damaging nearby enemies and strongly throwing debris outward.
+- Chance to spawn a tree at the death position, turning combat into future wood and temporary terrain clutter.
+- Chance to launch seeking sparks from the corpse into surviving enemies.
+- Chance to leave a short-lived damaging or slowing patch on the ground.
+- Chance to split into several harmless resource motes or collectible drops that scatter spatially.
+- Other options TBD.
+
+Procs should originate at the clicked/dead enemy and preserve readable direction, radius, and timing. Rare upgrades may increase jump count, radius, duration, or projectile count rather than only damage. Decide whether secondary hits may trigger more procs; unrestricted recursion is exciting but needs a hard event budget to prevent hangs.
+
 ## Resource-Drop AOE
 
 **Tags:** `Core Gameplay`

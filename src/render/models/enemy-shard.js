@@ -1561,10 +1561,152 @@ const bruteAnims = {
   },
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// BOMBER — a SQUAT CRACKED BOULDER on four stub claws, ~17 wide × 17 high, with
+// one dark fuse stub breaking the crown. The kamikaze of the cast: it never
+// swings, so its one telegraph is the ARM — the sim's fuse timer drives a
+// silhouette change (the shell swells, the claws splay flat, the fuse stands up
+// and grows) plus an accelerating ember blink in the ability register. Ground
+// stays clean: threat never lands on the ground plane (that is the brute's slam
+// annulus, exclusively) — the tell lives entirely in the body.
+// ════════════════════════════════════════════════════════════════════════════
+// Rest ember sits BELOW the dim ability register: a banked coal, not a lit charge —
+// the arm blink jumping to full ABILITY_RGB is the contrast that sells the fuse.
+const EMBER_HOT = dispRGB(...ABILITY_RGB), EMBER_REST = dispRGB(112, 48, 162);
+function buildBomber() {
+  const root = new THREE.Group();
+  const body = new THREE.Group(); body.name = "body";
+  root.add(body);
+
+  // ONE continuous shell — a ball is the rare subject where the base vocabulary IS
+  // the identity. Slightly squashed so it reads planted, never balloon.
+  const shell = plate(8.4, 1.0, 0.95, 1.0, T.mid, 83, 1, 0.06);
+  shell.name = "shell"; shell.position.set(0, 8.8, 0);
+  body.add(shell);
+
+  // THE FUSE — a short dark stub rooted inside the crown, tilted toward the front so
+  // facing reads at distance, with the ember shard at its tip. The ember is the only
+  // ability-register element on the model and the only thing the arm brightens.
+  const fuse = new THREE.Group(); fuse.name = "fuse";
+  fuse.position.set(0, 15.2, 1.4); fuse.rotation.x = 0.34;
+  const stub = spike(2.6, 9.2, T.dark, 86, 5); stub.name = "fuseStub";
+  const ember = noShadow(new THREE.Mesh(
+    jitterWelded(new THREE.IcosahedronGeometry(1.25, 0), 0.14, 87), unlit(EMBER_REST.clone())));
+  ember.name = "fuseEmber"; ember.position.set(0, 8.9, 0);
+  fuse.add(stub, ember);
+  body.add(fuse);
+
+  // Four SHORT claws, roots inside the hull (raider's law: no anim can detach them).
+  const legs = new THREE.Group(); legs.name = "legs";
+  for (const s of [-1, 1]) for (const f of [-1, 1]) {
+    const leg = new THREE.Group();
+    leg.name = "leg" + (f > 0 ? "F" : "R") + (s < 0 ? "L" : "R");
+    leg.position.set(s * 5.0, 4.4, f * 4.4);
+    const claw = spike(1.4, 5.4, T.low, 90 + s + f * 2);
+    claw.rotation.set(3.02 + f * 0.12, 0, s * -0.20);
+    leg.add(claw);
+    legs.add(leg);
+  }
+  body.add(legs);
+
+  // Seam systems — tree topology, straight runs, hard kinks, on the ANALYTIC ball.
+  // One trunk falls away from the fuse socket (the shell is failing where the charge
+  // lives), one rakes the far flank, and one starts AT the silhouette nick.
+  const surf = ellipsoidSurf(...shell.userData.rad);
+  nick(shell, surf, -0.96, 0.30, 4.0, 2.6);               // screen-x outline at yaw 35
+  crackTree(shell, surf, {
+    trunk: [[0.30, 0.84], [0.62, 0.50], [0.44, 0.16], [0.74, -0.18], [0.54, -0.50]], w: 0.62, samples: 20,
+    forks: [{ at: 0.30, to: [[0.98, 0.30], [1.18, 0.16]], w: 0.30, samples: 10 },
+      { at: 0.68, to: [[0.20, -0.30], [0.00, -0.44]], w: 0.26, samples: 10 }],
+  });
+  crackTree(shell, surf, {
+    trunk: [[-0.96, 0.30], [-0.70, -0.02], [-0.94, -0.30], [-0.66, -0.54]], w: 0.48, samples: 16,
+    forks: [{ at: 0.46, to: [[-1.24, -0.16], [-1.42, -0.30]], w: 0.22, samples: 9 }],
+  });
+  crackTree(shell, surf, {
+    trunk: [[2.88, 0.58], [3.14, 0.24], [2.92, -0.08], [3.22, -0.38]], w: 0.38, samples: 16,
+    forks: [{ at: 0.50, to: [[2.60, 0.06], [2.42, -0.08]], w: 0.20, samples: 9 }],
+  });
+
+  // Narrow slits under a brow on the shell's front — the second front marker.
+  eyeCluster(body, { p: [0, 11.8, 7.2], rx: -0.16, size: 0.50, gap: 1.4, tilt: 0.45, slit: 0.95 });
+
+  softShadow(root, 8.8, 7.6, 0.32);
+  return finish(root);
+}
+
+const bomberAnims = {
+  // fast rolling patter — busier than the raider's hop, nothing leaves the ground
+  scuttle(g, phase, t) {
+    restore(g);
+    const body = g.getObjectByName("body");
+    const bob = Math.abs(Math.sin(t * 11));
+    body.position.y = bob * 1.1;
+    body.rotation.z = Math.sin(t * 11) * 0.07;            // side-to-side waddle roll
+    body.rotation.x = 0.05 + 0.04 * bob;                  // leaning into the run
+    g.getObjectByName("fuse").rotation.z = Math.sin(t * 11 - 0.9) * 0.16;
+    g.getObjectByName("legFL").rotation.x = Math.sin(t * 11) * 0.5;
+    g.getObjectByName("legRR").rotation.x = Math.sin(t * 11) * 0.5;
+    g.getObjectByName("legFR").rotation.x = Math.sin(t * 11 + Math.PI) * 0.5;
+    g.getObjectByName("legRL").rotation.x = Math.sin(t * 11 + Math.PI) * 0.5;
+  },
+  // THE ARM — k is the sim's fuse progress, 0 lit → 1 detonation. A silhouette
+  // telegraph, not a pose: the shell swells 16% and hunkers, the claws splay flat,
+  // the fuse stands upright and grows half again, and the ember blink ACCELERATES
+  // toward release. Eyes stay visible the whole way (they ride the body group).
+  arm(g, k, t) {
+    restore(g);
+    const body = g.getObjectByName("body");
+    const fuse = g.getObjectByName("fuse");
+    const ember = g.getObjectByName("fuseEmber");
+    const shadow = g.getObjectByName("contactShadow");
+    const q = clamp01(k);
+    body.scale.set(1 + 0.16 * q, 1 - 0.10 * q, 1 + 0.16 * q);
+    for (const name of ["legFL", "legFR", "legRL", "legRR"]) {
+      const leg = g.getObjectByName(name);
+      leg.rotation.x = (name[3] === "F" ? 1 : -1) * 0.55 * q;   // pressed out flat
+    }
+    fuse.rotation.x = 0.34 - 0.30 * q;                    // stands up out of the crown
+    fuse.scale.setScalar(1 + 0.5 * q);
+    const on = Math.sin(t * (6 + 30 * q * q)) > 0;        // the accelerating blink
+    ember.material.color.copy(on ? EMBER_HOT : EMBER_REST);
+    ember.scale.setScalar(1 + 0.9 * q + (on ? 0.45 : 0));
+    flareSeams(g, on ? 0.35 + 0.65 * q : 0.18 * q);
+    shadow.scale.set(8.8 * (1 + 0.14 * q), 7.6 * (1 + 0.14 * q), 1);
+    shadow.material.opacity = 0.32 + 0.10 * q;
+  },
+  // controlled-unit melee only (a captured bomber is defused): a blunt headbutt shunt
+  lunge(g, phase) {
+    restore(g);
+    const body = g.getObjectByName("body");
+    const shadow = g.getObjectByName("contactShadow");
+    if (phase < 0.4) {                                    // windup — rock back, coil
+      const k = Math.pow(phase / 0.4, 0.8);
+      body.position.z = -3.6 * k;
+      body.rotation.x = -0.22 * k;
+      body.scale.set(1 + 0.06 * k, 1 - 0.06 * k, 1);
+      flareSeams(g, 0.5 * k);
+    } else if (phase < 0.62) {                            // the shunt
+      const k = (phase - 0.4) / 0.22, e = Math.sin(Math.PI * k * 0.5);
+      body.position.z = -3.6 + 12 * e;
+      body.rotation.x = -0.22 + 0.44 * e;
+      body.scale.set(1 - 0.04 * e, 1 + 0.02 * e, 1 + 0.08 * e);
+      flareSeams(g, 0.5 * (1 - k));
+      shadow.position.z = body.position.z * 0.7;
+    } else {                                              // settle
+      const k = (phase - 0.62) / 0.38, d = Math.exp(-4 * k);
+      body.position.z = 8.4 * (1 - k);
+      body.rotation.x = 0.12 * Math.sin(k * 12) * d;
+      shadow.position.z = body.position.z * 0.7;
+    }
+  },
+};
+
 // ── exports ─────────────────────────────────────────────────────────────────
 export const MODELS = {
   "enemy-raider": { build: buildRaider, anims: raiderAnims, cam: { dist: 120, height: 16, target: 9 } },
   "enemy-archer": { build: buildArcher, anims: archerAnims, cam: { dist: 215, height: 46, target: 32 } },
   "enemy-healer": { build: buildHealer, anims: healerAnims, cam: { dist: 182, height: 36, target: 33 } },
   "enemy-brute": { build: buildBrute, anims: bruteAnims, cam: { dist: 190, height: 34, target: 20 } },
+  "enemy-bomber": { build: buildBomber, anims: bomberAnims, cam: { dist: 125, height: 18, target: 10 } },
 };

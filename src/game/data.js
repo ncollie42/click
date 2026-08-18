@@ -197,6 +197,11 @@ const ENEMY_ARCHETYPES={
   raider:{hp:5,speed:52,damage:2,range:40,rate:1,size:1,weightTag:"light",threatCost:1,spawnWeight:10},
   archer:{hp:4,speed:42,damage:1,range:155,rate:1.8,size:1,weightTag:"light",threatCost:2,spawnWeight:6},
   healer:{hp:5,speed:38,damage:0,range:180,rate:0,healAmount:2,healRate:2.3,size:1,weightTag:"light",threatCost:3,spawnWeight:2},
+  // Bomber: fast light kamikaze. `range` is the fuse-arm distance, not a swing reach: inside it the
+  // fuse lights and fuseTime later it detonates, dealing `damage` to every player-side target within
+  // blastRadius; the detonation is the unit's death. `rate` exists only for the controlled
+  // (captured) unit, which fights as an ordinary slow melee ally instead of exploding.
+  bomber:{hp:3,speed:60,damage:5,range:46,rate:2.5,size:.9,fuseTime:.9,blastRadius:70,weightTag:"light",threatCost:2,spawnWeight:5},
   brute:{hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35,weightTag:"heavy",threatCost:4,spawnWeight:3}
 };
 const ENEMY_VARIANT_BANDS=Object.freeze([
@@ -225,7 +230,7 @@ export const WAVE_BOSS_SPAWNS=Object.freeze({
 // Enemies spawn at a random angle on a ring around the base (small radial jitter in
 // simulation.js), preferring land. No directional/shoreline spawning.
 export const ENEMY_SPAWN_RADIUS=800;
-export const ENEMY_POOL=Object.freeze(["raider","raider","archer","healer","brute"]);
+export const ENEMY_POOL=Object.freeze(["raider","raider","archer","healer","bomber","brute"]);
 export const NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
 // Clearing this wave opens victory. The player may restart or continue into uncapped later waves.
 export const WIN_WAVE=10;
@@ -241,8 +246,9 @@ export const NIGHT_WAVE_RECIPES=Object.freeze([
   {id:"raiderRush",minTier:0,pool:["raider"]},
   {id:"archerLine",minTier:0,pool:["raider","archer"]},
   {id:"healerEscort",minTier:1,pool:["raider","healer"]},
+  {id:"bomberRush",minTier:1,pool:["raider","bomber"]},
   {id:"brutePush",minTier:2,pool:["raider","brute"]},
-  {id:"twoFront",minTier:2,pool:["raider","archer","brute"]}
+  {id:"twoFront",minTier:2,pool:["raider","archer","bomber","brute"]}
 ].map(freezeWaveRecipe));
 
 // ── day / night pacing ──────────────────────────────────────────────────────

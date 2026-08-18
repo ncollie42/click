@@ -718,6 +718,11 @@ function syncEnemies(list){
       // and to the wob clock while lumbering.
       if(engaged && anims.thump) anims.thump(inner, combatPhase(.55), t);
       else anims.thump(inner, moving ? (e.wob*.12)%1 : 0, t);
+    } else if(archetype==="bomber"){
+      // the lit fuse IS the combat state: arm() renders the sim's fuse timer as the
+      // swell/blink telegraph; a bomber with no fuse just runs.
+      if(e.fuse!==undefined && anims.arm) anims.arm(inner, 1-clamp(e.fuse,0,def.fuseTime)/def.fuseTime, t);
+      else anims.scuttle(inner, moving ? (e.wob*.2)%1 : 0, t);
     } else {
       if(engaged && anims.lunge) anims.lunge(inner, combatPhase(.5), t);
       else anims.scuttle(inner, moving ? (e.wob*.2)%1 : 0, t);
@@ -774,7 +779,8 @@ const syncControlledEnemies=makeLayer(unit=>makeEnemy(unit.type),(g,unit)=>{
   }
   for(const material of d.tintMats||[])material.emissive.setHex(unit.flash>0?PAL.flash:0x244a35);
   setXZ(g,unit);g.rotation.set(0,d.yaw,0);
-  g.scale.set(S,S*view.heightScale/100,S);
+  const modelScale=def.modelScale||1;
+  g.scale.set(S*modelScale,S*modelScale*view.heightScale/100,S*modelScale);
 });
 // Workers swap their whole model when their job or carrying-state changes (the buildingStore
 // pattern) — the reviewed pegs carry the tool and the load IN the model, so there is nothing to

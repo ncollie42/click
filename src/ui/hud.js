@@ -153,8 +153,17 @@ function updatePrompt(){
 // ── audio ───────────────────────────────────────────────────────────────────
 // The one non-DOM sink in this file, kept beside the toast because they are two halves of the same
 // player-facing feedback record: the simulation raises `sound` exactly where it raises `toast`.
-let audio=null;
+let audio=null,muted=false;
+// View-only mute: the sim keeps raising `sound` effects and this sink drops them, so muting
+// never touches gameplay state. The legend row is the indicator (it reads "unmute" while muted).
+export function toggleMute(){
+  muted=!muted;
+  const hint=document.getElementById("muteHint");
+  if(hint)hint.textContent=muted?"unmute":"mute";
+  return muted;
+}
 function sound(freq,duration){
+  if(muted)return;
   try{audio=audio||new(window.AudioContext||window.webkitAudioContext)();const o=audio.createOscillator(),g=audio.createGain();o.type="square";o.frequency.value=freq;g.gain.setValueAtTime(.035,audio.currentTime);g.gain.exponentialRampToValueAtTime(.0001,audio.currentTime+duration);o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+duration);}catch(_){ }
 }
 

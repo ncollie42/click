@@ -12,7 +12,7 @@ import {
 } from "./game/simulation.js";
 import {placeCamera, groundFromEvent} from "./render/scene.js";
 import {addClickRipple} from "./render/overlay.js";
-import {modalOpen} from "./ui/hud.js";
+import {modalOpen, toggleMute} from "./ui/hud.js";
 
 // The element every canvas-level listener below is attached to. Set once, by initInput().
 let surface = null;
@@ -81,6 +81,8 @@ function onKeyDown(event){
   // Escape is a dismiss chain, outermost thing first, and each link reports whether it consumed the
   // press: the skill tree covers the whole stage, so it goes before the panel underneath it.
   if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeSkillTree())return;if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
+  // Mute is presentation-only, so it stays available under every modal and guard.
+  if(event.code==="KeyM"){if(!event.repeat)toggleMute();return;}
   // The K skill-tree shortcut is retired while the tree is hidden from production UI (its nodes
   // have no cost or effect yet); the view panel's "open skill tree" button remains the debug entry.
   // The skill tree covers the whole stage, so panning under it would scroll a world nobody can see;

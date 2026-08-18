@@ -1951,6 +1951,8 @@ function captureEnemy(enemy,yard){
   // Deleting waveNightNumber is the wave-accounting exit: a captured scheduled enemy stops gating
   // dawn the moment it turns, exactly like a killed one.
   enemy.status={burn:null,slow:null};enemy.retaliationTower=null;delete enemy.waveNightNumber;
+  // A captured bomber defuses: the controlled unit fights as a plain melee ally, never explodes.
+  delete enemy.fuse;
   enemy.x=spot.x;enemy.y=spot.y;enemy.sourceYard=yard;enemy.combatTarget=null;enemy.attackCooldown=0;enemy.healCooldown=1;
   controlledEnemies.push(enemy);
   burst(yard.x,yard.y,"#75c86d",24);toast(ENEMY_TYPES[enemy.type].name+" turned — it fights for you now");sound(620,.2);
@@ -2017,6 +2019,22 @@ function updateHazard(building,dt){
   }else{
     const def=BUILDING_TYPES.spikes;hazard.cooldown=def.cooldown;hazard.flash=.18;damageEnemy(enemy,def.damage,"#c9c2b5",4);
   }
+}
+/** Bomber detonation: removal first (killEnemy owns wave accounting and the dust roll), then one
+ * radial sweep over every player-side target class. Damage sites match the ordinary enemy swing —
+ * towers keep their 26px footprint grace and the invulnerable-base debug check stays at the base. */
+function detonateBomber(enemy,def){
+  const {x,y}=enemy,radius=def.blastRadius;
+  killEnemy(enemy,false);
+  let workerDied=false;
+  for(const worker of [...state.workers])if(distance(x,y,worker.x,worker.y)<=radius){addDamageNumber(worker,def.damage,{tone:"received"});worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)workerDied=killWorker(worker)||workerDied;}
+  for(const brute of [...friendlyBrutes])if(distance(x,y,brute.x,brute.y)<=radius)damageFriendlyBrute(brute,def.damage);
+  for(const unit of [...controlledEnemies])if(distance(x,y,unit.x,unit.y)<=radius)damageControlledEnemy(unit,def.damage);
+  for(const building of [...buildings])if(building.complete&&building.tower&&building.tower.hp>0&&distance(x,y,building.x,building.y)<=radius+26)damageTower(building,def.damage);
+  if(distance(x,y,BASE.x,BASE.y)<=radius){if(!DBG.invulnBase){addDamageNumber(BASE,def.damage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-def.damage);}state.basePulse=1;}
+  for(let i=0;i<24;i++)particles.push({x,y,vx:rand(-150,150),vy:rand(-170,20),life:rand(.3,.7),col:i%2?"#e0913f":"#6e5540"});
+  toast(workerDied?"worker died — replacement in "+WORKER_SPAWN_TIME+"s":def.name+" exploded");sound(75,.28);
+  if(state.baseHp<=0)endGame();
 }
 function addDamageNumber(target,amount,{critical=false,tone="dealt"}={}){
   if(!(amount>0)||!Number.isFinite(amount))return;
@@ -2422,6 +2440,18 @@ function updateNormal(dt){
       enemy.healCooldown=def.healRate;
     }
     const target=selectEnemyTarget(enemy);
+    // Bomber: a lit fuse commits in place — it neither moves nor retargets, blinks through the
+    // ordinary hit-flash channel, and detonates as its death. Unlit, it chases like everyone else
+    // (shared movement below) and never reaches the swing branch because arming `continue`s.
+    if(def.archetype==="bomber"){
+      if(enemy.fuse!==undefined){
+        // No flash writes here: the renderer reads `fuse` directly and owns the blink.
+        enemy.fuse-=dt;
+        if(enemy.fuse<=0){detonateBomber(enemy,def);if(state.gameOver)break;}
+        continue;
+      }
+      if(target.distance<=def.range){enemy.fuse=def.fuseTime;sound(940,.07);continue;}
+    }
     if(target.distance>def.range){const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x),speedMultiplier=enemy.status.slow?.multiplier??1;enemy.x+=Math.cos(angle)*def.speed*speedMultiplier*dt;enemy.y+=Math.sin(angle)*def.speed*speedMultiplier*dt;}
     else if(def.damage&&enemy.attackCooldown<=0){
       enemy.attackCooldown=def.rate;enemy.shotFlash=.14;enemy.shotX=target.x;enemy.shotY=target.y;
