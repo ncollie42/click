@@ -67,12 +67,12 @@
   button:disabled{cursor:not-allowed;opacity:.42;filter:saturate(.4)}
   button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
   kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
-  /* Notifications share the top-centre lane with progression, directly below the XP bar. */
-  #toast{position:absolute;z-index:8;left:50%;top:46px;transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity var(--duration-fast) var(--ease-enter);pointer-events:none;white-space:nowrap}
+  /* Context prompt and transient toast stack below progression; neither may cover the XP bar. */
+  #toast{position:absolute;z-index:8;left:50%;top:80px;transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity var(--duration-fast) var(--ease-enter);pointer-events:none;white-space:nowrap}
   #toast.on{opacity:1}#game.modal-open #toast{opacity:0}
   #buildVersion{position:absolute;z-index:4;right:7px;bottom:5px;color:#c8b68e;font-size:9px;
     letter-spacing:.04em;opacity:.65;text-shadow:1px 1px 2px #000,0 0 5px #000;pointer-events:none}
-  #prompt{position:absolute;z-index:5;left:50%;top:9px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
+  #prompt{position:absolute;z-index:5;left:50%;top:46px;transform:translateX(-50%);background:var(--paper);border:2px solid var(--ink);box-shadow:var(--shadow);padding:5px 9px;opacity:0;pointer-events:none}
   #prompt.on{opacity:1}
   #prompt kbd{margin-right:5px}
   #upgradePanel{position:absolute;z-index:6;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,calc(100% - 20px));max-height:calc(100% - 20px);overflow:auto;padding:9px;background:#242919;color:var(--paper);border:2px solid #d8c58f;box-shadow:5px 5px 0 #17120daa}
@@ -529,7 +529,8 @@
   /* Compact-frame placement follows the XP bar into its left-side half-width lane. */
   @container game-frame (max-width:799px){
     #handDock{width:calc(100% - 20px)}
-    #toast{left:25%;top:42px}
+    #prompt{left:25%;top:42px}
+    #toast{left:25%;top:76px}
     #draftTitle{font-size:16px;padding-bottom:5px;border-bottom-width:2px}
     #draftSub{font-size:10px;margin-top:6px}
     #draftPicks{gap:16px}.pick{--cw:150px}

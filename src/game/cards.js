@@ -158,7 +158,7 @@ export const CARDS=[
   {id:"damageOrbs", category:"consumable", rarity:"rare", text:"place 1–3 orbiting damage orbs for 30 seconds",
    type:"building", tags:["aoe"], features:["physical space"], charges:1, durationSeconds:30, ref:"building:damageOrbs", model:null, implemented:true, inPool:true, notes:"the center can be picked up and relocated while active"},
   {id:"meteor", category:"consumable", rarity:"epic", text:"call a heavy meteor that leaves a mineable rock",
-   type:"spell", tags:["aoe"], features:["resources","physical space"], charges:1, ref:"concept:meteor", model:null, implemented:true, inPool:true, notes:"targets a clear 3x3 footprint; impact deals heavy area damage and installs a large stone node"},
+   type:"spell", tags:["aoe"], features:["resources","physical space"], charges:1, ref:"concept:meteor", model:null, implemented:true, inPool:true, notes:"targets a clear 3x3 footprint; the rock falls for METEOR.fallTime (damage resolves on landing, with camera shake and blast rings), then installs a large stone node — unless ground raised under it during the fall shatters it"},
   {id:"summoningCircle", category:"consumable", rarity:"rare", text:"place a 2-minute circle; each 5 dust summons a friendly Brute",
    type:"building", tags:["summon"], features:["resources","physical space"], charges:1, durationSeconds:120, ref:"building:summoningCircle", model:null, implemented:true, inPool:true, notes:"the movable circle persists for its full duration, retains partial dust, and can summon repeatedly; one delivery may summon several Brutes"},
   {id:"fireball",     category:"consumable", rarity:"rare",   text:"cast a fireball at a location",

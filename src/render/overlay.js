@@ -29,7 +29,7 @@ import {
 import {
   state, trees, rocks, diamonds, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, damageNumbers, resourceDrops,
   fogAtPoint,
-  badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget, captureYardOccupancy,
+  badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget, hoveredBuilding, captureYardOccupancy,
   buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldBuilding, heldChest, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, workerMaxHp, clamp
 } from "../game/simulation.js";
 
@@ -64,6 +64,7 @@ export const BARS = {
   scale:true,             // track camera zoom
   minScale:.6, maxScale:1.8,
   text:9, textMin:7, textMax:15,
+  idleHold:2.5, fadeIn:.18, fadeOut:.6, // seconds: health changes/hover wake a mark, then it settles away
 };
 // Floating combat text presentation. Simulation owns impact snapshots and their game-time age;
 // the overlays pane owns these knobs. Set rise/grow to zero for stationary, fixed-size numbers.
@@ -76,6 +77,33 @@ export const DAMAGE_TEXT = {
 const barScale = () =>
   BARS.scale ? clamp(state.camera.zoom, BARS.minScale, BARS.maxScale) : 1;
 
+const healthPresentation=new WeakMap();
+const hoveredHealthTargets=new Set();
+function collectHoveredHealthTargets(){
+  hoveredHealthTargets.clear();
+  if(!state.mouse.inside)return hoveredHealthTargets;
+  const action=badgeAction(),delivery=hoverTarget(),building=hoveredBuilding();
+  if(action?.target)hoveredHealthTargets.add(action.target);
+  if(delivery?.object)hoveredHealthTargets.add(delivery.object);
+  if(building)hoveredHealthTargets.add(building);
+  return hoveredHealthTargets;
+}
+/** Health marks are presentation-owned. Fraction changes and hover wake them; inactivity fades them. */
+function healthMarks(target,x,y,hpx,frac,wpx,fill,hovered,now){
+  let view=healthPresentation.get(target);
+  if(frac>=1){if(view){view.frac=1;view.alpha=0;view.lastFrame=now;}return;}
+  if(!view){view={frac,alpha:0,lastActive:now,lastFrame:now};healthPresentation.set(target,view);}
+  if(Math.abs(view.frac-frac)>1e-6){view.frac=frac;view.lastActive=now;}
+  if(hovered)view.lastActive=now;
+  const dt=Math.min(.1,Math.max(0,now-view.lastFrame));view.lastFrame=now;
+  const visible=now-view.lastActive<=BARS.idleHold;
+  const duration=visible?BARS.fadeIn:BARS.fadeOut;
+  view.alpha=clamp(view.alpha+(visible?1:-1)*(duration>0?dt/duration:1),0,1);
+  if(view.alpha<=0)return;
+  ctx.save();ctx.globalAlpha*=view.alpha;
+  marks(x,y,hpx,wpx,[{frac,fill}]);
+  ctx.restore();
+}
 const bar = (x, y, hpx, frac, wpx, _back, fill="#d39a3d") =>
   marks(x, y, hpx, wpx, [{frac, fill}]);
 function label(text, x, y, hpx, color="#f1dfb7", size=BARS.text){
@@ -160,8 +188,9 @@ export function drawOverlay(){
   // Health only. Swing progress lives in the action badge now (drawActionBadge),
   // so a node you are cutting shows its remaining yield here and the fill of the
   // current hit down on the badge — one piece of feedback each, never both.
-  // Auto-hide is unchanged: a full-health thing carries no mark at all.
-  const rowsFor = (frac, fill) => frac < 1 ? [{frac, fill}] : [];
+  // Full-health things stay unmarked; damaged things wake on change/hover, then fade after inactivity.
+  const now=performance.now()/1000,hovered=collectHoveredHealthTargets();
+  const health=(target,x,y,hpx,frac,wpx,fill)=>healthMarks(target,x,y,hpx,frac,wpx,fill,hovered.has(target),now);
 
   // Widths keep each track near the reference's ~9:1 ratio; the frame padding
   // adds height, so a narrow track reads as a squat blob rather than a bar.
@@ -170,36 +199,36 @@ export function drawOverlay(){
   const occupancyVisible=target=>{const status=workerOccupancyStatus(target);return status&&hasWorkers&&(status.assigned>0||hoveredOccupancy?.target===target);};
   const drawOccupancy=(target,height)=>{const status=workerOccupancyStatus(target);if(status)drawWorkerSlots(target,height,status);};
   for(const t of trees)if(t.stump<=0){
-    marks(t.x,t.y,58,52, rowsFor(t.hp/t.max, css(PAL.hpGood)));
+    health(t,t.x,t.y,58,t.hp/t.max,52,css(PAL.hpGood));
     if(occupancyVisible(t))drawOccupancy(t,72);
   }
   for(const r of rocks)if(r.depleted<=0){
-    marks(r.x,r.y,34,46, rowsFor(r.hp/r.max, "#bcbab3"));
+    health(r,r.x,r.y,34,r.hp/r.max,46,"#bcbab3");
     if(occupancyVisible(r))drawOccupancy(r,49);
   }
   for(const n of diamonds)if(n.depleted<=0){
-    marks(n.x,n.y,38,46, rowsFor(n.hp/n.max, css(PAL.diamond)));
+    health(n,n.x,n.y,38,n.hp/n.max,46,css(PAL.diamond));
     if(occupancyVisible(n))drawOccupancy(n,53);
   }
   for(const chest of heldChest()?[...chests,heldChest()]:chests)
-    marks(chest===heldChest()&&state.mouse.inside?state.mouse.x:chest.x,chest===heldChest()&&state.mouse.inside?state.mouse.y:chest.y,46,43,rowsFor(chest.hp/chest.max,css(PAL.chestLatch)));
+    health(chest,chest===heldChest()&&state.mouse.inside?state.mouse.x:chest.x,chest===heldChest()&&state.mouse.inside?state.mouse.y:chest.y,46,chest.hp/chest.max,43,css(PAL.chestLatch));
   for(const e of state.enemies){
     // The scene hides bodies standing in fog because the simulation makes them untargetable; a
     // health track floating over a blank fog block would be the only trace of one, so it goes too.
     if(fogAtPoint(e.x,e.y)) continue;
     const s = ENEMY_TYPES[e.type].size;
-    marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e.hp/e.max, "#c65343"));
+    health(e,e.x,e.y,28*s,e.hp/e.max,Math.round(40*s),"#c65343");
   }
-  for(const brute of friendlyBrutes){marks(brute.x,brute.y,42,52,rowsFor(brute.hp/brute.max,"#62c990"));label("ALLY",brute.x,brute.y,62,"#8ff0b5");}
+  for(const brute of friendlyBrutes){health(brute,brute.x,brute.y,42,brute.hp/brute.max,52,"#62c990");label("ALLY",brute.x,brute.y,62,"#8ff0b5");}
   // Controlled enemies wear the friendly-Brute language — green health track, ALLY tag — so a
   // converted raider can never be misread as the hostile it used to be.
-  for(const unit of controlledEnemies){marks(unit.x,unit.y,28,40,rowsFor(unit.hp/unit.max,"#62c990"));label("ALLY",unit.x,unit.y,50,"#8ff0b5");}
+  for(const unit of controlledEnemies){health(unit,unit.x,unit.y,28,unit.hp/unit.max,40,"#62c990");label("ALLY",unit.x,unit.y,50,"#8ff0b5");}
   // Simulation-owned dummies reuse neutral health bars; they never enter enemy identity/reward UI.
-  for(const d of damageDummies)marks(d.x,d.y,42,48,rowsFor(d.hp/d.max,"#d6c36d"));
+  for(const d of damageDummies)health(d,d.x,d.y,42,d.hp/d.max,48,"#d6c36d");
   // Effective maximum, not the ordinary one: an arrived garrison guard carries the bigger pool, so
   // its bar must fill against that or a fortified guard would read as permanently wounded.
-  for(const w of state.workers){const max=workerMaxHp(w);if(w.hp<max) bar(w.x,w.y,30,w.hp/max,40,null,css(PAL.hpGood));}
-  if(state.baseHp<state.baseMax) bar(BASE.x,BASE.y,84,state.baseHp/state.baseMax,90,null,css(PAL.bad));
+  for(const w of state.workers){const max=workerMaxHp(w);health(w,w.x,w.y,30,w.hp/max,40,css(PAL.hpGood));}
+  health(BASE,BASE.x,BASE.y,84,state.baseHp/state.baseMax,90,css(PAL.bad));
 
   for(const b of buildings){
     // Blueprints and upgrades are the same job — carry resources here — so they
@@ -214,8 +243,8 @@ export function drawOverlay(){
     const staffing=durablePostStatus(b);
     if(staffing&&staffing.arrived<staffing.capacity)label("! vacant",b.x,b.y,30,"#72c9b2");
     if(staffing&&occupancyVisible(b))drawOccupancy(b,48);
-    if(b.type==="tower" && b.tower && b.tower.hp<b.tower.maxHp)
-      bar(b.x,b.y,56,b.tower.hp/b.tower.maxHp,52,null,css(PAL.hpGood));
+    if(b.type==="tower" && b.tower)
+      health(b,b.x,b.y,56,b.tower.hp/b.tower.maxHp,52,css(PAL.hpGood));
     // Yard capacity is derived per frame, so this readout is correct the instant a capture lands
     // or a linked ally dies — there is no cached counter to lag behind.
     if(b.type==="captureYard"){const held=captureYardOccupancy(b);marks(b.x,b.y,48,58,[{frac:held/CAPTURE_YARD.capacity,fill:"#75c86d"}]);label(held+"/"+CAPTURE_YARD.capacity+" turned",b.x,b.y,70,"#a8e6b0");}
@@ -286,7 +315,7 @@ function roundPath(x, y, w, h, r){
 
 /**
  * One rounded frame holding N stacked tracks. Callers today pass a single
- * health row (see drawOverlay's rowsFor); the stack stays generic so any second
+ * health row (see drawOverlay's health helper); the stack stays generic so any second
  * per-entity track lands inside the same frame rather than as a loose mark
  * floating at its own height.
  */

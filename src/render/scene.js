@@ -40,7 +40,8 @@ import {
   WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_LEASH,
   BUILDING_TYPES,
   ENEMY_TYPES,
-  XP_TIERS
+  XP_TIERS,
+  METEOR
 } from "../game/data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -48,7 +49,7 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs,
+  trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs, fallingMeteors,
   fogMetadata, fogAtPoint, footprintFogFree,
   badgeAction, hoveredBuilding, captureYardOccupancy, durablePostStatus,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
@@ -146,6 +147,16 @@ export function placeCamera(){
   const h = Math.sin(p)*dist, r = Math.cos(p)*dist;
   camera3.position.set(tx + Math.sin(y)*r, h, tz + Math.cos(y)*r);
   camera3.lookAt(tx, 0, tz);
+
+  // Impact rattle (meteor landings). Translating the PLACED camera along its own local axes pans
+  // the whole view without tilting it, so projection-based picking and the overlay stay coherent —
+  // everything just shudders together. Squaring the decaying sim value front-loads the kick.
+  const shake = state.screenShake || 0;
+  if(shake > 0){
+    const st = performance.now()/1000, amp = shake*shake*.55;
+    camera3.translateX(Math.sin(st*73)*amp);
+    camera3.translateY(Math.cos(st*91)*amp*.6);
+  }
 
   // The shadow frustum has to track zoom, or zooming out drops every shadow
   // outside it and the map goes flat.
@@ -633,7 +644,9 @@ const syncTrees = list => syncScatter(treeLayer, list, t => t.stump>0
   ? [treeLayer.variantCount, 0, 1]
   : [PAL.leaf[t.variant] !== undefined ? t.variant : 0, shakeOf(t), .78 + .22*(t.hp/t.max)]);
 const syncRocks = list => syncScatter(rockLayer, list, r => {
-  const spent = r.depleted>0, meteor = r.meteor ? 2.25 : 1;
+  // A landed meteor rock swells past its resting 2.25x while its sim-owned `pop` decays — the
+  // touchdown compression. Ordinary click shakes never write `pop`, so mining doesn't re-pop it.
+  const spent = r.depleted>0, meteor = r.meteor ? 2.25*(1 + .3*(r.pop||0)**2) : 1;
   return spent ? [1, 0, meteor] : [0, shakeOf(r), (.8 + .2*(r.hp/r.max))*meteor];
 });
 const syncDiamonds = makeLayer(makeDiamond, (g,n)=>{
@@ -1182,6 +1195,85 @@ function stepShots(dt){
   }
 }
 
+// ── falling meteors ─────────────────────────────────────────────────────────
+// The sim owns all timing (fallingMeteors records; damage on landing). Everything here is
+// presentation: the rock streaking in at an angle with a fiery wake, the target ring closing as it
+// nears the ground, and the landing blast. A record vanishing from fallingMeteors with its clock
+// run out IS the impact cue — a vanished record whose clock had time left was a run reset instead,
+// so that one spawns no blast.
+const METEOR_FX = {
+  height: 34,        // world-unit entry altitude
+  driftX: -170,      // sim-px lateral entry offset — the diagonal streak
+  driftY: -80,
+  blastDur: .55,     // seconds the landing rings take to wash out
+};
+const meteorGeo = new THREE.DodecahedronGeometry(1, 0);
+const meteorPool = []; let meteorUsed = 0;
+const meteorTracked = new Set(); const meteorBlasts = [];
+
+function stepMeteors(dt){
+  for(const m of fallingMeteors) meteorTracked.add(m);
+  for(const m of meteorTracked) if(!fallingMeteors.includes(m)){
+    meteorTracked.delete(m);
+    if(m.t >= m.dur) meteorBlasts.push({x:m.x, y:m.y, t:0});
+  }
+  for(let i=meteorBlasts.length-1; i>=0; i--){
+    meteorBlasts[i].t += dt/METEOR_FX.blastDur;
+    if(meteorBlasts[i].t >= 1) meteorBlasts.splice(i, 1);
+  }
+}
+
+/** Claims beams/muzzles/rings, so drawAttacks() calls it before its own endAttacks(). */
+function drawMeteors(){
+  meteorUsed = 0;
+  const nowT = performance.now()/1000;
+  for(const m of fallingMeteors){
+    const p = clamp(m.t/m.dur, 0, 1), e = p*p;            // gravity: lazy entry, violent landing
+    const sx = m.x + METEOR_FX.driftX*(1-e), sy = m.y + METEOR_FX.driftY*(1-e);
+    const h = .9 + METEOR_FX.height*(1-e);
+    let mesh = meteorPool[meteorUsed];
+    if(!mesh){
+      mesh = new THREE.Mesh(meteorGeo, new THREE.MeshLambertMaterial({flatShading:true, color:"#6b4a38"}));
+      mesh.castShadow = false;
+      meteorPool.push(mesh); scene.add(mesh);
+    }
+    meteorUsed++;
+    mesh.visible = true;
+    mesh.position.set(gx(sx), h, gz(sy));
+    mesh.rotation.set(nowT*3.1, nowT*2.3, m.t*4);
+    mesh.scale.setScalar(1.0 + .4*e);
+    // Fiery wake back up the entry line: a wide ember sheath around a hotter core, glow on the head.
+    // The wake is two segments kinked at a wandering midpoint, and everything flickers on its own
+    // per-meteor phase, so it burns rather than reading as a drawn line.
+    const flick = .8 + .2*Math.sin(nowT*43 + m.x);
+    const backX = sx + METEOR_FX.driftX*.4, backY = sy + METEOR_FX.driftY*.4;
+    const backH = h + METEOR_FX.height*.4;
+    const dlen = Math.hypot(METEOR_FX.driftX, METEOR_FX.driftY);
+    const wob = Math.sin(nowT*29 + m.y)*22;              // sim-px sideways kink
+    const midX = (sx+backX)/2 - METEOR_FX.driftY/dlen*wob;
+    const midY = (sy+backY)/2 + METEOR_FX.driftX/dlen*wob;
+    const midH = (h+backH)/2;
+    beam(backX, backY, backH, midX, midY, midH, .26+.14*e, "#e8873f", .45*flick);
+    beam(midX, midY, midH, sx, sy, h, .30+.18*e, "#e8873f", .55*flick);
+    beam(backX, backY, backH, midX, midY, midH, .11, "#f6c86e", .7*flick);
+    beam(midX, midY, midH, sx, sy, h, .13, "#f6c86e", .85*flick);
+    muzzle(sx, sy, h, (.9 + .6*e)*(.85 + .3*flick), "#f2a24d", .8);
+    // Ground telegraph: the full blast radius holds while an inner ring closes with the descent.
+    ring(m.x, m.y, METEOR.radius, "#e18a43", .2 + .5*e);
+    ring(m.x, m.y, METEOR.radius*(1 - .8*e), "#f3c76a", .55);
+  }
+  for(let i=meteorUsed; i<meteorPool.length; i++) meteorPool[i].visible = false;
+
+  for(const b of meteorBlasts){
+    const q = b.t;
+    // Shockwave pair racing outward, plus a brief flash and light pillar right at touchdown.
+    ring(b.x, b.y, METEOR.radius*(.25+.75*q), "#e8873f", (1-q)*.9);
+    ring(b.x, b.y, METEOR.radius*.6*(.2+.8*q), "#f3c76a", (1-q)*.7);
+    if(q < .35) muzzle(b.x, b.y, 1.1, 1.2 + 2.4*(1-q/.35), "#f6d27c", 1-q/.35);
+    if(q < .3)  beam(b.x, b.y, METEOR_FX.height*.75, b.x, b.y, .4, .9*(1-q/.3), "#f6d27c", .85*(1-q/.3));
+  }
+}
+
 function drawAttacks(){
   const hs = view.heightScale/100;
 
@@ -1234,6 +1326,8 @@ function drawAttacks(){
   for(const w of state.workers)
     if(w.combatTarget && w.attackCooldown > WORKER_ATTACK_RATE-.2)
       beam(w.x, w.y, .8, w.combatTarget.x, w.combatTarget.y, .7, .06, "#f3dfa3", .85);
+
+  drawMeteors();
 
   // Lightning arcs (chainLightning buff + lightning tower). Damage already landed in the sim;
   // each record is one jump, drawn as a short-lived jagged bolt. The per-arc seed keeps the
@@ -2005,7 +2099,9 @@ export function drawScene(){
 
   // Shots advance on real elapsed time, independent of the sim step count.
   const nowS = performance.now()/1000;
-  stepShots(Math.min(.05, nowS - (lastDrawT || nowS)));
+  const drawDt = Math.min(.05, nowS - (lastDrawT || nowS));
+  stepShots(drawDt);
+  stepMeteors(drawDt);
   lastDrawT = nowS;
 
   drawZones();

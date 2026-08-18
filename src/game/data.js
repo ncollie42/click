@@ -138,7 +138,9 @@ export const FIREBALL={damage:6,radius:135,damageTargetType:DAMAGE_TARGET_TYPE.E
 // Intentional large-obstacle tuning: the impact reserves 3x3 through meteorTarget and the rock's
 // runtime footprint; its fixed 15 HP keeps the spell-created obstacle durable without inheriting
 // ordinary stone-node balance.
-export const METEOR=Object.freeze({damage:20,radius:180,rockHp:15,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
+// fallTime is gameplay, not garnish: damage resolves only when the fall completes, so enemies can
+// walk into (or out of) the blast during the descent.
+export const METEOR=Object.freeze({damage:20,radius:180,rockHp:15,fallTime:.9,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
 export const DAMAGE_ORBS=Object.freeze({duration:30,minCount:1,maxCount:3,orbitRadius:52,aoeRadius:38,damage:1,cooldown:.6,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
 export const SUMMONING_CIRCLE=Object.freeze({duration:120,dustCost:5});
 export const FRIENDLY_BRUTE=Object.freeze({hp:36,damage:5,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,speed:34,range:34,rate:1.1,guardRadius:360});
