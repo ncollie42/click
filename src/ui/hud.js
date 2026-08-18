@@ -38,7 +38,7 @@ import {DAY_DURATION} from "../game/data.js";
 import {
   state,
   // commands — the only writes this file can make into the world
-  closeUpgradeMenu, selectUpgrade, acceptUpgrade, openSkillTree,
+  closeUpgradeMenu, selectUpgrade, acceptUpgrade, openSkillTree, continueAfterVictory,
   // queries — pure reads
   hoverTarget, costText, upgradeList,
   skillPoints, livingActiveWaveEnemies, clamp
@@ -76,6 +76,7 @@ export const SIM_EFFECTS = {
   afterUpdate(){updatePrompt();syncPhaseHud();},
   gameOver(){document.getElementById("gameOver").classList.remove("off");},
   victory(){document.getElementById("victory").classList.remove("off");},
+  victoryContinued(){document.getElementById("victory").classList.add("off");},
   pauseChanged(paused){document.getElementById("pauseBadge").classList.toggle("off",!paused);},
   buildHudChanged(){syncBuildHud();},
   upgradeMenuOpened(){renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");syncModalUi();},
@@ -174,4 +175,5 @@ export function initHud(pointerSurface){
   // game over / victory
   document.getElementById("restart").addEventListener("click", ()=>location.reload());
   document.getElementById("victoryRestart").addEventListener("click", ()=>location.reload());
+  document.getElementById("victoryContinue").addEventListener("click",continueAfterVictory);
 }

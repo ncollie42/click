@@ -5,7 +5,7 @@ import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
   CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
   FOOTPRINT_1x1,FOOTPRINT_3x3,RESOURCE_FOOTPRINT,
-  RESOURCE_KINDS,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
+  RESOURCE_KINDS,RESOURCE_NODE_HP,RESOURCE_SOURCE,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
   HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
@@ -17,7 +17,7 @@ import {
 } from "./data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
-  footprintCellBounds,footprintWorldRect,footprintInWorldBounds
+  footprintCellBounds,footprintCells,footprintWorldRect,footprintInWorldBounds
 } from "./grid.js";
 import {
   buildStarterWorld,LAND,WATER,TERRAIN_ORDER,TERRAIN_CELL_SIZE,TERRAIN_COLS,TERRAIN_ROWS,TERRAIN_ORIGIN_X,TERRAIN_ORIGIN_Y,
@@ -79,6 +79,7 @@ const NO_EFFECTS = {
   afterUpdate(){},           // one whole simulation step finished
   gameOver(){},              // the base fell; the run is over
   victory(){},               // the win wave was cleared; the run is over, won
+  victoryContinued(){},      // the player dismissed victory and resumed into the next day
   pauseChanged(){},          // (paused)
   levelChanged(){},          // xp progress or the level itself moved
   draftChanged(){},          // an offer appeared, was consumed, or was replaced by the next one
@@ -174,7 +175,7 @@ const state = {
   // BUILDING_TYPES key whose ghost/footprint the placement flow draws; `cast` (fireball) replaces
   // "leave a building" with an instant effect at the anchor.
   cardTargeting:null,
-  baseHp:100,baseMax:100,gameOver:false,victory:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
+  baseHp:100,baseMax:100,gameOver:false,victory:false,continuedAfterVictory:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed is simulated run time. remaining is the authoritative DAY countdown only; night has
   // no deadline and ends from active-wave clearance after the frame's complete combat pipeline.
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
@@ -230,8 +231,8 @@ function waveThreatBudget(waveNumber){
   const {startBudget,targetBudget,targetWave,power}=WAVE_TUNE;
   const t=clamp((waveNumber-1)/Math.max(1,targetWave-1),0,1);
   const curveBudget=Math.max(1,Math.round(startBudget+(targetBudget-startBudget)*t**power));
-  const boss=ENEMY_TYPES[WAVE_BOSS_SPAWNS[waveNumber]];
-  return Math.max(curveBudget,boss?.threatCost||0);
+  const forcedBossThreat=(WAVE_BOSS_SPAWNS[waveNumber]||[]).reduce((sum,type)=>sum+(ENEMY_TYPES[type]?.threatCost||0),0);
+  return Math.max(curveBudget,forcedBossThreat);
 }
 let spawnPlanRevision=0;
 /** Spend an integer Threat Budget against one recipe's archetype pool. Wave number unlocks fixed-stat
@@ -241,9 +242,11 @@ function composeSpawnPlan(recipe,waveNumber,{budget=waveThreatBudget(waveNumber)
   const pool=Object.entries(ENEMY_TYPES).filter(([,def])=>!def.boss&&archetypes.has(def.archetype)&&def.minWave<=waveNumber).map(([type,def])=>({type,...def}));
   invariant(pool.length>0&&pool.every(enemy=>Number.isInteger(enemy.threatCost)&&enemy.threatCost>0&&enemy.spawnWeight>0),"invalid threat pool "+recipe.id);
   invariant(pool.some(enemy=>enemy.threatCost===1),"threat pool cannot spend every integer budget: "+recipe.id);
-  const bossType=WAVE_BOSS_SPAWNS[waveNumber],boss=bossType&&{type:bossType,...ENEMY_TYPES[bossType]};
-  invariant(!boss||boss.threatCost<=budget,"boss exceeds wave threat budget: "+bossType);
-  const entries=[];let remaining=budget-(boss?.threatCost||0);
+  const forcedBosses=(WAVE_BOSS_SPAWNS[waveNumber]||[]).map(type=>({type,...ENEMY_TYPES[type]}));
+  invariant(forcedBosses.every(boss=>boss.threatCost>0),"forced boss schedule contains an unknown type");
+  const forcedBossThreat=forcedBosses.reduce((sum,boss)=>sum+boss.threatCost,0);
+  invariant(forcedBossThreat<=budget,"forced bosses exceed wave threat budget: wave "+waveNumber);
+  const entries=[];let remaining=budget-forcedBossThreat;
   while(remaining>0){
     const eligible=pool.filter(enemy=>enemy.threatCost<=remaining);
     const totalWeight=eligible.reduce((sum,enemy)=>sum+enemy.spawnWeight,0);
@@ -252,7 +255,7 @@ function composeSpawnPlan(recipe,waveNumber,{budget=waveThreatBudget(waveNumber)
     entries.push({type:selected.type,threatCost:selected.threatCost,at:0});remaining-=selected.threatCost;
   }
   // Forced bosses close the schedule rather than displacing the opening pressure.
-  if(boss)entries.push({type:boss.type,threatCost:boss.threatCost,at:0});
+  for(const boss of forcedBosses)entries.push({type:boss.type,threatCost:boss.threatCost,at:0});
   let spent=0;
   for(let index=0;index<entries.length;index++){
     const entry=entries[index];entry.at=immediateFirst&&index===0?0:NIGHT_WAVE_WINDOW*(spent+entry.threatCost/2)/budget;spent+=entry.threatCost;Object.freeze(entry);
@@ -311,9 +314,9 @@ function materializeWorld(blueprint){
   installTerrain(blueprint.terrain,blueprint);
   trees.length=rocks.length=diamonds.length=chests.length=0;replaceGrass(blueprint.grass||[]);
   // One HP produces one drop, so node health is also its total resource yield.
-  blueprint.trees.forEach((cell,index)=>{const {x,y}=cellToWorld(cell.cx,cell.cy);trees.push({x,y,hp:50,max:50,stump:0,shake:0,variant:cell.variant??index%3,footprint:RESOURCE_FOOTPRINT});});
-  blueprint.rocks.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);rocks.push({x,y,hp:35,max:35,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
-  blueprint.diamonds.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);diamonds.push({x,y,hp:13,max:13,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
+  blueprint.trees.forEach((cell,index)=>{const {x,y}=cellToWorld(cell.cx,cell.cy),hp=RESOURCE_NODE_HP.wood;trees.push({x,y,hp,max:hp,stump:0,shake:0,variant:cell.variant??index%3,footprint:RESOURCE_FOOTPRINT});});
+  blueprint.rocks.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy),hp=RESOURCE_NODE_HP.stone;rocks.push({x,y,hp,max:hp,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
+  blueprint.diamonds.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy),hp=RESOURCE_NODE_HP.diamond;diamonds.push({x,y,hp,max:hp,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT});});
   blueprint.chests.forEach(cell=>{const {x,y}=cellToWorld(cell.cx,cell.cy);chests.push({x,y,hp:CHEST.maxHp,max:CHEST.maxHp,shake:0,footprint:CHEST.footprint});});
 }
 function terrainAtRasterCell(terrainX,terrainY){return queryTerrainAtRasterCell(terrainRuntime,terrainX,terrainY);}
@@ -381,11 +384,10 @@ function buildShowcaseFixtures(){
 function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
 // ── STRAWMAN, for owner tuning ──────────────────────────────────────────────
 // With the build shop gone, cards are the ONLY way to put a building on the ground. XP will offer
-// later blueprints, but the first economy and wave need a seed kit: one house (workers), one lumber
-// camp and one quarry
-// (income), one basic tower chassis (the first night). It is a DESIGN GUESS — change the ids, the
-// counts, or delete the line entirely; nothing else reads it.
-const STARTING_HAND=["bpHouse","bpTower"];
+// later blueprints, but the first economy and wave need a seed kit: one house (workers), one quarry
+// (renewable stone), and one basic tower chassis (the first night). It is a DESIGN GUESS — change
+// the ids, counts, or delete the line entirely; nothing else reads it.
+const STARTING_HAND=["bpHouse","bpQuarry","bpTower"];
 let startingHandDealt=false;
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
@@ -402,12 +404,12 @@ export function initializeRunMode(mode="normal"){
     validateSimulationInvariants();return;
   }
   installAllLandTerrain();
-  state.gameOver=false;state.victory=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.upcomingPlan=null;state.nightWave.activePlan=null;state.nightWave.threatBudget=0;state.nightWave.spawnedThreat=0;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
+  state.gameOver=false;state.victory=false;state.continuedAfterVictory=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.upcomingPlan=null;state.nightWave.activePlan=null;state.nightWave.threatBudget=0;state.nightWave.spawnedThreat=0;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
 }
 export function rebuildShowcase(){if(state.runMode!=="showcase")return false;resetShowcaseEconomy();installAllLandTerrain();buildShowcaseFixtures();return true;}
 function assertTemporaryBuildingState(building){
   if(building.orbs)invariant(building.type==="damageOrbs"&&Number.isInteger(building.orbs.count)&&building.orbs.count>=DAMAGE_ORBS.minCount&&building.orbs.count<=DAMAGE_ORBS.maxCount&&building.orbs.remaining>0&&building.orbs.remaining<=DAMAGE_ORBS.duration,"illegal damage-orb state");
-  if(building.summoning)invariant(building.type==="summoningCircle"&&Number.isInteger(building.summoning.dust)&&building.summoning.dust>=0&&building.summoning.dust<SUMMONING_CIRCLE.dustCost&&!building.summoning.summoned&&building.summoning.remaining>0&&building.summoning.remaining<=SUMMONING_CIRCLE.duration,"illegal summoning-circle state");
+  if(building.summoning)invariant(building.type==="summoningCircle"&&Number.isInteger(building.summoning.dust)&&building.summoning.dust>=0&&building.summoning.dust<SUMMONING_CIRCLE.dustCost&&building.summoning.remaining>0&&building.summoning.remaining<=SUMMONING_CIRCLE.duration,"illegal summoning-circle state");
 }
 
 export function validateSimulationInvariants(){
@@ -418,6 +420,7 @@ export function validateSimulationInvariants(){
   invariant(terrainDescriptor.width===W&&terrainDescriptor.height===H&&terrainDescriptor.terrainCellSize===TERRAIN_CELL_SIZE&&terrainDescriptor.terrainOriginX===TERRAIN_ORIGIN_X&&terrainDescriptor.terrainOriginY===TERRAIN_ORIGIN_Y&&terrainDescriptor.terrainCols===TERRAIN_COLS&&terrainDescriptor.terrainRows===TERRAIN_ROWS&&terrainDescriptor.terrainOrder===TERRAIN_ORDER,"terrain metadata drifted");
   invariant(Number.isInteger(terrainDescriptor.revision)&&terrainDescriptor.revision>0,"invalid terrain revision");
   invariant(Number.isFinite(state.baseHp)&&state.baseHp>=0&&state.baseHp<=state.baseMax,"illegal base health");
+  invariant(typeof state.victory==="boolean"&&typeof state.continuedAfterVictory==="boolean"&&(!state.victory||state.gameOver)&&!(state.victory&&state.continuedAfterVictory),"illegal victory lifecycle");
   invariant(Number.isInteger(state.xp)&&state.xp>=0,"illegal xp");
   invariant(Number.isInteger(state.level)&&state.level>=0,"illegal level");
   invariant(Number.isFinite(state.levelXp)&&state.levelXp>=0&&state.levelXp<levelCost(state.level),"illegal level progress");
@@ -480,6 +483,12 @@ export function validateSimulationInvariants(){
     invariant(footprintInWorldBounds(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT),"resource footprint is out of bounds");
     invariant(terrainWorldRectEntirelyOnLand(footprintWorldRect(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT)),"resource is not on land");
     if(node.meteor)invariant(nodes===rocks&&node.max===METEOR.rockHp&&node.footprint===FOOTPRINT_3x3,"malformed meteor rock");
+    if(node.sourceBuilding){
+      const source=node.sourceBuilding;
+      invariant(buildings.includes(source)&&source.complete&&BUILDING_TYPES[source.type]?.resourceSource,"resource node lost its source building");
+      invariant(BUILDING_TYPES[source.type].resource===kind,"resource source grew the wrong node kind");
+      invariant(resourceSourcePerimeter(source).some(cell=>{const point=cellToWorld(cell.cx,cell.cy);return point.x===node.x&&point.y===node.y;}),"resource source node escaped its perimeter");
+    }
   }
   invariant(new Set(chests).size===chests.length,"duplicate chest ownership");
   for(const chest of chests){
@@ -538,6 +547,7 @@ export function validateSimulationInvariants(){
   for(const building of buildings)if(building.type==="captureYard"&&building.complete)invariant(captureYardOccupancy(building)<=CAPTURE_YARD.capacity,"capture yard exceeds its living-ally capacity");
   for(const building of buildings){
     if(building.tower)invariant(building.tower.hp>=0&&building.tower.hp<=building.tower.maxHp,"illegal tower health");
+    if(building.resourceSource!=null)invariant(building.complete&&BUILDING_TYPES[building.type].resourceSource&&Number.isFinite(building.resourceSource.remaining)&&building.resourceSource.remaining>0&&building.resourceSource.remaining<=RESOURCE_SOURCE.growthSeconds,"illegal resource source countdown");
     assertTemporaryBuildingState(building);
   }
   // A designated variant belongs only to its unfinished site. completeBuilding() installs that
@@ -901,9 +911,9 @@ function createBuilding(type,x,y){
   const def=BUILDING_TYPES[type],cost=type==="house"?nextHouseCost():{...def.cost};
   // plannedVariant identifies the finished tower this one construction site will produce. Null on
   // ordinary builds and basic towers.
-  const building={type,x,y,cost,delivered:resourceCounts(),storage:resourceCounts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
+  const building={type,x,y,cost,delivered:resourceCounts(),storage:resourceCounts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,resourceSource:null,complete:!!def.instant,pulse:1};
   if(type==="damageOrbs")building.orbs={count:Math.floor(rand(DAMAGE_ORBS.minCount,DAMAGE_ORBS.maxCount+1)),angle:0,cooldown:0,remaining:DAMAGE_ORBS.duration};
-  if(type==="summoningCircle")building.summoning={dust:0,summoned:false,remaining:SUMMONING_CIRCLE.duration};
+  if(type==="summoningCircle")building.summoning={dust:0,remaining:SUMMONING_CIRCLE.duration};
   return building;
 }
 
@@ -1118,7 +1128,7 @@ function hoverTarget(){
   for(const building of buildings){
     if(!building.complete&&distance(m.x,m.y,building.x,building.y)<38)return {kind:"building",object:building};
     if(building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<42)return {kind:"stockpile",object:building};
-    if(building.complete&&building.type==="summoningCircle"&&!building.summoning.summoned&&distance(m.x,m.y,building.x,building.y)<52)return {kind:"summoning",object:building};
+    if(building.complete&&building.type==="summoningCircle"&&distance(m.x,m.y,building.x,building.y)<52)return {kind:"summoning",object:building};
     if(building.complete&&(building.type==="obelisk"||building.type==="tower")&&building.activeUpgrade&&upgradeButtonHit(building,m.x,m.y))return {kind:"upgrade",object:building};
   }
   return null;
@@ -1156,10 +1166,13 @@ function dropCarriedOnGround(silent=false){
 }
 
 function dropToSummoningCircle(building){
-  const summon=building.summoning,amount=Math.min(SUMMONING_CIRCLE.dustCost-summon.dust,state.carried.dust);
+  const summon=building.summoning,amount=state.carried.dust;
   if(amount<=0){toast("summoning circle needs dust");return;}
-  state.carried.dust-=amount;summon.dust+=amount;building.pulse=1;handoffParticles(building.x,building.y,"dust",amount);
-  if(summon.dust>=SUMMONING_CIRCLE.dustCost){summon.summoned=true;spawnFriendlyBrute(building.x,building.y);const at=buildings.indexOf(building);invariant(at>=0,"funded summoning circle is not placed");buildings.splice(at,1);burst(building.x,building.y,"#9870c9",30);toast("friendly Brute summoned");sound(100,.35);}
+  state.carried.dust=0;summon.dust+=amount;building.pulse=1;handoffParticles(building.x,building.y,"dust",amount);
+  const summonCount=Math.floor(summon.dust/SUMMONING_CIRCLE.dustCost);
+  summon.dust%=SUMMONING_CIRCLE.dustCost;
+  for(let i=0;i<summonCount;i++)spawnFriendlyBrute(building.x,building.y);
+  if(summonCount){burst(building.x,building.y,"#9870c9",30);toast(summonCount+(summonCount===1?" friendly Brute summoned":" friendly Brutes summoned"));sound(100,.35);}
   else toast("summoning circle: "+summon.dust+" / "+SUMMONING_CIRCLE.dustCost+" dust");
 }
 
@@ -1474,12 +1487,13 @@ function completeBuilding(building){
   }
   building.plannedVariant=null;
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
+  if(def.resourceSource)building.resourceSource={remaining:RESOURCE_SOURCE.growthSeconds};
   // Resolve the transition as one transaction. updateWorkerSpawns() runs before workers, so leaving
   // an earlier builder unresolved until the next tick would expose its durable vacancy to autofill.
   resolveBuildingCompletionWorkers(building);
   burst(building.x,building.y-12,"#ead28d",18);
   const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
-  toast(def.resource?def.name+" complete — drop a worker on it to staff it":readyMessage);sound(760,.18);effects.buildHudChanged();
+  toast(def.resourceSource?def.name+" complete — growing "+def.resource+" automatically":readyMessage);sound(760,.18);effects.buildHudChanged();
 }
 function dropToBuilding(building){
   const cost=buildingCost(building);let total=0;
@@ -2346,6 +2360,38 @@ function updateTemporaryBuilding(building,dt,active=true){
   if(building.summoning){building.summoning.remaining-=dt;return building.summoning.remaining<=0;}
   return false;
 }
+// Renewable source ownership: a completed camp/quarry owns only its countdown. Nodes remain in the
+// canonical trees/rocks arrays so gathering, rendering, placement, and damage need no source-only path.
+function resourceSourcePerimeter(building){
+  const center=worldToCell(building.x,building.y);
+  return footprintCells(center.cx,center.cy,buildingFootprint(building.type)).filter(cell=>cell.cx!==center.cx||cell.cy!==center.cy);
+}
+function growResourceSourceNode(building){
+  const kind=BUILDING_TYPES[building.type].resource,nodes=kind==="wood"?trees:rocks,candidates=[];
+  for(const cell of resourceSourcePerimeter(building)){
+    const point=cellToWorld(cell.cx,cell.cy);
+    const blocked=[[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]].some(([items,itemKind])=>items.some(node=>node.x===point.x&&node.y===point.y&&resourceIsActive(node,itemKind)));
+    if(!blocked)candidates.push({point,node:nodes.find(node=>node.x===point.x&&node.y===point.y)});
+  }
+  if(!candidates.length)return false;
+  const {point,node:existing}=candidates[(Math.random()*candidates.length)|0],hp=RESOURCE_NODE_HP[kind];
+  if(existing){existing.hp=existing.max=hp;existing.shake=0;existing.sourceBuilding=building;if(kind==="wood")existing.stump=0;else existing.depleted=0;}
+  else if(kind==="wood")trees.push({x:point.x,y:point.y,hp,max:hp,stump:0,shake:0,variant:(Math.random()*3)|0,footprint:RESOURCE_FOOTPRINT,sourceBuilding:building});
+  else rocks.push({x:point.x,y:point.y,hp,max:hp,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT,sourceBuilding:building});
+  building.pulse=1;
+  return true;
+}
+function updateResourceSources(dt){
+  for(const building of buildings){
+    const def=BUILDING_TYPES[building.type];if(!building.complete||!def.resourceSource)continue;
+    const source=building.resourceSource??={remaining:RESOURCE_SOURCE.growthSeconds};
+    source.remaining-=dt;
+    while(source.remaining<=0){
+      if(!growResourceSourceNode(building)){source.remaining=RESOURCE_SOURCE.growthSeconds;break;}
+      source.remaining+=RESOURCE_SOURCE.growthSeconds;
+    }
+  }
+}
 function updateBuildings(dt,includeHazards){
   for(const building of buildings){building.pulse=Math.max(0,building.pulse-dt*3);if(building.complete&&building.tower)updateTower(building,dt);if(includeHazards&&building.complete&&building.hazard)updateHazard(building,dt);if(includeHazards&&updateTemporaryBuilding(building,dt))building.remove=true;}
   if(includeHazards)for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove){const expired=buildings.splice(i,1)[0];burst(expired.x,expired.y,"#77638f",10);}
@@ -2395,7 +2441,7 @@ function updateNormal(dt){
   updateKing(dt);updateTransientTimers(dt);updateResourceNodes(dt);updateLooseResources(dt,true);
   // Ordering is the contract: garrison mustering resolves BEFORE the ordinary build/haul/gather
   // sweep, so a worker with a hostile at its back takes the post instead of picking up a job.
-  updateWorkerSpawns(dt);updateBuildings(dt,true);updateGarrisonPostings(dt);scheduleFreeWorkers();
+  updateWorkerSpawns(dt);updateBuildings(dt,true);updateResourceSources(dt);updateGarrisonPostings(dt);scheduleFreeWorkers();
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const brute of [...friendlyBrutes])updateFriendlyBrute(brute,dt);
   for(const unit of [...controlledEnemies])updateControlledEnemy(unit,dt);
@@ -2406,7 +2452,7 @@ function updateNormal(dt){
   // any later frame, so transitionPhase() owns exactly one dawn reward.
   if(state.clock.phase==="night"&&state.nightWave.remainingSpawns===0&&livingActiveWaveEnemies()===0){
     // TEMPORARY win condition: clearing WIN_WAVE ends the run instead of dawning. See data.js.
-    if(state.nightWave.activeNightNumber>=WIN_WAVE)winGame();
+    if(state.nightWave.activeNightNumber>=WIN_WAVE&&!state.continuedAfterVictory)winGame();
     else transitionPhase();
   }
   effects.afterUpdate();
@@ -2447,6 +2493,14 @@ function winGame(){
   if(state.gameOver)return;
   state.gameOver=true;state.victory=true;stopGameplayInput(true);cancelHeldObject();closeUpgradeMenu();
   effects.victory();sound(880,.5);
+}
+// Victory pauses on the cleared final night. Continuing dismisses that terminal state, records the
+// choice so later waves cannot reopen victory, then uses the ordinary night→day transaction.
+function continueAfterVictory(){
+  if(!state.gameOver||!state.victory)return false;
+  invariant(state.clock.phase==="night"&&state.nightWave.remainingSpawns===0&&livingActiveWaveEnemies()===0,"victory continued before its wave cleared");
+  state.gameOver=false;state.victory=false;state.continuedAfterVictory=true;effects.victoryContinued();
+  transitionPhase();toast("the kingdom endures — exploration continues");return true;
 }
 
 function burst(x,y,col,count){for(let i=0;i<count;i++)particles.push({x,y,vx:rand(-55,55),vy:rand(-90,-25),life:rand(.3,.7),col});}
@@ -2882,7 +2936,7 @@ export {
   // shared numeric helpers (defined here, so nothing restates them)
   clamp, distance, rand,
   // commands that are plain gameplay functions rather than input adapters
-  togglePause, cancelBuildMode, clampCamera, stopGameplayInput, cancelHeldObject,
+  togglePause, cancelBuildMode, clampCamera, stopGameplayInput, cancelHeldObject, continueAfterVictory,
   spawnEnemy, transitionPhase,
   // debug commands (view panel > gameplay)
   debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase, setWaveThreatCurve,

@@ -42,7 +42,7 @@ try{
   assert.equal(Object.isFrozen(data.ENEMY_TYPES),true);assert.equal(Object.values(data.ENEMY_TYPES).every(enemy=>Object.isFrozen(enemy)&&Number.isInteger(enemy.threatCost)&&enemy.threatCost>0&&enemy.spawnWeight>0&&["light","heavy"].includes(enemy.weightTag)),true);
   for(const archetype of ["raider","archer","healer","brute"]){const variants=Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.archetype===archetype&&!enemy.boss).sort((a,b)=>a.variantTier-b.variantTier);assert.deepEqual(variants.map(enemy=>enemy.variantTier),[1,2,3]);assert.deepEqual(variants.map(enemy=>enemy.minWave),[1,4,7]);assert.ok(variants[1].hp>variants[0].hp&&variants[2].hp>variants[1].hp);assert.ok(variants[1].threatCost>variants[0].threatCost&&variants[2].threatCost>variants[1].threatCost);}
   assert.deepEqual(new Set(Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.variantTier===2).map(enemy=>enemy.variantColor)),new Set(["#3568a8"]));assert.deepEqual(new Set(Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.variantTier===3).map(enemy=>enemy.variantColor)),new Set(["#a23e50"]));
-  {const boss=data.ENEMY_TYPES.bruteBoss;assert.equal(boss.archetype,"brute");assert.equal(boss.boss,true);assert.equal(boss.minWave,5);assert.equal(boss.modelScale,4);assert.equal(boss.size,data.ENEMY_TYPES.brute.size*4);assert.equal(boss.hp,500);assert.equal(boss.damage,60);assert.equal(boss.threatCost,20);}assert.deepEqual(data.WAVE_BOSS_SPAWNS,{5:"bruteBoss"});
+  {const boss=data.ENEMY_TYPES.bruteBoss;assert.equal(boss.archetype,"brute");assert.equal(boss.boss,true);assert.equal(boss.minWave,5);assert.equal(boss.modelScale,4);assert.equal(boss.size,data.ENEMY_TYPES.brute.size*4);assert.equal(boss.hp,500);assert.equal(boss.damage,60);assert.equal(boss.threatCost,20);}assert.deepEqual(data.WAVE_BOSS_SPAWNS,{5:["bruteBoss"],10:["bruteBoss","bruteBoss","bruteBoss"]});
   assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.pool)&&recipe.pool.every(type=>data.ENEMY_TYPES[type])),true);
   assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});assert.equal(data.SKILL_POINT_LEVELS,4);
   assert.deepEqual(data.XP_TIERS,[40,100,200,350]);   // dead table, still imported by docs/progression.html and render/scene.js
@@ -202,6 +202,9 @@ try{
 
     // The capture loop's authored contract: a 3x3 constructed yard, a frozen three-living-ally
     // capacity table, and a build card gated behind the enemyPickup buff.
+    assert.equal(data.BUILDING_TYPES.lumber.footprint,data.FOOTPRINT_3x3,"lumber source must reserve its center and eight growth cells");
+    assert.equal(data.BUILDING_TYPES.quarry.footprint,data.FOOTPRINT_3x3,"quarry source must reserve its center and eight growth cells");
+    assert.equal(data.RESOURCE_SOURCE.growthSeconds,30);
     assert.equal(data.BUILDING_TYPES.captureYard.footprint,data.FOOTPRINT_3x3,"capture yard must reserve a 3x3 footprint");
     assert.deepEqual(data.BUILDING_TYPES.captureYard.cost,{wood:8,stone:8});
     assert.equal(data.BUILDING_TYPES.captureYard.buildSlots,3);
@@ -265,7 +268,7 @@ try{
   // is dealt through the ordinary hand writer, so every entry is a real one-copy stack.
   {
     const opening=sim.hand();
-    assert.deepEqual(opening.map(entry=>entry.id),["bpHouse","bpTower"],"a normal run must open with the seed kit: workers and the first tower");
+    assert.deepEqual(opening.map(entry=>entry.id),["bpHouse","bpQuarry","bpTower"],"a normal run must open with workers, renewable stone, and the first tower");
     assert.equal(opening.every(entry=>entry.count===1&&entry.charges===null),true,"a seeded card must be an ordinary untouched stack");
     assert.equal(opening.every(entry=>cardCatalog.cardById[entry.id].category==="build"),true);
     assert.equal(sim.initializeRunMode("normal"),undefined);
@@ -469,6 +472,11 @@ try{
         assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2],["garrison",3]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);
         assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{lumber:2,quarry:3,stockpile:2,house:2,obelisk:3,tower:3,captureYard:3,garrison:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0});
         assert.equal(sim.DBG.groundSourcing,true);assert.equal(sim.TUNE.builderSourceRadius,400);
+        // Resource sources own a center structure plus eight renewable perimeter cells. Growth uses
+        // canonical resource nodes, and a depleted slot is revived instead of leaking array entries.
+        reset();{const anchor=cellToWorld(20,20),camp=building("lumber",anchor.x,anchor.y);sim.buildings.push(camp);step(data.RESOURCE_SOURCE.growthSeconds*60+1);assert.equal(sim.trees.length,1);const tree=sim.trees[0],cell={x:(tree.x-anchor.x)/data.CELL,y:(tree.y-anchor.y)/data.CELL};assert.ok([-1,0,1].includes(cell.x)&&[-1,0,1].includes(cell.y)&&(cell.x!==0||cell.y!==0));assert.equal(tree.sourceBuilding,camp);assert.equal(tree.hp,data.RESOURCE_NODE_HP.wood);tree.hp=0;tree.stump=1;step(data.RESOURCE_SOURCE.growthSeconds*60+1);assert.equal(sim.trees.length,1,"regrowth must reuse the depleted perimeter node");assert.equal(tree.stump,0);assert.equal(tree.hp,data.RESOURCE_NODE_HP.wood);}
+        reset();{const anchor=cellToWorld(20,20),quarry=building("quarry",anchor.x,anchor.y);sim.buildings.push(quarry);step(data.RESOURCE_SOURCE.growthSeconds*60+1);assert.equal(sim.rocks.length,1);assert.equal(sim.rocks[0].sourceBuilding,quarry);assert.equal(sim.rocks[0].hp,data.RESOURCE_NODE_HP.stone);assert.notDeepEqual([sim.rocks[0].x,sim.rocks[0].y],[anchor.x,anchor.y]);}
+        reset();{const anchor=cellToWorld(20,20),camp=building("lumber",anchor.x,anchor.y);sim.buildings.push(camp);sim.update(data.RESOURCE_SOURCE.growthSeconds*9);assert.equal(sim.trees.filter(tree=>sim.resourceIsActive(tree,"wood")).length,8,"source must cap at its eight perimeter cells");assert.equal(new Set(sim.trees.map(tree=>tree.x+","+tree.y)).size,8);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",104,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=false;step();assert.equal(builder.taskTarget,null);assert.ok(builder.carried.wood>0);assert.equal(loose.claimedBy,undefined);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",130,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.taskTarget,loose);assert.equal(loose.claimedBy,builder);assert.equal(store.storage.wood,3);sim.DBG.groundSourcing=false;sim.TUNE.builderSourceRadius=60;step();assert.equal(builder.taskTarget,loose);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=1;const builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.carried.wood,1);}
@@ -1272,6 +1280,29 @@ try{
     `
   }).trim());
   assert.ok(calmResult.calm<calmResult.plain);
+  const finaleResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+    cwd:root,encoding:"utf8",input:`
+      import assert from "node:assert/strict";
+      import * as sim from "./src/game/simulation.js";
+      import {WIN_WAVE,ENEMY_TYPES} from "./src/game/data.js";
+      let victories=0,continues=0;sim.connect({victory(){victories++;},victoryContinued(){continues++;}});
+      const drain=()=>{while(sim.draftPending())sim.chooseDraft(0);};
+      sim.initializeRunMode("normal");
+      for(let wave=1;wave<=WIN_WAVE;wave++){
+        assert.equal(sim.state.clock.phase,"day");sim.transitionPhase();assert.equal(sim.state.nightWave.nightNumber,wave);
+        if(wave<WIN_WAVE){sim.transitionPhase();drain();}
+      }
+      const plan=sim.state.nightWave.activePlan,bosses=plan.entries.filter(entry=>entry.type==="bruteBoss");
+      assert.equal(bosses.length,3,"wave-10 finale did not schedule three bosses");
+      assert.ok(plan.threatBudget>=3*ENEMY_TYPES.bruteBoss.threatCost,"finale budget hid forced boss threat");
+      sim.state.nightWave.remainingSpawns=0;sim.state.enemies.length=0;sim.update(.01);
+      assert.equal(sim.state.gameOver,true);assert.equal(sim.state.victory,true);assert.equal(victories,1);
+      assert.equal(sim.continueAfterVictory(),true);assert.equal(continues,1);assert.equal(sim.state.gameOver,false);assert.equal(sim.state.victory,false);assert.equal(sim.state.continuedAfterVictory,true);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.completedNights,WIN_WAVE);
+      assert.equal(sim.continueAfterVictory(),false,"continue was accepted outside victory");
+      sim.validateSimulationInvariants();console.log(JSON.stringify({bosses:bosses.length,budget:plan.threatBudget,continued:sim.state.continuedAfterVictory}));
+    `
+  }).trim());
+  assert.deepEqual(finaleResult,{bosses:3,budget:100,continued:true});
   // Night has no duration gate: cap-delayed schedules, surviving wave enemies, manual enemies,
   // pause and game over each exercise the two-part clearance predicate in a clean process.
   const waveClearanceResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
@@ -1398,10 +1429,10 @@ try{
       try{
         sim.initializeRunMode("normal");clearGround();
         // 0 · the opening kit, and the debug command that takes it away again
-        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpHouse","bpTower"],"a normal run must open with the seed kit: workers and the first tower");
+        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpHouse","bpQuarry","bpTower"],"a normal run must open with workers, renewable stone, and the first tower");
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpTower")),"targeting","a seeded card must play like any other");
         assert.equal(sim.state.buildMode,"tower");assert.equal(sim.cancelBuildMode(),true);
-        assert.equal(sim.debugClearHand(),2,"clearing the hand must report what it dropped");
+        assert.equal(sim.debugClearHand(),3,"clearing the hand must report what it dropped");
         assert.deepEqual(sim.hand(),[],"debugClearHand must empty the hand");
         assert.equal(sim.state.cardTargeting,null);assert.equal(sim.state.buildMode,null);
         assert.equal(sim.debugClearHand(),0,"clearing an empty hand is a no-op");

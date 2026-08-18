@@ -67,7 +67,7 @@ The maximum number of enemies allowed alive at once. This is a performance safeg
 
 ### Forced Boss Spawn
 
-A named enemy reserved exactly once in a specific wave through `WAVE_BOSS_SPAWNS`. Its Threat Cost is deducted before weighted composition; it closes the Spawn Plan and remains part of the displayed Wave Threat Budget. The current test boss is `bruteBoss` on wave 5.
+One or more named enemies reserved in a specific wave through that wave's ordered `WAVE_BOSS_SPAWNS` list. Their combined Threat Cost is deducted before weighted composition; they close the Spawn Plan and remain part of the displayed Wave Threat Budget. Wave 5 schedules one `bruteBoss`; the wave-10 finale schedules three.
 
 ### Authored Squad
 

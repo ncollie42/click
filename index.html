@@ -419,8 +419,8 @@
       <footer id="skillTreeBar"><button id="skillTreeContinue" type="button">continue</button></footer>
     </section>
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
-    <!-- TEMPORARY endcard: fires on clearing WIN_WAVE (data.js). Real ending is TBD (authored boss). -->
-    <section id="victory" class="off"><div class="endcard"><h2>the kingdom stands</h2><p>every wave broken. the dawn is yours.</p><button id="victoryRestart">play again</button></div></section>
+    <!-- Victory opens on clearing WIN_WAVE; the player may restart or continue into later waves. -->
+    <section id="victory" class="off"><div class="endcard"><h2>the kingdom stands</h2><p>every wave broken. the dawn is yours.</p><div class="endcard-actions"><button id="victoryRestart">play again</button><button id="victoryContinue">continue</button></div></div></section>
   </main>
 </div>
 <!-- Card flights (a spent consumable leaving for the base, a drafted card arriving in the

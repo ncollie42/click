@@ -6,8 +6,8 @@ Living reference for resources, building categories, and behavior tags.
 
 | Resource | Source | Current uses |
 |---|---|---|
-| Wood | Trees | Construction and upgrades |
-| Stone | Stone nodes | Construction and upgrades |
+| Wood | Trees, including lumber-camp growth | Construction and upgrades |
+| Stone | Stone nodes, including quarry growth | Construction and upgrades |
 | Dust essence | 25% enemy death drop | Tower variant upgrades |
 | Gold coin | Temporary random spawn; flashes and vanishes after about 8 seconds | Shock tower variant upgrade |
 | Diamond | 5–8 rare deposits generated more than 600px from the base | Advanced tower variant upgrades |
@@ -31,8 +31,8 @@ Everything that is *placed* lands on one shared square lattice. `src/game/data.j
 
 | Placed object | Footprint | Notes |
 |---|---|---|
-| Lumber camp | 1x1 | |
-| Quarry | 1x1 | |
+| Lumber camp | 3x3 | Camp in center; grows trees in the eight perimeter cells |
+| Quarry | 3x3 | Quarry in center; grows rocks in the eight perimeter cells |
 | Stockpile | 1x1 | |
 | House | 1x1 | |
 | Obelisk | 1x1 | |
@@ -54,9 +54,13 @@ The base is never placed by the player, but it reserves ground exactly like a bu
 
 Towers are permanently 3x3. Choosing a chassis upgrade never resizes an already-placed tower: upgrade completion swaps stats, health scale, and behaviour but leaves the anchor and the nine reserved cells untouched. The Shock Tower is the one movable tower; relocating it re-validates the same 3x3 footprint at the new snapped anchor while excluding the tower itself from the occupancy scan, and only `x`/`y` change — cooldown, health, and variant ride along.
 
+### Renewable resource sources
+
+A completed lumber camp or quarry starts a 30-second countdown automatically; no worker gates production. At each interval it chooses one random vacant cell from its eight-cell perimeter and creates a standard tree or rock there. Active nodes block their cells; eight active nodes therefore pause production. A depleted source node is revived in place rather than duplicated. Source-grown nodes use the canonical `trees` / `rocks` collections, so manual or worker harvesting, rendering, and damage behave exactly as for world nodes. The central cell always holds only the building.
+
 ### Depleted nodes
 
-Trees, stone nodes, and diamond deposits each reserve exactly one cell *while active*. Felling a tree or exhausting a node clears that reservation immediately: the cell becomes buildable, but the node object does not move and does not disappear. The stump or spent rock stays on the map as scenery on the same cell it always occupied. Harvesting is therefore the way to open construction sites in a crowded forest.
+Trees, stone nodes, and diamond deposits each reserve exactly one cell *while active*. Felling a tree or exhausting a node clears that node's reservation immediately: the cell becomes buildable unless another footprint still reserves it. The stump or spent rock stays on the map as scenery on the same cell it always occupied. Harvesting is therefore the way to open construction sites in a crowded forest. Source-grown stumps/spent rocks remain inside their source building's reserved 3x3 and may regrow there.
 
 ### Grass vegetation
 

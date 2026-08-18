@@ -99,7 +99,9 @@
   #pauseBadge{position:absolute;left:50%;top:48%;transform:translate(-50%,-50%);z-index:5;padding:9px 18px;background:#292119e8;color:var(--paper);border:2px solid var(--paper);font-size:17px;pointer-events:none}
   #pauseBadge.off{display:none}
   #gameOver p,#victory p{margin-bottom:12px}
-  #restart,#victoryRestart{background:var(--ink);color:var(--paper);text-align:center;padding:9px}
+  .endcard-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  #restart,#victoryRestart,#victoryContinue{background:var(--ink);color:var(--paper);text-align:center;padding:9px}
+  #victoryContinue{background:#557a35}
   @container game-frame (max-width:799px){
     #xpHud{left:6px;top:6px;transform:none;width:calc(50% - 9px);min-width:0}
     #phaseHud{right:6px;top:6px;width:50%;padding:5px 6px;font-size:10px}

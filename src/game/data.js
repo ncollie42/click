@@ -58,6 +58,11 @@ export const RESOURCE_FOOTPRINT=FOOTPRINT_1x1;              // trees, rocks and 
 BASE.footprint=FOOTPRINT_3x3;
 
 // ── resources ───────────────────────────────────────────────────────────────
+// Standard node health is also total yield: every hit removes one HP and creates one resource.
+export const RESOURCE_NODE_HP=Object.freeze({wood:50,stone:35,diamond:13});
+// Lumber camps and quarries reserve a 3x3: the structure owns the center and this timer grows one
+// standard node in a random vacant perimeter cell. Eight live nodes cap production naturally.
+export const RESOURCE_SOURCE=Object.freeze({growthSeconds:30});
 // Canonical kind order. Every per-kind record (carried, stored, storage, delivered,
 // upgrade costs) is keyed by these names, and iteration order here is the order
 // costs, tallies and grants are read in.
@@ -129,16 +134,16 @@ export const RESOURCE_NODE_JOB_SLOTS=1;
 export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
 
 // ── buildings ───────────────────────────────────────────────────────────────
-// Every entry carries an explicit `footprint` (odd cells, anchor-centered). The tower chassis and
-// the capture yard are the only persistent 3x3s; every other building and deployable is 1x1 (the
-// summoning circle and meteor target are temporary/instant 3x3s). Tower VARIANTS inherit the chassis footprint -
+// Every entry carries an explicit `footprint` (odd cells, anchor-centered). Resource sources, the
+// tower chassis, and the capture yard are persistent 3x3s; ordinary buildings/deployables are 1x1
+// (the summoning circle and meteor target are temporary/instant 3x3s). Tower VARIANTS inherit the chassis footprint -
 // upgrading never resizes an already-placed tower, so variants deliberately declare no footprint.
 // `buildSlots` is construction staffing capacity; material totals >=12 use three builders. Every
 // row owns a number, including zero for instant/target-only records that never become blueprints.
 // `jobSlots` independently controls permanent staffing after completion; absence means zero.
 export const BUILDING_TYPES = {
-  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},buildSlots:2,serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_1x1},
-  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},buildSlots:3,serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_1x1},
+  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},buildSlots:2,serviceRadius:155,jobSlots:2,resourceSource:true,footprint:FOOTPRINT_3x3},
+  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},buildSlots:3,serviceRadius:155,jobSlots:2,resourceSource:true,footprint:FOOTPRINT_3x3},
   stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},buildSlots:2,serviceRadius:175,jobSlots:2,footprint:FOOTPRINT_1x1},
   house:{name:"house",resource:null,cost:HOUSE_COST,buildSlots:2,footprint:FOOTPRINT_1x1},
   obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},buildSlots:3,footprint:FOOTPRINT_1x1},
@@ -207,18 +212,21 @@ for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of
     threatCost:base.threatCost*band.cost,spawnWeight:base.spawnWeight*band.weight});
 }
 // One authored boss for now: brute behavior/model, but a 4× render/collision scale and fixed boss
-// stats. It is not a weighted variant; WAVE_BOSS_SPAWNS guarantees its one scheduled appearance.
+// stats. It is not a weighted variant; WAVE_BOSS_SPAWNS authors every scheduled appearance.
 enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantColor:null,minWave:5,
   hp:500,damage:60,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
 export const ENEMY_TYPES=Object.freeze(enemyVariants);
-export const WAVE_BOSS_SPAWNS=Object.freeze({5:"bruteBoss"});
+// Each wave owns an ordered forced-boss list. Wave 10 is the current finale: three bosses close it.
+export const WAVE_BOSS_SPAWNS=Object.freeze({
+  5:Object.freeze(["bruteBoss"]),
+  10:Object.freeze(["bruteBoss","bruteBoss","bruteBoss"]),
+});
 // Enemies spawn at a random angle on a ring around the base (small radial jitter in
 // simulation.js), preferring land. No directional/shoreline spawning.
 export const ENEMY_SPAWN_RADIUS=800;
 export const ENEMY_POOL=Object.freeze(["raider","raider","archer","healer","brute"]);
 export const NIGHT_WAVE_WINDOW=30,NIGHT_ENEMY_CAP=30,NIGHT_TELEGRAPH_TIME=8;
-// TEMPORARY win condition: clearing this wave ends the run in victory. Placement is undecided and
-// the wave itself should eventually be an authored boss set-piece, not a bare threshold.
+// Clearing this wave opens victory. The player may restart or continue into uncapped later waves.
 export const WIN_WAVE=10;
 // Normalized power curve: wave 1 starts at startBudget, targetWave reaches targetBudget, and later
 // waves hold there until another authored segment is added. Raise `power` for a slower start and
