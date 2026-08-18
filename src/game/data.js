@@ -93,7 +93,7 @@ export const XP_TIERS=[40,100,200,350];   // dead: superseded by LEVEL_CURVE, st
 // ids, rarities, texts and stack limits but none of the arithmetic. Read only by simulation.js;
 // no runtime path may assign into these tables — a taken card tallies a stack in run state and
 // the accessors layer these numbers over the authored values at read time.
-export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,buildCapacity:1,towerDamage:1.1,towerSpeed:1.1,towerRange:100,baseHp:5,clickDamage:1,
+export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,buildCapacity:1,towerDamage:1.1,towerSpeed:1.1,towerRange:50,baseHp:5,clickDamage:1,
   // Chain lightning scales BOTH dials per stack: stack N procs a completed player swing at
   // chainChance+(N-1)*chainChanceStack and throws chainJumps+(N-1) jumps — 20%/1, 30%/2, 40%/3,
   // 50%/4 at the card's 4-stack cap. A jump is a full ordinary swing (its own crit roll) on the
@@ -220,7 +220,9 @@ for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of
 // One authored boss for now: brute behavior/model, but a 4× render/collision scale and fixed boss
 // stats. It is not a weighted variant; WAVE_BOSS_SPAWNS authors every scheduled appearance.
 enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantColor:null,minWave:5,
-  hp:500,damage:60,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
+  // The 4× model's visible ground ring reaches about 200 simulation pixels. Every walking contact
+  // uses that same radius; attack contacts still use the ordinary 60-damage melee swing.
+  hp:500,damage:60,stompDamage:10,stompRadius:200,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
 export const ENEMY_TYPES=Object.freeze(enemyVariants);
 // Each wave owns an ordered forced-boss list. Wave 10 is the current finale: three bosses close it.
 export const WAVE_BOSS_SPAWNS=Object.freeze({

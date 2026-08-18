@@ -2020,6 +2020,26 @@ function updateHazard(building,dt){
     const def=BUILDING_TYPES.spikes;hazard.cooldown=def.cooldown;hazard.flash=.18;damageEnemy(enemy,def.damage,"#c9c2b5",4);
   }
 }
+/** Walking Brute Boss contacts are simulation events, not renderer callbacks. The renderer uses the
+ * same unwrapped `wob * .12` gait and lands at each half-integer, so damage and the visible ground
+ * ring stay synchronized even when one update crosses multiple steps. Attack contacts remain the
+ * ordinary targeted melee hit and must not also enter this sweep. */
+function walkingStompContacts(enemy,def,fromWob,fromX,fromY){
+  if(!def.boss||!(def.stompDamage>0)||!(def.stompRadius>0))return;
+  const fromPhase=fromWob*.12,toPhase=enemy.wob*.12,firstContact=Math.floor(fromPhase-.5)+1.5;
+  for(let contact=firstContact;contact<=toPhase;contact++){
+    const progress=(contact-fromPhase)/(toPhase-fromPhase),x=fromX+(enemy.x-fromX)*progress,y=fromY+(enemy.y-fromY)*progress;
+    let workerDied=false;
+    for(const worker of [...state.workers])if(distance(x,y,worker.x,worker.y)<=def.stompRadius){worker.retaliationTarget=enemy;addDamageNumber(worker,def.stompDamage,{tone:"received"});worker.hp=Math.max(0,worker.hp-def.stompDamage);if(worker.hp<=0)workerDied=killWorker(worker)||workerDied;}
+    for(const brute of [...friendlyBrutes])if(distance(x,y,brute.x,brute.y)<=def.stompRadius)damageFriendlyBrute(brute,def.stompDamage);
+    for(const unit of [...controlledEnemies])if(distance(x,y,unit.x,unit.y)<=def.stompRadius)damageControlledEnemy(unit,def.stompDamage);
+    for(const building of [...buildings])if(building.complete&&building.tower&&building.tower.hp>0&&distance(x,y,building.x,building.y)<=def.stompRadius+26)damageTower(building,def.stompDamage);
+    if(distance(x,y,BASE.x,BASE.y)<=def.stompRadius){if(!DBG.invulnBase){addDamageNumber(BASE,def.stompDamage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-def.stompDamage);}state.basePulse=1;}
+    burst(x,y,"#76558f",18);sound(58,.16);
+    if(workerDied)toast("worker died — replacement in "+WORKER_SPAWN_TIME+"s");
+    if(state.baseHp<=0){endGame();return;}
+  }
+}
 /** Bomber detonation: removal first (killEnemy owns wave accounting and the dust roll), then one
  * radial sweep over every player-side target class. Damage sites match the ordinary enemy swing —
  * towers keep their 26px footprint grace and the invulnerable-base debug check stays at the base. */
@@ -2431,7 +2451,7 @@ function updateNormal(dt){
   state.coinTimer-=dt;if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(14,22);}
   for(const enemy of [...state.enemies]){
     if(!updateEnemyStatuses(enemy,dt))continue;
-    const def=ENEMY_TYPES[enemy.type];
+    const def=ENEMY_TYPES[enemy.type],fromWob=enemy.wob,fromX=enemy.x,fromY=enemy.y;
     enemy.wob+=dt*7;enemy.flash=Math.max(0,enemy.flash-dt);enemy.shotFlash=Math.max(0,enemy.shotFlash-dt);enemy.healFlash=Math.max(0,enemy.healFlash-dt);enemy.attackCooldown-=dt;enemy.healCooldown-=dt;
     if(def.archetype==="healer"&&enemy.healCooldown<=0){
       let patient=null,best=150;
@@ -2452,7 +2472,10 @@ function updateNormal(dt){
       }
       if(target.distance<=def.range){enemy.fuse=def.fuseTime;sound(940,.07);continue;}
     }
-    if(target.distance>def.range){const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x),speedMultiplier=enemy.status.slow?.multiplier??1;enemy.x+=Math.cos(angle)*def.speed*speedMultiplier*dt;enemy.y+=Math.sin(angle)*def.speed*speedMultiplier*dt;}
+    if(target.distance>def.range){
+      const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x),speedMultiplier=enemy.status.slow?.multiplier??1;enemy.x+=Math.cos(angle)*def.speed*speedMultiplier*dt;enemy.y+=Math.sin(angle)*def.speed*speedMultiplier*dt;
+      walkingStompContacts(enemy,def,fromWob,fromX,fromY);if(state.gameOver)break;
+    }
     else if(def.damage&&enemy.attackCooldown<=0){
       enemy.attackCooldown=def.rate;enemy.shotFlash=.14;enemy.shotX=target.x;enemy.shotY=target.y;
       let workerDied=false;

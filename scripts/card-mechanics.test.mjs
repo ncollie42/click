@@ -18,11 +18,12 @@ const findWater=()=>{for(let y=96;y<data.H-96;y+=data.CELL)for(let x=96;x<data.W
 const originalRandom=Math.random;Math.random=()=>0;
 let visible=new Set(),levelEvents=0;sim.connect({isCombatTargetOnScreen(target){return visible.has(target);},levelChanged(){levelEvents++;}});
 
-// Tower Range adds 100px to both ranged and area towers, then leaves the draft after five stacks.
+// Tower Range applies to both ranged and area towers, then leaves the draft after five stacks.
 const towerRangeCard=cardById.towerRange,basicRadius=sim.indicatorRadius("tower"),pulse={type:"tower",tower:{variant:"pulse"}};
 assert.equal(towerRangeCard.stacks,5);assert.equal(towerRangeCard.inPool,true);assert.equal(towerRangeCard.implemented,true);
 for(let i=0;i<towerRangeCard.stacks;i++)assert.equal(sim.debugApplyBuff("towerRange"),true);
-assert.equal(sim.indicatorRadius("tower"),basicRadius+500);assert.equal(sim.towerRadius(pulse),data.TOWER_VARIANTS.pulse.effectRadius+500);
+const stackedRange=data.CARD_BUFFS.towerRange*towerRangeCard.stacks;
+assert.equal(sim.indicatorRadius("tower"),basicRadius+stackedRange);assert.equal(sim.towerRadius(pulse),data.TOWER_VARIANTS.pulse.effectRadius+stackedRange);
 assert.equal(sim.draftEligible(["buff"]).some(card=>card.id==="towerRange"),false,"capped tower range remained in the draft pool");
 delete sim.state.draft.buffs.towerRange;
 
@@ -64,7 +65,9 @@ sim.setPointerWorld(circle.x,circle.y);sim.secondaryPress();const circleOrigin={
 sim.setPointerWorld(circle.x,circle.y);sim.secondaryPress();const circleMoved=findAnchor("summoningCircle",circleOrigin);sim.setPointerWorld(circleMoved.x,circleMoved.y);sim.secondaryRelease();assert.deepEqual({x:circle.x,y:circle.y},circleMoved);assert.equal(circle.summoning.dust,2);
 sim.resourceDrops.length=0;sim.state.carried.dust=5;sim.setPointerWorld(circle.x,circle.y);sim.secondaryRelease();assert.equal(sim.buildings.includes(circle),true,"first summon consumed the persistent circle");assert.equal(sim.friendlyBrutes.length,1);assert.equal(circle.summoning.dust,2,"partial dust did not carry into the next summon");assert.equal(sim.state.carried.dust,0);
 sim.state.carried.dust=8;sim.setPointerWorld(circle.x,circle.y);sim.secondaryRelease();assert.equal(sim.friendlyBrutes.length,3,"one funded delivery did not summon several Brutes");assert.equal(circle.summoning.dust,0);assert.equal(sim.buildings.includes(circle),true);
-const defender=sim.friendlyBrutes[0];sim.resourceDrops.length=0;sim.spawnEnemy("bruteBoss");enemy=sim.state.enemies.at(-1);enemy.x=defender.x+20;enemy.y=defender.y;enemy.attackCooldown=0;const defenderHp=defender.hp;sim.DBG.invulnBase=true;sim.update(.01);assert.ok(defender.hp<defenderHp,"hostile did not target nearer friendly Brute");for(let i=0;i<20&&sim.friendlyBrutes.includes(defender);i++)sim.update(.2);assert.equal(sim.friendlyBrutes.includes(defender),false,"friendly Brute could not die");sim.state.enemies.length=0;circle.summoning.remaining=.01;sim.update(.02);assert.equal(sim.buildings.includes(circle),false,"used circle survived its lifetime");
+const defender=sim.friendlyBrutes[0];sim.resourceDrops.length=0;sim.spawnEnemy("bruteBoss");enemy=sim.state.enemies.at(-1);const bossDef=data.ENEMY_TYPES.bruteBoss;
+enemy.x=defender.x+bossDef.stompRadius-5;enemy.y=defender.y;enemy.wob=(.5-.01)/.12;sim.DBG.invulnBase=true;const beforeStomp=defender.hp;sim.update(.02);assert.equal(defender.hp,beforeStomp-bossDef.stompDamage,"walking boss contact did not damage nearby player units");
+enemy.x=defender.x+20;enemy.y=defender.y;enemy.attackCooldown=0;const defenderHp=defender.hp;sim.update(.01);assert.ok(defender.hp<defenderHp,"hostile did not target nearer friendly Brute");for(let i=0;i<20&&sim.friendlyBrutes.includes(defender);i++)sim.update(.2);assert.equal(sim.friendlyBrutes.includes(defender),false,"friendly Brute could not die");sim.state.enemies.length=0;circle.summoning.remaining=.01;sim.update(.02);assert.equal(sim.buildings.includes(circle),false,"used circle survived its lifetime");
 
 // Prerequisite gating is deterministic run state, not luck: a `requires` card is locked out of every
 // eligible pool until each listed buff is owned, and unlocking never edits the authored catalog.

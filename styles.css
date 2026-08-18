@@ -215,9 +215,9 @@
   /* Footer utilities do not belong to a pane: changed output appears only on request, and all
      footer pieces collapse with the panel. Restart remains visually separate and destructive. */
   #vFooterActions{flex:0 0 auto;display:flex;gap:3px;margin:7px 0 0}
-  #vFooterActions button{flex:1 1 50%;min-width:0;width:auto;margin:0;padding:4px 2px;font-size:9px;
-    white-space:nowrap;text-align:center;background:#4a5533;color:#f1dfb7;border:1px solid #8f9760}
-  #vFooterActions button:hover:not(:disabled){background:#5a6740}
+  #vFooterActions button,#vFooterActions a{box-sizing:border-box;flex:1 1 33.333%;min-width:0;width:auto;margin:0;padding:4px 2px;font-size:9px;
+    line-height:1.35;white-space:nowrap;text-align:center;text-decoration:none;background:#4a5533;color:#f1dfb7;border:1px solid #8f9760}
+  #vFooterActions button:hover:not(:disabled),#vFooterActions a:hover{background:#5a6740}
   #vFooterActions button:disabled{opacity:.58;cursor:default}
   #vChangedOutput{box-sizing:border-box;width:100%;min-height:48px;max-height:110px;margin:4px 0 0;
     padding:4px;resize:vertical;overflow:auto;background:#1b2013;color:#f1dfb7;border:1px solid #69754b;
