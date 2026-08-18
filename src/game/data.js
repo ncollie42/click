@@ -59,7 +59,7 @@ BASE.footprint=FOOTPRINT_3x3;
 
 // ── resources ───────────────────────────────────────────────────────────────
 // Standard node health is also total yield: every hit removes one HP and creates one resource.
-export const RESOURCE_NODE_HP=Object.freeze({wood:50,stone:35,diamond:13});
+export const RESOURCE_NODE_HP=Object.freeze({wood:25,stone:18,diamond:13});
 // Lumber camps and quarries reserve a 3x3: the structure owns the center and this timer grows one
 // standard node in a random vacant perimeter cell. Eight live nodes cap production naturally.
 export const RESOURCE_SOURCE=Object.freeze({growthSeconds:30});
@@ -105,7 +105,8 @@ export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay
 // the player aims with IS the area this damages.
 export const FIREBALL={damage:6,radius:135};
 // Intentional large-obstacle tuning: the impact reserves 3x3 through meteorTarget and the rock's
-// runtime footprint; 15 HP keeps it durable while matching the halved yield of world nodes.
+// runtime footprint; its fixed 15 HP keeps the spell-created obstacle durable without inheriting
+// ordinary stone-node balance.
 export const METEOR=Object.freeze({damage:20,radius:180,rockHp:15});
 export const DAMAGE_ORBS=Object.freeze({duration:30,minCount:1,maxCount:3,orbitRadius:52,aoeRadius:38,damage:1,cooldown:.6});
 export const SUMMONING_CIRCLE=Object.freeze({duration:120,dustCost:5});

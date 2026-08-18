@@ -258,10 +258,10 @@ try{
     assert.equal(inBand.length,data.CHEST.startingCount);
   }
   sim.initializeRunMode("normal");
-  assert.equal(sim.trees.every(node=>node.max===50),true,"world trees must yield 50 wood");
-  assert.equal(sim.rocks.every(node=>node.max===35),true,"world rocks must yield 35 stone");
+  assert.equal(sim.trees.every(node=>node.max===25),true,"world trees must yield 25 wood");
+  assert.equal(sim.rocks.every(node=>node.max===18),true,"world rocks must yield 18 stone");
   assert.equal(sim.diamonds.every(node=>node.max===13),true,"world deposits must yield 13 diamonds");
-  assert.equal(data.METEOR.rockHp,15,"meteor rocks must follow the halved node yield");
+  assert.equal(data.METEOR.rockHp,15,"meteor rocks must keep their independent spell yield");
   // ── the starting hand ──
   // With the build shop gone a fresh run can only build out of the hand, so normal initialization
   // seeds the opening kit. It is dealt ONCE (re-initializing the same mode stays idempotent) and it
