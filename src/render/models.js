@@ -17,7 +17,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
 import {PAL, DROP_COLOR} from "./palette.js";
-import {W,H,BASE,CELL,ENEMY_TYPES,GARRISON} from "../game/data.js";
+import {W,H,BASE,CELL,BUILDING_TYPES,ENEMY_TYPES,GARRISON} from "../game/data.js";
 import {buildingFootprint} from "../game/grid.js";
 // Reviewed sim-px models (see docs/quality-bar.md): standalone modules the model viewer also
 // loads. Adopted into the game's scale/shadow/outline conventions by adoptModel() below.
@@ -597,8 +597,8 @@ export function makeBuilding(type){
       beam([-.38,y,z],[.38,y,z],.10,PAL.timberDark);
     }
   } else if(type==="house"){
-    // Front is +Z, matching the house worker spawn/post at simulation y+23. The body and every prop
-    // stay inside the footprint's 2x2 world-unit pad, while the anchor remains the group's origin.
+    // Front is +Z, matching the house worker spawn/post at simulation y+23. The cottage remains
+    // centered inside the anchor cell while its footprint floor reserves the full 3x3 yard.
     const wallH=1.14,wallW=1.46,wallD=1.30,wallTop=FLOOR_TOP+wallH;
     const walls=add(meshOf(new THREE.BoxGeometry(wallW,wallH,wallD),flat(PAL.plaster)));
     walls.position.y=FLOOR_TOP+wallH/2;
@@ -664,6 +664,27 @@ export function makeBuilding(type){
     }
     const rail=add(meshOf(new THREE.BoxGeometry(.10,.10,.53),flat(PAL.timber)));
     rail.position.set(-.89,FLOOR_TOP+.36,.53);
+  } else if(type==="rangeBeacon"){
+    // Compact 1x1 signal mast: pale concentric hardware advertises tower support, while the hover
+    // ring supplies the exact authored coverage radius.
+    const base=add(meshOf(new THREE.CylinderGeometry(.72,.86,.30,8),flat(PAL.masonryDark)));base.position.y=FLOOR_TOP+.15;
+    const cap=add(meshOf(new THREE.CylinderGeometry(.58,.68,.18,8),flat(PAL.masonry)));cap.position.y=FLOOR_TOP+.39;
+    const mast=add(meshOf(new THREE.CylinderGeometry(.10,.14,1.75,8),flat(PAL.metal)));mast.position.y=FLOOR_TOP+1.30;
+    for(const y of [1.02,1.48]){
+      const ring=add(meshOf(new THREE.TorusGeometry(.42,.07,6,16),flat(PAL.towLightning)));
+      ring.rotation.x=Math.PI/2;ring.position.y=FLOOR_TOP+y;
+    }
+    const signal=add(meshOf(new THREE.OctahedronGeometry(.34,0),flat(PAL.towLightning,{emissive:PAL.arcaneGlow})));
+    signal.position.y=FLOOR_TOP+2.30;g.userData.tip=signal;
+  } else if(type==="warShrine"){
+    // A squat martial altar, visually distinct from the range beacon's tall signal mast.
+    const base=add(meshOf(new THREE.CylinderGeometry(.76,.88,.34,6),flat(PAL.masonryDark)));base.position.y=FLOOR_TOP+.17;
+    const altar=add(meshOf(new THREE.BoxGeometry(1.10,.48,.72),flat(PAL.masonry)));altar.position.y=FLOOR_TOP+.55;
+    for(const turn of [-.62,.62]){
+      const blade=add(meshOf(new THREE.BoxGeometry(.12,1.45,.10),flat(PAL.metal)));blade.position.y=FLOOR_TOP+1.25;blade.rotation.z=turn;
+      const guard=add(meshOf(new THREE.BoxGeometry(.48,.10,.13),flat(PAL.timberDark)));guard.position.set(Math.sin(turn)*-.38,FLOOR_TOP+.94,0);guard.rotation.z=turn;
+    }
+    const crest=add(meshOf(new THREE.OctahedronGeometry(.28,0),flat(PAL.banner,{emissive:PAL.hurtGlow})));crest.position.y=FLOOR_TOP+1.82;g.userData.tip=crest;
   } else if(type==="garrison"){
     // Villager-built guard station on the ordinary 1x1 pad: a compact plaster-and-timber hut set
     // against the back (-Z) with an open drill yard in front (+Z), where the simulation posts its
@@ -770,7 +791,9 @@ export function makeBuilding(type){
       s.position.set((i%3-1)*.55, .42, (Math.floor(i/3)-.5)*.6);
     }
   } else if(type==="tar"){
-    const p = add(meshOf(new THREE.CylinderGeometry(1.15,1.15,.12,14), flat(PAL.tar))); p.position.y=.06;
+    // The puddle edge is the gameplay slow boundary; both consume the authored simulation radius.
+    const radius=BUILDING_TYPES.tar.effectRadius*S;
+    const p = add(meshOf(new THREE.CylinderGeometry(radius,radius,.12,24), flat(PAL.tar))); p.position.y=.06;
   } else if(type==="damageOrbs"){
     const hub=add(meshOf(new THREE.CylinderGeometry(.38,.52,.32,8),flat(PAL.masonryDark)));hub.position.y=.18;
     const orbit=new THREE.Group();orbit.position.y=.75;g.add(orbit);g.userData.orbit=orbit;g.userData.orbs=[];

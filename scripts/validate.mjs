@@ -45,6 +45,11 @@ try{
   {const boss=data.ENEMY_TYPES.bruteBoss;assert.equal(boss.archetype,"brute");assert.equal(boss.boss,true);assert.equal(boss.minWave,5);assert.equal(boss.modelScale,4);assert.equal(boss.size,data.ENEMY_TYPES.brute.size*4);assert.equal(boss.hp,500);assert.equal(boss.damage,60);assert.equal(boss.stompDamage,10);assert.equal(boss.stompRadius,200);assert.equal(boss.threatCost,20);}assert.deepEqual(data.WAVE_BOSS_SPAWNS,{5:["bruteBoss"],10:["bruteBoss","bruteBoss","bruteBoss"]});
   assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.pool)&&recipe.pool.every(type=>data.ENEMY_TYPES[type])),true);
   assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});assert.equal(data.SKILL_POINT_LEVELS,4);
+  assert.deepEqual(Object.values(data.DAMAGE_TARGET_TYPE),["enemies-only","resources-only","enemies-resources","player-resources","all"]);assert.equal(data.DAMAGE_ORBS.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);
+  assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
+  assert.equal(Object.values(data.TOWER_VARIANTS).every(variant=>variant.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every tower must author its damage target type");
+  assert.equal([data.BUILDING_TYPES.blast,data.BUILDING_TYPES.spikes,data.BUILDING_TYPES.landmine].every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every damaging deployable must author its target type");
+  assert.equal(Object.values(data.ENEMY_TYPES).every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES),true,"every hostile attack must author its target type");assert.equal(data.ENEMY_TYPES.bruteBoss.stompDamageTargetType,data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES);
   assert.deepEqual(data.XP_TIERS,[40,100,200,350]);   // dead table, still imported by docs/progression.html and render/scene.js
   assert.equal(Object.isFrozen(data.CHEST),true);
   assert.equal(data.CHEST.startingCount,1);assert.equal(data.CHEST.maxHp,4);assert.equal(data.CHEST.footprint,data.FOOTPRINT_1x1);
@@ -132,10 +137,31 @@ try{
 
   // Grass is lowest-priority one-hit scenery: no drops, no occupancy, no second hit.
   {
-    const tuft=sim.grass[0],beforeCount=sim.grass.length,beforeDrops=sim.resourceDrops.length,oldChopTime=sim.TUNE.chopTime;
-    assert.ok(tuft&&tuft.hp===1&&tuft.max===1);assert.equal(sim.canPlace(tuft.x,tuft.y,null),true,"grass incorrectly blocks placement");
+    // Any tuft the click resolver actually reaches: grass under an unmined fog block is owned by
+    // the fog cell and deliberately unclickable, so the first tuft in the list may not qualify.
+    const tuft=sim.grass.find(t=>sim.resolvePrimaryAction(t.x,t.y)?.target===t),beforeCount=sim.grass.length,beforeDrops=sim.resourceDrops.length,oldChopTime=sim.TUNE.chopTime;
+    assert.ok(tuft&&tuft.hp===1&&tuft.max===1,"no revealed grass tuft to click");assert.equal(sim.canPlace(tuft.x,tuft.y,null),true,"grass incorrectly blocks placement");
     assert.equal(sim.resolvePrimaryAction(tuft.x,tuft.y)?.kind,"cut-grass");sim.TUNE.chopTime=.01;sim.setPointerWorld(tuft.x,tuft.y);sim.primaryPress();sim.update(.02);sim.primaryRelease();sim.TUNE.chopTime=oldChopTime;
     assert.equal(sim.grass.length,beforeCount-1);assert.equal(sim.grass.includes(tuft),false);assert.equal(sim.resourceDrops.length,beforeDrops,"grass yielded a resource");assert.notEqual(sim.resolvePrimaryAction(tuft.x,tuft.y)?.target,tuft,"destroyed grass remained targetable");sim.validateSimulationInvariants();
+  }
+
+  // Click snapping: a swing armed by the press stays locked to its target while the button is held,
+  // even after the cursor slips off — but only within TUNE.snapRadius, and never after release.
+  {
+    const oldChopTime=sim.TUNE.chopTime;sim.TUNE.chopTime=.01;
+    sim.spawnEnemy("raider");const enemy=sim.state.enemies.at(-1);
+    enemy.x=data.BASE.x+140;enemy.y=data.BASE.y;   // inside the base fog clearing, so it is targetable
+    sim.setPointerWorld(enemy.x,enemy.y);sim.primaryPress();
+    sim.setPointerWorld(enemy.x+sim.TUNE.snapRadius-20,enemy.y);   // off the enemy, inside the leash
+    const before=enemy.hp;sim.update(.02);
+    assert.ok(enemy.hp<before,"held swing did not follow its target off-cursor");
+    assert.equal(sim.chopTarget()?.target,enemy,"the badge preview must follow the snap lock");
+    sim.setPointerWorld(enemy.x+sim.TUNE.snapRadius+40,enemy.y);   // beyond the leash: lock breaks
+    const mid=enemy.hp;sim.update(.02);
+    assert.equal(enemy.hp,mid,"snap lock survived past snapRadius");
+    sim.primaryRelease();
+    sim.setPointerWorld(enemy.x,enemy.y);sim.setPointerOutside();
+    sim.TUNE.chopTime=oldChopTime;sim.state.enemies.splice(sim.state.enemies.indexOf(enemy),1);sim.validateSimulationInvariants();
   }
 
   // The pacing docs may never drift from the authored tables: every typed ref in
@@ -204,6 +230,10 @@ try{
     // capacity table, and a build card gated behind the enemyPickup buff.
     assert.equal(data.BUILDING_TYPES.lumber.footprint,data.FOOTPRINT_3x3,"lumber source must reserve its center and eight growth cells");
     assert.equal(data.BUILDING_TYPES.quarry.footprint,data.FOOTPRINT_3x3,"quarry source must reserve its center and eight growth cells");
+    assert.equal(data.BUILDING_TYPES.house.footprint,data.FOOTPRINT_3x3,"house yard must reserve a centered 3x3 footprint");
+    assert.deepEqual({footprint:data.BUILDING_TYPES.rangeBeacon.footprint,effectRadius:data.BUILDING_TYPES.rangeBeacon.effectRadius,rangeBonus:data.BUILDING_TYPES.rangeBeacon.rangeBonus},{footprint:data.FOOTPRINT_1x1,effectRadius:128,rangeBonus:50});
+    assert.deepEqual({footprint:data.BUILDING_TYPES.warShrine.footprint,effectRadius:data.BUILDING_TYPES.warShrine.effectRadius,damageBonus:data.BUILDING_TYPES.warShrine.damageBonus},{footprint:data.FOOTPRINT_1x1,effectRadius:128,damageBonus:1});
+    assert.deepEqual({chance:data.CARD_BUFFS.deathTreeChance,damage:data.CARD_BUFFS.deathExplosionDamage,radius:data.CARD_BUFFS.deathExplosionRadius},{chance:.25,damage:3,radius:64});
     assert.equal(data.RESOURCE_SOURCE.growthSeconds,30);
     assert.equal(data.BUILDING_TYPES.captureYard.footprint,data.FOOTPRINT_3x3,"capture yard must reserve a 3x3 footprint");
     assert.deepEqual(data.BUILDING_TYPES.captureYard.cost,{wood:8,stone:8});
@@ -222,7 +252,7 @@ try{
       assert.equal(garrison.jobSlots,3,"a garrison holds exactly three guards");
       assert.equal(garrison.jobSlots,data.GARRISON.capacity,"garrison job slots must read the guard capacity, never restate it");
       assert.ok(Object.isFrozen(data.GARRISON),"garrison tuning must be immutable");
-      assert.deepEqual({...data.GARRISON},{capacity:3,musterRadius:300,threatRadius:180,engagementRadius:400,guardRadius:180,safeSeconds:10,maxHp:10,damage:2});
+      assert.deepEqual({...data.GARRISON},{capacity:3,musterRadius:300,threatRadius:180,engagementRadius:400,guardRadius:180,safeSeconds:10,maxHp:10,damage:2,damageTargetType:data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY});
       assert.ok(data.GARRISON.musterRadius>data.GARRISON.threatRadius,"the muster call must reach further than the threat that raises it");
       assert.equal(garrison.attackMode,undefined,"the garrison itself has no attack");
       assert.equal(garrison.resource,null,"the garrison produces no resource");
@@ -284,6 +314,9 @@ try{
     assert.equal(enemy.waveNightNumber,undefined,"manual spawn silently joined a scheduled wave");
   }
   for(const enemy of [...sim.state.enemies]){
+    // Towers cannot see through standing fog and the spawn ring starts fogged, so pull each enemy
+    // into the base clearing first; the push is radial from the base and works anywhere.
+    enemy.x=data.BASE.x+180;enemy.y=data.BASE.y+40;
     const before=Math.hypot(enemy.x-data.BASE.x,enemy.y-data.BASE.y),variant=data.TOWER_VARIANTS.teleport,teleport={type:"tower",x:enemy.x,y:enemy.y,complete:true,pulse:0,tower:{variant:"teleport",cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp},hazard:null};sim.buildings.push(teleport);sim.update(.001);sim.buildings.splice(sim.buildings.indexOf(teleport),1);
     assert.ok(Math.hypot(enemy.x-data.BASE.x,enemy.y-data.BASE.y)>before+1,"teleport tower did not push the enemy radially away from the base");
   }
@@ -295,7 +328,7 @@ try{
   sim.state.runMode="invalid";assert.throws(()=>sim.update(1/60),/invalid run mode/);sim.state.runMode="normal";
   // The house is placed the only way a house can be placed now: by playing the bpHouse card the
   // opening kit dealt. There is no dock and no toggleBuildMode() to reach for.
-  sim.DBG.freeCosts=true;const houseGrass=sim.grass.find(tuft=>sim.canPlace(tuft.x,tuft.y,"house")),houseSite=houseGrass&&{x:houseGrass.x,y:houseGrass.y};assert.ok(houseSite);sim.setPointerWorld(houseSite.x,houseSite.y);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),"targeting");assert.equal(sim.state.buildMode,"house");sim.primaryPress();sim.primaryRelease();assert.equal(sim.buildings.some(item=>item.type==="house"&&item.complete),true,"the bpHouse card did not stand a house");assert.equal(sim.grass.includes(houseGrass),false,"successful building placement did not clear overlapping grass");sim.DBG.instantWorkers=true;sim.update(1/60);const worker=sim.state.workers[0],workerOrigin={x:worker.x,y:worker.y};sim.setPointerWorld(worker.x,worker.y);sim.secondaryPress();assert.equal(sim.heldWorker(),worker);sim.pointerCancelled();assert.equal(worker.x,workerOrigin.x);assert.equal(worker.y,workerOrigin.y);assert.equal(sim.state.workers.includes(worker),true);assert.equal(worker.job,"free","a house-born worker must spawn free");assert.equal(worker.autonomous,true);sim.DBG.freeCosts=sim.DBG.instantWorkers=false;
+  sim.DBG.freeCosts=true;const houseGrass=sim.grass.find(tuft=>sim.canPlace(tuft.x,tuft.y,"house")&&sim.footprintFogFree(tuft.x,tuft.y,data.BUILDING_TYPES.house.footprint)),houseSite=houseGrass&&{x:houseGrass.x,y:houseGrass.y};assert.ok(houseSite);sim.setPointerWorld(houseSite.x,houseSite.y);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),"targeting");assert.equal(sim.state.buildMode,"house");sim.primaryPress();sim.primaryRelease();assert.equal(sim.buildings.some(item=>item.type==="house"&&item.complete),true,"the bpHouse card did not stand a house");assert.equal(sim.grass.includes(houseGrass),false,"successful building placement did not clear overlapping grass");sim.DBG.instantWorkers=true;sim.update(1/60);const worker=sim.state.workers[0],workerOrigin={x:worker.x,y:worker.y};sim.setPointerWorld(worker.x,worker.y);sim.secondaryPress();assert.equal(sim.heldWorker(),worker);sim.pointerCancelled();assert.equal(worker.x,workerOrigin.x);assert.equal(worker.y,workerOrigin.y);assert.equal(sim.state.workers.includes(worker),true);assert.equal(worker.job,"free","a house-born worker must spawn free");assert.equal(worker.autonomous,true);sim.DBG.freeCosts=sim.DBG.instantWorkers=false;
   // Teardown: the pickup scaffolding must not leak an autonomous economy into the stress run below,
   // whose skill-budget checks assume the base is never fed before xp is granted explicitly.
   sim.state.workers.length=0;sim.buildings.length=0;sim.validateSimulationInvariants();
@@ -352,11 +385,12 @@ try{
       const hit=()=>{sim.primaryPress();sim.update(.02);sim.primaryRelease();};
       try{
         sim.initializeRunMode("normal");sim.TUNE.chopTime=.01;
-        const chest=sim.chests[0],seedOrigin={x:chest.x,y:chest.y};
+        // A chest under standing fog is owned by the fog cell and unclickable; use a revealed one.
+        const chest=sim.chests.find(c=>!sim.fogAtPoint(c.x,c.y)),seedOrigin={x:chest.x,y:chest.y};
         assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).kind,"break-chest");assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).icon,"axe");
         const overlapTree={x:chest.x,y:chest.y,hp:3,max:3,stump:0,shake:0,variant:0,footprint:data.RESOURCE_FOOTPRINT};sim.trees.push(overlapTree);sim.spawnEnemy("raider");const overlapEnemy=sim.state.enemies.at(-1);overlapEnemy.x=chest.x;overlapEnemy.y=chest.y;assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,overlapEnemy,"enemy must outrank chest");sim.state.enemies.splice(sim.state.enemies.indexOf(overlapEnemy),1);assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,chest,"chest must outrank resource");sim.chests.splice(sim.chests.indexOf(chest),1);assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).target,overlapTree);sim.chests.push(chest);sim.trees.splice(sim.trees.indexOf(overlapTree),1);
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldChest(),chest);assert.equal(sim.chests.includes(chest),false);sim.validateSimulationInvariants();
-        let valid=null;for(let y=64;y<data.H-64&&!valid;y+=data.CELL)for(let x=64;x<data.W-64;x+=data.CELL)if((x!==seedOrigin.x||y!==seedOrigin.y)&&sim.canPlace(x,y,null,null,null,chest)){valid={x,y};break;}assert.ok(valid);
+        let valid=null;for(let y=64;y<data.H-64&&!valid;y+=data.CELL)for(let x=64;x<data.W-64;x+=data.CELL)if((x!==seedOrigin.x||y!==seedOrigin.y)&&sim.canPlace(x,y,null,null,null,chest)&&sim.footprintFogFree(x,y,data.CHEST.footprint)){valid={x,y};break;}assert.ok(valid);
         sim.setPointerWorld(valid.x+3,valid.y+3);sim.secondaryRelease();assert.deepEqual({x:chest.x,y:chest.y},snapToCellCenter(valid.x+3,valid.y+3));assert.equal(sim.chests.includes(chest),true);assert.equal(sim.canPlace(chest.x,chest.y,"house"),false);const placed={x:chest.x,y:chest.y};
         const occupied=sim.trees.find(t=>t.stump<=0);sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();sim.setPointerWorld(occupied.x,occupied.y);sim.secondaryRelease();assert.deepEqual({x:chest.x,y:chest.y},placed,"occupied release must restore exact origin");
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();sim.setPointerOutside();sim.secondaryRelease();assert.deepEqual({x:chest.x,y:chest.y},placed,"outside release must restore exact origin");
@@ -469,8 +503,11 @@ try{
       const sweep=()=>step(31);
       try{
         sim.initializeRunMode("normal");
+        // These scenarios build fixtures at arbitrary coordinates the fog field would otherwise
+        // cover; fogged nodes are inactive and fogged cells reject placement, so strip the fog once.
+        sim.clearAllFog();
         assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2],["garrison",3]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);
-        assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{lumber:2,quarry:3,stockpile:2,house:2,obelisk:3,tower:3,captureYard:3,garrison:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0});
+        assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{lumber:2,quarry:3,stockpile:2,house:2,rangeBeacon:2,warShrine:2,obelisk:3,tower:3,captureYard:3,garrison:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0});
         assert.equal(sim.DBG.groundSourcing,true);assert.equal(sim.TUNE.builderSourceRadius,400);
         // Resource sources own a center structure plus eight renewable perimeter cells. Growth uses
         // canonical resource nodes, and a depleted slot is revived instead of leaking array entries.
@@ -1393,7 +1430,9 @@ try{
           const offer=sim.draftPending();if(!offer)continue;assert.equal(sim.draftKind(),"dawn");
           const at=offer.indexOf("critClicks");sim.chooseDraft(at>=0?at:Math.max(0,offer.findIndex(id=>id!=="critClicks")));discardConsumable();
         }
-        assert.equal(sim.buffStacks("critClicks"),1,"critClicks never appeared in a draft");
+        // The drain loop above may already have granted critClicks stacks; crit is binary, so the
+        // yield measurement below only needs at least one.
+        assert.ok(sim.buffStacks("critClicks")>=1,"critClicks never appeared in a draft");
         while(sim.draftPending())sim.chooseDraft(0);
         // Isolate crit yield from randomly drafted secondary-hit effects.
         delete sim.state.draft.buffs.freeHit;delete sim.state.draft.buffs.chainLightning;
@@ -1421,7 +1460,8 @@ try{
       let seed=0xcafd;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       let handEvents=0;sim.connect({handChanged(){handEvents++;}});
       const counts=()=>Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0]));
-      const clearGround=()=>{sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=sim.state.enemies.length=sim.resourceDrops.length=0;};
+      // Fog also blocks placement, so clearing the ground strips the fog field too.
+      const clearGround=()=>{sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=sim.state.enemies.length=sim.resourceDrops.length=0;sim.clearAllFog();};
       const drain=()=>{while(sim.draftPending())sim.chooseDraft(0);};
       const held=id=>sim.hand().find(entry=>entry.id===id)||null;
       const placementAnchor=(x,y)=>{const wanted=snapToCellCenter(x,y);if(sim.canPlace(wanted.x,wanted.y,sim.state.buildMode))return wanted;let best=null,bestDistance=Infinity;for(let cy=64;cy<data.H-64;cy+=data.CELL)for(let cx=64;cx<data.W-64;cx+=data.CELL)if(sim.canPlace(cx,cy,sim.state.buildMode)){const d=Math.hypot(cx-x,cy-y);if(d<bestDistance){best={x:cx,y:cy};bestDistance=d;}}assert.ok(best,"no land placement anchor");return best;};

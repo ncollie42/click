@@ -63,6 +63,26 @@ export const RESOURCE_NODE_HP=Object.freeze({wood:25,stone:18,diamond:13});
 // Lumber camps and quarries reserve a 3x3: the structure owns the center and this timer grows one
 // standard node in a random vacant perimeter cell. Eight live nodes cap production naturally.
 export const RESOURCE_SOURCE=Object.freeze({growthSeconds:30});
+// Mineable fog of war: every cell beyond clearRadius of the base — land, coast and open water —
+// starts under a destructible fog block.
+// Mining a block to death also pops its neighbourhood, staggered popDelay seconds per cell of
+// distance — the cascade is the payoff feel. The 3x3 core always pops; cells beyond it out to
+// popRadius pop with popEdgeChance, so every clearing gets an organic ragged rim. Buffs are
+// expected to grow popRadius later. marginCells extends the field that far beyond every world
+// edge (over open water) so no bare ground or sea shows at the rim; must stay under 64 (see
+// fogCellKey's padding).
+// Block health is keyed to BFS ring depth from the starting clearing (cells per ring band), not
+// raw radius, so the ramp feels identical in every direction on the wide map; open water is a
+// flat premium instead — shoreline water still falls to land-side cascades for free, but
+// hand-carving into deep sea is deliberately expensive.
+// popAnimTime: seconds a cleared block spends on its inflate-then-collapse death tween.
+// loot: independent roll per cleared LAND block — a rare buried chest (falls back to a coin when
+// the revealed cell is blocked), else maybe a coin or dust. Cascade pops roll too; that slot-pull
+// is the point.
+export const FOG=Object.freeze({clearRadius:560,marginCells:24,
+  ringTiers:Object.freeze([Object.freeze({rings:12,hp:1}),Object.freeze({rings:30,hp:2}),Object.freeze({rings:55,hp:4})]),farHp:6,waterHp:8,
+  popRadius:2,popEdgeChance:.55,popDelay:.07,popAnimTime:.22,
+  loot:Object.freeze({chestChance:.003,coinChance:.05,dustChance:.015})});
 // Canonical kind order. Every per-kind record (carried, stored, storage, delivered,
 // upgrade costs) is keyed by these names, and iteration order here is the order
 // costs, tallies and grants are read in.
@@ -88,12 +108,23 @@ export const LEVEL_CURVE={base:6,growth:1.19};
 export const SKILL_POINT_LEVELS=4;   // placeholder cadence: one skill point per this many levels
 export const XP_TIERS=[40,100,200,350];   // dead: superseded by LEVEL_CURVE, still imported by docs/progression.html
 
+// Closed target policy shared by every authored damage source. Callers choose one supported
+// combination rather than passing ad-hoc booleans that silently invent friendly-fire semantics.
+export const DAMAGE_TARGET_TYPE=Object.freeze({
+  ENEMIES_ONLY:"enemies-only",
+  RESOURCES_ONLY:"resources-only",
+  ENEMIES_RESOURCES:"enemies-resources",
+  PLAYER_RESOURCES:"player-resources",
+  ALL:"all",
+});
+
 // ── draft card numbers ──────────────────────────────────────────────────────
 // Per-stack buff magnitudes and consumable payouts for the catalog in cards.js, which owns the
 // ids, rarities, texts and stack limits but none of the arithmetic. Read only by simulation.js;
 // no runtime path may assign into these tables — a taken card tallies a stack in run state and
 // the accessors layer these numbers over the authored values at read time.
 export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,buildCapacity:1,towerDamage:1.1,towerSpeed:1.1,towerRange:50,baseHp:5,clickDamage:1,
+  deathTreeChance:.25,deathExplosionDamage:3,deathExplosionRadius:64,deathExplosionTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,
   // Chain lightning scales BOTH dials per stack: stack N procs a completed player swing at
   // chainChance+(N-1)*chainChanceStack and throws chainJumps+(N-1) jumps — 20%/1, 30%/2, 40%/3,
   // 50%/4 at the card's 4-stack cap. A jump is a full ordinary swing (its own crit roll) on the
@@ -103,14 +134,14 @@ export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay
 // The fireball card's cast: an instant area hit that leaves nothing behind. The radius matches the
 // blast charge's effectRadius on purpose — the cast borrows the blast placement ghost, so the ring
 // the player aims with IS the area this damages.
-export const FIREBALL={damage:6,radius:135};
+export const FIREBALL={damage:6,radius:135,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY};
 // Intentional large-obstacle tuning: the impact reserves 3x3 through meteorTarget and the rock's
 // runtime footprint; its fixed 15 HP keeps the spell-created obstacle durable without inheriting
 // ordinary stone-node balance.
-export const METEOR=Object.freeze({damage:20,radius:180,rockHp:15});
-export const DAMAGE_ORBS=Object.freeze({duration:30,minCount:1,maxCount:3,orbitRadius:52,aoeRadius:38,damage:1,cooldown:.6});
+export const METEOR=Object.freeze({damage:20,radius:180,rockHp:15,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
+export const DAMAGE_ORBS=Object.freeze({duration:30,minCount:1,maxCount:3,orbitRadius:52,aoeRadius:38,damage:1,cooldown:.6,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
 export const SUMMONING_CIRCLE=Object.freeze({duration:120,dustCost:5});
-export const FRIENDLY_BRUTE=Object.freeze({hp:36,damage:5,speed:34,range:34,rate:1.1,guardRadius:360});
+export const FRIENDLY_BRUTE=Object.freeze({hp:36,damage:5,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,speed:34,range:34,rate:1.1,guardRadius:360});
 // Capture Yard conversion rules. Combat stats are NOT here on purpose: a controlled enemy keeps its
 // authored ENEMY_TYPES record, so this table only owns what the yard itself decides — how many
 // living allies one completed yard supports, how far from the yard they engage hostiles, how close
@@ -124,7 +155,7 @@ export const CAPTURE_YARD=Object.freeze({capacity:3,guardRadius:300,homeRadius:7
 // (engagementRadius), how far station threats prevent daytime stand-down (guardRadius), how many
 // threat-free daylight seconds demobilize it (safeSeconds), and the stats an arrived guard fights
 // with (maxHp/damage). The garrison itself creates no workers and has no attack.
-export const GARRISON=Object.freeze({capacity:3,musterRadius:300,threatRadius:180,engagementRadius:400,guardRadius:180,safeSeconds:10,maxHp:10,damage:2});
+export const GARRISON=Object.freeze({capacity:3,musterRadius:300,threatRadius:180,engagementRadius:400,guardRadius:180,safeSeconds:10,maxHp:10,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY});
 
 // ── houses and workers ──────────────────────────────────────────────────────
 // The first house is a cheap opening bootstrap. Later houses retain the regular progression below.
@@ -136,8 +167,8 @@ export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER
 
 // ── buildings ───────────────────────────────────────────────────────────────
 // Every entry carries an explicit `footprint` (odd cells, anchor-centered). Resource sources, the
-// tower chassis, capture yard, and tar pit are persistent 3x3s; ordinary buildings/deployables are 1x1
-// (the summoning circle and meteor target are temporary/instant 3x3s). Tower VARIANTS inherit the chassis footprint -
+// houses, tower chassis, capture yards, and tar pits are persistent 3x3s; ordinary buildings/deployables
+// are 1x1 (the summoning circle and meteor target are temporary/instant 3x3s). Tower VARIANTS inherit the chassis footprint -
 // upgrading never resizes an already-placed tower, so variants deliberately declare no footprint.
 // `buildSlots` is construction staffing capacity; material totals >=12 use three builders. Every
 // row owns a number, including zero for instant/target-only records that never become blueprints.
@@ -146,16 +177,19 @@ export const BUILDING_TYPES = {
   lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},buildSlots:2,serviceRadius:155,jobSlots:2,resourceSource:true,footprint:FOOTPRINT_3x3},
   quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},buildSlots:3,serviceRadius:155,jobSlots:2,resourceSource:true,footprint:FOOTPRINT_3x3},
   stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},buildSlots:2,serviceRadius:175,jobSlots:2,footprint:FOOTPRINT_1x1},
-  house:{name:"house",resource:null,cost:HOUSE_COST,buildSlots:2,footprint:FOOTPRINT_1x1},
+  // The house model remains centered in its anchor cell; its yard reserves the surrounding eight.
+  house:{name:"house",resource:null,cost:HOUSE_COST,buildSlots:2,footprint:FOOTPRINT_3x3},
+  rangeBeacon:{name:"range beacon",resource:null,cost:{wood:4,stone:6},buildSlots:2,effectRadius:128,rangeBonus:50,footprint:FOOTPRINT_1x1},
+  warShrine:{name:"war shrine",resource:null,cost:{wood:5,stone:7},buildSlots:2,effectRadius:128,damageBonus:1,footprint:FOOTPRINT_1x1},
   obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},buildSlots:3,footprint:FOOTPRINT_1x1},
   tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},buildSlots:3,footprint:FOOTPRINT_3x3},
   captureYard:{name:"capture yard",resource:null,cost:{wood:8,stone:8},buildSlots:3,footprint:FOOTPRINT_3x3},
   // The garrison's jobSlots ARE its guard slots, so the count is read from GARRISON.capacity rather
   // than restated here. Guard stats, radii and the muster timing all live in that record.
   garrison:{name:"garrison",resource:null,cost:{wood:6,stone:6},buildSlots:2,jobSlots:GARRISON.capacity,footprint:FOOTPRINT_1x1},
-  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:135,damage:3,innerDamage:5,instant:true,footprint:FOOTPRINT_1x1},
-  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},buildSlots:0,damage:2,cooldown:.55,instant:true,stack:true,footprint:FOOTPRINT_1x1},
-  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:65,damage:8,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:135,damage:3,innerDamage:5,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,instant:true,footprint:FOOTPRINT_1x1},
+  spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},buildSlots:0,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,cooldown:.55,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:65,damage:8,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,instant:true,stack:true,footprint:FOOTPRINT_1x1},
   tar:{name:"tar pit",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:48,damage:0,cooldown:.25,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_3x3},
   damageOrbs:{name:"damage orbs",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:DAMAGE_ORBS.orbitRadius+DAMAGE_ORBS.aoeRadius,instant:true,movable:true,footprint:FOOTPRINT_1x1},
   summoningCircle:{name:"summoning circle",resource:null,cost:{wood:0,stone:0},buildSlots:0,instant:true,movable:true,footprint:FOOTPRINT_3x3},
@@ -171,7 +205,7 @@ export const UPGRADES=[
   {id:"autoClick",icon:"↻",name:"steady hand",cost:{wood:9,stone:7},description:"steadier swings: gathering and attacking take 45% less time to land."}
 ];
 // Tower chassis state selects one definition here; update, input, range UI, and cooldown UI read no duplicated stats.
-export const TOWER_VARIANTS={
+const towerVariantRows={
   basic:{icon:"⌂",name:"basic tower",family:"Starter",description:"steady single-target defense; chassis for one permanent variant.",cost:{},attackMode:"single",range:180,damage:1,cooldown:1.3,maxHp:10,manual:false,movable:false,accent:"#d7c36d",sound:260},
   turret:{icon:"⌖",name:"turret",family:"Starter",description:"cheapest choice; compact gun with a modest single-target improvement.",cost:{wood:2,stone:2},attackMode:"single",range:165,damage:2,cooldown:1.2,maxHp:12,manual:false,movable:false,accent:"#d8b06a",sound:290},
   outpost:{icon:"▣",name:"outpost",family:"Starter",description:"durable early generalist with balanced range, damage, and cadence.",cost:{wood:5,stone:7},attackMode:"single",range:220,damage:3,cooldown:1.25,maxHp:45,manual:false,movable:false,accent:"#c9b88d",sound:250},
@@ -189,20 +223,22 @@ export const TOWER_VARIANTS={
   lightning:{icon:"ϟ",name:"lightning tower",family:"Special",description:"a bolt strikes the nearest enemy and chains between nearby foes.",cost:{stone:8,dust:3,diamond:1},attackMode:"chain",range:240,damage:2,cooldown:2.1,chainJumps:3,chainRange:110,maxHp:16,manual:false,movable:false,accent:"#a9c4f5",impactColor:"#cfe4ff",sound:660},
   shock:{icon:"↯",name:"shock tower",family:"Special",description:"movable tower with a manually triggered reusable shock pulse.",cost:{wood:2,stone:4,coin:1,diamond:1},attackMode:"manual area",effectRadius:150,damage:2,cooldown:8,maxHp:15,manual:true,movable:true,accent:"#70d8d1",sound:105}
 };
+// Every tower damage path is hostile-only, including direct, line, chain, splash, and radial modes.
+export const TOWER_VARIANTS=Object.freeze(Object.fromEntries(Object.entries(towerVariantRows).map(([id,row])=>[id,Object.freeze({...row,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY})])));
 
 // ── enemies and the night schedule ──────────────────────────────────────────
 // Variants are authored fixed-stat enemies, never runtime stat multipliers. Every archetype has the
 // same three visual/difficulty bands: base, blue veteran (wave 4+), red elite (wave 7+).
 const ENEMY_ARCHETYPES={
-  raider:{hp:5,speed:52,damage:2,range:40,rate:1,size:1,weightTag:"light",threatCost:1,spawnWeight:10},
-  archer:{hp:4,speed:42,damage:1,range:155,rate:1.8,size:1,weightTag:"light",threatCost:2,spawnWeight:6},
-  healer:{hp:5,speed:38,damage:0,range:180,rate:0,healAmount:2,healRate:2.3,size:1,weightTag:"light",threatCost:3,spawnWeight:2},
+  raider:{hp:5,speed:52,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:40,rate:1,size:1,weightTag:"light",threatCost:1,spawnWeight:10},
+  archer:{hp:4,speed:42,damage:1,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:155,rate:1.8,size:1,weightTag:"light",threatCost:2,spawnWeight:6},
+  healer:{hp:5,speed:38,damage:0,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:180,rate:0,healAmount:2,healRate:2.3,size:1,weightTag:"light",threatCost:3,spawnWeight:2},
   // Bomber: fast light kamikaze. `range` is the fuse-arm distance, not a swing reach: inside it the
   // fuse lights and fuseTime later it detonates, dealing `damage` to every player-side target within
   // blastRadius; the detonation is the unit's death. `rate` exists only for the controlled
   // (captured) unit, which fights as an ordinary slow melee ally instead of exploding.
-  bomber:{hp:3,speed:60,damage:5,range:46,rate:2.5,size:.9,fuseTime:.9,blastRadius:70,weightTag:"light",threatCost:2,spawnWeight:5},
-  brute:{hp:12,speed:28,damage:5,range:43,rate:1.4,size:1.35,weightTag:"heavy",threatCost:4,spawnWeight:3}
+  bomber:{hp:3,speed:60,damage:5,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:46,rate:2.5,size:.9,fuseTime:.9,blastRadius:70,weightTag:"light",threatCost:2,spawnWeight:5},
+  brute:{hp:12,speed:28,damage:5,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:43,rate:1.4,size:1.35,weightTag:"heavy",threatCost:4,spawnWeight:3}
 };
 const ENEMY_VARIANT_BANDS=Object.freeze([
   Object.freeze({suffix:"",label:"",tier:1,minWave:1,hp:1,speed:1,damage:1,rate:1,cost:1,weight:1,color:null}),
@@ -222,7 +258,7 @@ for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of
 enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantColor:null,minWave:5,
   // The 4× model's visible ground ring reaches about 200 simulation pixels. Every walking contact
   // uses that same radius; attack contacts still use the ordinary 60-damage melee swing.
-  hp:500,damage:60,stompDamage:10,stompRadius:200,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
+  hp:500,damage:60,stompDamage:10,stompRadius:200,stompDamageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
 export const ENEMY_TYPES=Object.freeze(enemyVariants);
 // Each wave owns an ordered forced-boss list. Wave 10 is the current finale: three bosses close it.
 export const WAVE_BOSS_SPAWNS=Object.freeze({
@@ -258,7 +294,7 @@ export const DAY_DURATION=75;
 export const NIGHT_OVERLAY_ALPHA=.28,LIGHT_FADE_TIME=6;
 
 // ── the king ────────────────────────────────────────────────────────────────
-export const KING={range:95,damage:2,rate:.85};
+export const KING={range:95,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,rate:.85};
 
 // ── player feel ─────────────────────────────────────────────────────────────
 // Only the constants the view debugger can NEVER write live here. The tunable

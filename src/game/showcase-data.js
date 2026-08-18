@@ -40,6 +40,8 @@ const manifest = {
     {id:"house",section:"buildings",x:480,y:672,label:"house"},
     {id:"obelisk",section:"buildings",x:608,y:672,label:"obelisk"},
     {id:"garrison",section:"buildings",x:736,y:672,label:"garrison"},
+    {id:"rangeBeacon",section:"buildings",x:864,y:672,label:"range beacon"},
+    {id:"warShrine",section:"buildings",x:992,y:672,label:"war shrine"},
     {id:"blast",section:"buildings",x:96,y:800,label:"blast charge"},
     {id:"spikes",section:"buildings",x:224,y:800,label:"spike trap"},
     {id:"landmine",section:"buildings",x:352,y:800,label:"land mine"},

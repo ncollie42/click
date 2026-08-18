@@ -48,6 +48,7 @@
 import {
   RESOURCE_KINDS,
   ENEMY_TYPES,
+  FOG,
   NIGHT_WAVE_RECIPES,
   WAVE_THREAT_CURVE,DAY_DURATION,NIGHT_WAVE_WINDOW
 } from "../game/data.js";
@@ -323,6 +324,35 @@ function buildCardDealer(){
   }
 }
 
+// ── generated fog controls ──────────────────────────────────────────────────
+// The only range controls this panel builds instead of reading from the markup, because their
+// authored defaults come from FOG: the pop tween can be COMPRESSED but never stretched — the
+// simulation splices a pop record out at age >= FOG.popAnimTime — so the duration slider's ceiling
+// AND its default are that constant, and both must move with it if it is ever retuned.
+// Shape is the panel's authored range markup exactly (label > .row > name + o_<id>, then the input),
+// so bindV() binds these like any other slider, `value` attribute included.
+function buildFogControls(){
+  const root = document.querySelector('#vPanes .pane[data-tab="visibility"] .vSubpane[data-subtab="readability"]');
+  const heading = document.createElement("h4"); heading.textContent = "fog"; root.appendChild(heading);
+  const popMs = Math.round(FOG.popAnimTime*1000);
+  const controls = [
+    ["vFogHeight",  "block height", 40, 200,   5,  100,   ""],
+    ["vFogPopTime", "pop duration", 80, popMs, 10, popMs, "capped at FOG.popAnimTime ("+popMs+"ms): the pop record is gone past that, so a longer tween would cut off mid-collapse"],
+    ["vFogPopSwell","pop swell",    0,  100,   5,  35,    ""],
+  ];
+  for(const [id,name,min,max,step,value,title] of controls){
+    const wrap=document.createElement("label"), row=document.createElement("span"),
+          caption=document.createElement("span"), out=document.createElement("span"), input=document.createElement("input");
+    row.className="row"; caption.textContent=name; out.id="o_"+id; row.append(caption,out);
+    input.autocomplete="off"; input.type="range"; input.id=id;
+    input.min=min; input.max=max; input.step=step;
+    // bindV() reads the `value` ATTRIBUTE to beat the browser's form restore, so set it as one.
+    input.setAttribute("value",value);
+    if(title) wrap.title=title;
+    wrap.append(row,input); root.appendChild(wrap);
+  }
+}
+
 // ── the bindings ────────────────────────────────────────────────────────────
 // One call per control, in pane order. Each bindV() applies its markup default the moment it is
 // bound, so this list is also the boot sequence for every tunable the panel owns.
@@ -337,6 +367,10 @@ function bindControls(){
   bindV("vShadow",v=>{ setShadows(v); });
   bindV("vPins",  v=>{ view.ghostPins=v; if(!v)setPins([]); });
   bindV("vLiveVisibility",v=>{ liveVisibility=v; frameTick=0; if(!v)setPins([]); });
+  // ── fog: presentation only. The knobs live on `view`; FOG stays authored data. ──
+  bindV("vFogHeight",  v=>{ view.fogHeight=v; },   v=>v+"%");
+  bindV("vFogPopTime", v=>{ view.fogPopTime=v; },  v=>v+"ms");
+  bindV("vFogPopSwell",v=>{ view.fogPopSwell=v; }, v=>v+"%");
 
   // ── pickup / harvest: these drive real simulation constants, not just visuals ──
   bindV("vCap",   v=>{ setCapacity(v); },        v=>v);
@@ -345,6 +379,7 @@ function bindControls(){
   bindV("vArc",   v=>{ VIEW_TUNE.handArc=v; },   v=>v.toFixed(1));
   bindV("vRing",  v=>{ VIEW_TUNE.showVacuumRing=v; });
   bindV("vChopT", v=>{ TUNE.chopTime=v/1000; },  v=>(v/1000).toFixed(2)+"s");
+  bindV("vSnapR", v=>{ TUNE.snapRadius=v; },     v=>v+"px");
   bindV("vShotSpeed", v=>{ VIEW_TUNE.shotSpeed=v; }, v=>v+" u/s");
   bindV("vShotArc",   v=>{ VIEW_TUNE.shotArc=v; },   v=>v.toFixed(1)+"x");
   bindV("vShotSize",  v=>{ VIEW_TUNE.shotSize=v; },  v=>v.toFixed(1)+"x");
@@ -618,6 +653,8 @@ export function initViewDebugger(hooks={}){
   // Build and select every contextual group before controls apply their authored defaults; hidden
   // controls remain ordinary DOM controls and must initialize through the same binding path.
   buildSubtabs();
+  // Generated controls must exist before bindControls(), which binds them by id like any other.
+  buildFogControls();
   $v("vToggle").addEventListener("click", ()=>{
     const on = $v("viewPanel").classList.toggle("collapsed");
     $v("vToggle").textContent = on ? "view ▸" : "view ▾";

@@ -70,6 +70,12 @@ export const CARDS=[
   {id:"enemySlam", category:"buff", rarity:"legendary", text:"pick up light enemies; dropping one deals area damage on impact",
    tags:["aoe","enemy pickup","light enemy"], features:["physical space"], stacks:1, ref:"concept:enemySlam", model:null,
    implemented:false, inPool:false, notes:"follow-up to enemy pickup; weight limit, impact damage, and radius TBD"},
+  {id:"deathTree", category:"buff", rarity:"rare", text:"enemy deaths have a 25% chance to grow a tree",
+   features:["resources","physical space"], stacks:1, ref:"concept:deathTree", model:null,
+   implemented:true, inPool:true, notes:"the tree uses the nearest free revealed cell when the death cell is blocked"},
+  {id:"deathExplosion", category:"buff", rarity:"epic", text:"enemy deaths explode for 3 damage to nearby enemies",
+   tags:["aoe"], features:["physical space"], stacks:1, ref:"concept:deathExplosion", model:null,
+   implemented:true, inPool:true, notes:"64px radius; explosion kills also explode, allowing finite chain reactions"},
   {id:"handCarry",    category:"buff", rarity:"common", text:"+2 hand carry capacity",
    features:["resources"], stacks:4, ref:"upgrade:hands", model:{target:"hand",mult:1.05},
    implemented:true, inPool:true, notes:"raises state.capacity, the same run field a completed resource building raises"},
@@ -205,12 +211,14 @@ export const CARDS=[
    notes:"prototype: matching biome costs 25% less; mismatched biome costs 25% more; biome detection does not exist yet"},
 
   // ── D · builds — the base kit ─────────────────────────────────────────
-  // The build shop is gone: these five ARE the ordinary economy/defense menu, dealt as cards. Each
+  // The build shop is gone: these ARE the ordinary economy/defense menu, dealt as cards. Each
   // one drops a single ordinary CONSTRUCTION SITE at the building's own authored cost — the card
   // buys the plan, never the materials — and the house site charges nextHouseCost(), the same
   // escalating price every later house pays. They are common and they stay in the pool, so a run
   // can keep drawing houses and camps as it grows.
-  {id:"bpHouse",     category:"build", rarity:"common", text:"place a house",     features:["workers","physical space"], charges:1, ref:"building:house",     model:null, implemented:true, inPool:true, notes:"one house site at the ESCALATED house cost — the same price the nth house has always cost"},
+  {id:"bpHouse",     category:"build", rarity:"common", text:"place a house",     features:["workers","physical space"], charges:1, ref:"building:house",     model:null, implemented:true, inPool:true, notes:"one centered house on a 3x3 yard at the ESCALATED house cost — the same price the nth house has always cost"},
+  {id:"bpRangeBeacon",category:"build",rarity:"rare", text:"place a range beacon — nearby towers gain 50 range", tags:["aoe"], features:["physical space"], charges:1, ref:"building:rangeBeacon", model:null, implemented:true, inPool:true, notes:"persistent 1x1 support building; complete towers within 128px gain 50 attack/effect radius"},
+  {id:"bpWarShrine",category:"build",rarity:"rare", text:"place a war shrine — nearby towers gain 1 damage", tags:["aoe","tower damage"], features:["physical space"], charges:1, ref:"building:warShrine", model:null, implemented:true, inPool:true, notes:"persistent 1x1 support building; complete towers within 128px gain 1 direct damage; multiple shrines do not stack"},
   {id:"bpLumber",    category:"build", rarity:"common", text:"place a lumber camp",features:["resources","physical space"], charges:1, ref:"building:lumber",    model:null, implemented:true, inPool:true, notes:"3x3 automatic renewable source: center camp grows one tree every 30 seconds in a vacant perimeter cell; no worker required"},
   {id:"bpQuarry",    category:"build", rarity:"common", text:"place a quarry",    features:["resources","physical space"], charges:1, ref:"building:quarry",    model:null, implemented:true, inPool:true, notes:"3x3 automatic renewable source: center quarry grows one rock every 30 seconds in a vacant perimeter cell; no worker required"},
   {id:"bpStockpile", category:"build", rarity:"common", text:"place a stockpile", features:["resources","physical space"], charges:1, ref:"building:stockpile", model:null, implemented:true, inPool:false, notes:"pulled from the pool for now — stockpiles aren't part of the game yet; one stockpile site at its authored cost when re-enabled"},

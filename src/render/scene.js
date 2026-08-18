@@ -34,7 +34,7 @@ import {
 } from "./models.js";
 import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,
-  CELL,GRID_COLS,GRID_ROWS,
+  CELL,GRID_COLS,GRID_ROWS,FOG,
   FOOTPRINT_1x1,FOOTPRINT_3x3,
   RESOURCE_KINDS,
   WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_LEASH,
@@ -48,7 +48,8 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, grass, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs,
+  trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs,
+  fogMetadata, fogAtPoint, footprintFogFree,
   badgeAction, hoveredBuilding, captureYardOccupancy, durablePostStatus,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
   heldWorker, heldEnemy, heldBuilding, heldChest, heldProp, workerLoad,
@@ -103,8 +104,13 @@ let camera3 = persp;
 // MUTABLE HOLDER, on purpose: the debugger writes view.pitch / view.yaw / … as properties, which an
 // imported binding allows. `camera3` above is the one value that must be REASSIGNED, so it stays
 // module-private and setOrthoCamera() is its only write path.
+// fog* are presentation-only feel knobs over the fog layer below. FOG (data.js) is frozen and the
+// simulation's pop records are aged against FOG.popAnimTime, so fogPopTime seeds from it as ms and
+// can only ever COMPRESS the tween: a record is spliced out at age >= FOG.popAnimTime, so a longer
+// visual would be cut mid-curve. syncFogPops() clamps to that ceiling.
 export const view = {pitch:40, yaw:0, fov:38, ortho:false, orbit:false,
-              heightScale:100, ghostPins:false};
+              heightScale:100, ghostPins:false,
+              fogHeight:100, fogPopTime:FOG.popAnimTime*1000, fogPopSwell:35};
 
 /** The vOrtho switch's single write path: flips the flag and swaps which camera renders. */
 export function setOrthoCamera(on){
@@ -536,16 +542,21 @@ const shakeOf = e => e.shake ? Math.sin(e.shake*28)*.12 : 0;
 let grassInstances=null,builtVegetationRevision=-1;
 const grassMatrix=new THREE.Matrix4(),grassPosition=new THREE.Vector3(),grassRotation=new THREE.Quaternion(),grassScale=new THREE.Vector3();
 function syncGrass(){
-  const metadata=vegetationMetadata();if(metadata.revision===builtVegetationRevision)return;
+  // Fog revision joins the invalidation key: tufts under standing fog stay out of the build, and
+  // every fog clear re-runs it so newly revealed grass appears with the reveal.
+  const metadata=vegetationMetadata(),revisionKey=metadata.revision+":"+fogMetadata().revision;
+  if(revisionKey===builtVegetationRevision)return;
+  const tufts=grass.filter(tuft=>!fogAtPoint(tuft.x,tuft.y));
   if(grassInstances){scene.remove(grassInstances);grassInstances.geometry.dispose();grassInstances.material.dispose();}
-  grassInstances=new THREE.InstancedMesh(makeGrassTuftGeometry(),new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true,side:THREE.DoubleSide}),grass.length);
+  grassInstances=new THREE.InstancedMesh(makeGrassTuftGeometry(),new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true,side:THREE.DoubleSide}),Math.max(tufts.length,1));
+  grassInstances.count=tufts.length;
   grassInstances.name="destructible-grass";grassInstances.castShadow=true;grassInstances.receiveShadow=true;grassInstances.raycast=NO_RAYCAST;
-  grass.forEach((tuft,index)=>{
+  tufts.forEach((tuft,index)=>{
     const variant=tuft.variant%PAL.grassTuft.length,scale=.8+variant*.07;
     grassPosition.set(gx(tuft.x),terrainLiftAt(tuft.x,tuft.y)+.025,gz(tuft.y));grassRotation.setFromAxisAngle(_upY,((tuft.x*13+tuft.y*7)%628)/100);grassScale.set(scale,scale,scale);
     grassMatrix.compose(grassPosition,grassRotation,grassScale);grassInstances.setMatrixAt(index,grassMatrix);grassInstances.setColorAt(index,new THREE.Color(PAL.grassTuft[variant]));
   });
-  grassInstances.instanceMatrix.needsUpdate=true;if(grassInstances.instanceColor)grassInstances.instanceColor.needsUpdate=true;scene.add(grassInstances);builtVegetationRevision=metadata.revision;
+  grassInstances.instanceMatrix.needsUpdate=true;if(grassInstances.instanceColor)grassInstances.instanceColor.needsUpdate=true;scene.add(grassInstances);builtVegetationRevision=revisionKey;
 }
 
 // ── instanced resource scatter ──────────────────────────────────────────────
@@ -658,6 +669,98 @@ const syncDrops = makeLayer(e=>makeDrop(e.kind), (g,r)=>{
   const fading = r.ttl!==null && r.ttl<2 && Math.floor(r.ttl*7)%2===0;
   g.userData.body.visible = !fading;
 });
+// ── mineable fog field ──────────────────────────────────────────────────────
+// Every standing fog block rides ONE InstancedMesh plus a buffer-sharing ink shell, so tens of
+// thousands of cells stay two draw calls. Matrices recompose only when the field changes or a
+// block is mid-shake; per-instance shade colours are keyed once per rebuild. Blocks sit flush on
+// the placement grid (full-cell footprint), with hashed height variance so the field reads as
+// carved slabs rather than a flat wall; wear squashes a block toward the ground as it is mined.
+const FOG_BLOCK_H=2.5;
+const FOG_SHADES=[new THREE.Color(0x524c5e),new THREE.Color(0x5a5468),new THREE.Color(0x484253)];
+// Blocks standing in open water shade cooler and sit down at the water surface, so the fog field
+// reads as one sheet draped over an unknown silhouette rather than floating slabs.
+const FOG_WATER_SHADES=[new THREE.Color(0x49485e),new THREE.Color(0x504f68),new THREE.Color(0x414053)];
+const fogGeo=new THREE.BoxGeometry(CELL*S,1,CELL*S);fogGeo.translate(0,.5,0);
+const fogMat=new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true});
+let fogMesh=null,fogShell=null,fogBuiltRevision=-1,fogHadShake=false,fogBuiltHeight=-1;
+const _fq0=new THREE.Quaternion(),_fv=new THREE.Vector3(),_fs=new THREE.Vector3(),_fm=new THREE.Matrix4();
+function rebuildFogField(count){
+  if(fogMesh){scene.remove(fogMesh,fogShell);releaseOutlineShell(fogShell);fogMesh.dispose();fogShell.dispose();}
+  fogMesh=fogShell=null;
+  if(!count)return;
+  fogMesh=new THREE.InstancedMesh(fogGeo,fogMat,count);
+  fogMesh.name="fog-field";fogMesh.castShadow=false;fogMesh.receiveShadow=true;fogMesh.frustumCulled=false;fogMesh.raycast=NO_RAYCAST;
+  fogMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  // Apron cells carry negative indices, so every hash pads them positive first — a negative
+  // modulo here indexes undefined and kills the whole render loop.
+  fog.forEach((cell,i)=>fogMesh.setColorAt(i,(cell.water?FOG_WATER_SHADES:FOG_SHADES)[((cell.cx+64)*13+(cell.cy+64)*7)%FOG_SHADES.length]));
+  fogMesh.instanceColor.needsUpdate=true;
+  fogShell=new THREE.InstancedMesh(fogGeo,outlineMat,count);
+  fogShell.instanceMatrix=fogMesh.instanceMatrix;fogShell.frustumCulled=false;fogShell.raycast=NO_RAYCAST;
+  adoptOutlineShell(fogShell);
+  scene.add(fogMesh,fogShell);
+}
+function syncFog(){
+  const metadata=fogMetadata();
+  // The height factor joins the early-out key: neither slider touches the fog revision, so without
+  // it a field with nothing shaking would keep its old matrices until the next mine.
+  const hs=view.heightScale/100*(view.fogHeight/100);
+  let shaking=false;
+  for(const cell of fog)if(cell.shake>0){shaking=true;break;}
+  if(metadata.revision===fogBuiltRevision&&hs===fogBuiltHeight&&!shaking&&!fogHadShake)return;
+  if(metadata.count!==(fogMesh?fogMesh.count:0))rebuildFogField(metadata.count);
+  if(!fogMesh){fogBuiltRevision=metadata.revision;fogBuiltHeight=hs;fogHadShake=false;return;}
+  fog.forEach((cell,i)=>{
+    const jag=.8+(((cell.cx+64)*31+(cell.cy+64)*17)%23)/23*.4;
+    const wear=.45+.55*(cell.hp/cell.max);
+    const squash=cell.shake>0?1-Math.abs(Math.sin(cell.shake*28))*.18:1;
+    _fv.set(gx(cell.x),cell.water?WATER_Y:terrainLiftAt(cell.x,cell.y),gz(cell.y));
+    _fs.set(1,Math.max(.25,FOG_BLOCK_H*jag*wear*squash*hs),1);
+    _fm.compose(_fv,_fq0,_fs);
+    fogMesh.setMatrixAt(i,_fm);
+  });
+  fogMesh.instanceMatrix.needsUpdate=true;
+  fogBuiltRevision=metadata.revision;fogBuiltHeight=hs;fogHadShake=shaking;
+}
+// ── fog death tween ──
+// Cleared blocks are already gone from gameplay; the simulation's fogPops records replay them here
+// for popAnimTime as an inflate-then-collapse. A small fixed-capacity instanced pair (body + ink)
+// is created on first use and idles at count 0 — during heavy cascades records beyond the cap
+// simply skip the tween, which reads as blocks at the pile's centre popping instantly.
+const FOG_POP_CAP=512;
+let fogPopMesh=null,fogPopShell=null;
+function ensureFogPopMesh(){
+  if(fogPopMesh)return;
+  fogPopMesh=new THREE.InstancedMesh(fogGeo,fogMat,FOG_POP_CAP);
+  fogPopMesh.name="fog-pops";fogPopMesh.castShadow=false;fogPopMesh.receiveShadow=true;fogPopMesh.frustumCulled=false;fogPopMesh.raycast=NO_RAYCAST;
+  fogPopMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);fogPopMesh.count=0;
+  fogPopShell=new THREE.InstancedMesh(fogGeo,outlineMat,FOG_POP_CAP);
+  fogPopShell.instanceMatrix=fogPopMesh.instanceMatrix;fogPopShell.frustumCulled=false;fogPopShell.raycast=NO_RAYCAST;fogPopShell.count=0;
+  adoptOutlineShell(fogPopShell);
+  scene.add(fogPopMesh,fogPopShell);
+}
+function syncFogPops(){
+  if(!fogPops.length&&(!fogPopMesh||fogPopMesh.count===0))return;
+  ensureFogPopMesh();
+  const hs=view.heightScale/100*(view.fogHeight/100),n=Math.min(fogPops.length,FOG_POP_CAP);
+  // The record is spliced out of fogPops at age >= FOG.popAnimTime, so the visual can only be
+  // COMPRESSED into that window, never stretched past it — a longer curve would be cut mid-swell.
+  const popTime=Math.max(.001,Math.min(view.fogPopTime/1000,FOG.popAnimTime)),swellAmt=view.fogPopSwell/100;
+  for(let i=0;i<n;i++){
+    const pop=fogPops[i],t=Math.min(pop.age/popTime,1);
+    // Inflate for the first third, then collapse to nothing — the classic squash pop.
+    const swell=t<.33?1+swellAmt*(t/.33):Math.max(0,(1+swellAmt)*(1-(t-.33)/.67));
+    const jag=.8+(((pop.cx+64)*31+(pop.cy+64)*17)%23)/23*.4;
+    _fv.set(gx(pop.x),pop.water?WATER_Y:terrainLiftAt(pop.x,pop.y),gz(pop.y));
+    _fs.set(swell,Math.max(.01,FOG_BLOCK_H*jag*hs*swell),swell);
+    _fm.compose(_fv,_fq0,_fs);
+    fogPopMesh.setMatrixAt(i,_fm);
+    fogPopMesh.setColorAt(i,(pop.water?FOG_WATER_SHADES:FOG_SHADES)[((pop.cx+64)*13+(pop.cy+64)*7)%FOG_SHADES.length]);
+  }
+  fogPopMesh.count=n;fogPopShell.count=n;
+  fogPopMesh.instanceMatrix.needsUpdate=true;if(fogPopMesh.instanceColor)fogPopMesh.instanceColor.needsUpdate=true;
+}
+
 // ── Showcase render consumption flow ──
 // Written by simulation.js's fixture/damage/held-object commands; iterated read-only here.
 // Pools own meshes and dispose them as fixture resets replace live object identities.
@@ -886,8 +989,11 @@ const syncCorpses = makeLayer(c=>makeCorpse(c.coat), (g,c)=>{
 // Buildings swap their whole mesh when they finish or change tower variant.
 const buildingStore = new Map();
 function syncBuildings(){
-  const seen = new Set();
-  for(const b of buildings){
+  const seen = new Set(),heldOrbs=heldBuilding()?.type==="damageOrbs"?heldBuilding():null;
+  // Carried damage orbs keep their real animated identity; other movable buildings continue using
+  // the placement ghost because none of them remain active while held.
+  const visibleBuildings=heldOrbs?[...buildings,heldOrbs]:buildings;
+  for(const b of visibleBuildings){
     // The blueprint key carries its type now that the blueprint pad is footprint-sized.
     const key = b.complete ? (b.type==="tower" ? "tower:"+(b.tower?.variant||"basic") : b.type) : "blueprint:"+b.type;
     let rec = buildingStore.get(b);
@@ -902,8 +1008,12 @@ function syncBuildings(){
       buildingStore.set(b, rec);
     }
     seen.add(b);
-    rec.g.visible = true;
-    setXZ(rec.g, b);
+    const floating=b===heldOrbs;
+    rec.g.visible = !floating||state.mouse.inside;
+    if(floating)rec.g.position.set(gx(state.mouse.x),1.6+Math.sin(b.orbs.angle*2)*.16,gz(state.mouse.y));
+    else setXZ(rec.g,b);
+    rec.g.rotation.x=floating?Math.sin(b.orbs.angle*1.7)*.08:0;
+    rec.g.rotation.z=floating?Math.cos(b.orbs.angle*1.4)*.08:0;
     rec.g.scale.y = view.heightScale/100;
     const pulse = 1 + (b.pulse||0)*.12;
     rec.g.scale.x = rec.g.scale.z = pulse;
@@ -915,7 +1025,7 @@ function syncBuildings(){
       for(const p of rec.g.userData.parts||[]) p.material.emissive.setHex(hurt?PAL.hurtGlow:0x000000);
     }
     if(rec.g.userData.tip) rec.g.userData.tip.rotation.y += .02;
-    if(b.orbs&&rec.g.userData.orbit){rec.g.userData.orbit.rotation.y=b.orbs.angle;rec.g.userData.orbs.forEach((orb,index)=>orb.visible=index<b.orbs.count);}
+    if(b.orbs&&rec.g.userData.orbit){rec.g.userData.orbit.rotation.y=b.orbs.angle;rec.g.userData.orbit.position.y=.75+Math.sin(b.orbs.angle*2)*.10;rec.g.userData.orbs.forEach((orb,index)=>orb.visible=index<b.orbs.count);}
     // Derived occupancy drives the sage bay caps directly: one visible cap per living linked ally,
     // so a capture or an ally death changes the model on the very next frame.
     if(b.type==="captureYard"&&rec.g.userData.slotMarkers){const held=captureYardOccupancy(b);rec.g.userData.slotMarkers.forEach((cap,index)=>cap.visible=index<held);}
@@ -1110,6 +1220,9 @@ function drawAttacks(){
     ring(im.x, im.y, im.r*(.3+.7*im.t), im.col, (1-im.t)*.9);
 
   for(const e of state.enemies){
+    // The body is hidden under standing fog, so its muzzle/heal beams go with it: a bolt leaving an
+    // empty fog block would point at a shooter the player cannot see or click.
+    if(fogAtPoint(e.x,e.y)) continue;
     if(e.shotFlash > 0)
       beam(e.x, e.y, .8, e.shotX ?? BASE.x, e.shotY ?? BASE.y, .7, .055,
            "#d9b65f", clamp(e.shotFlash*7, 0, 1));
@@ -1787,9 +1900,12 @@ function drawZones(){
   hideFootprint();
   // Previews snap with snapToCellCenter() — the exact call leftClick()/dropHeldObject() commit with —
   // so the ghost's cell, its validity tint, and the placed anchor can never disagree.
+  // Standing fog is refused by every commit path (placeCardCharge / dropHeldObject both test
+  // footprintFogFree), so every verdict below ANDs it in — otherwise a ghost reads valid over a
+  // cell the click will reject. Same footprint the ghost is already drawn with, never a wider one.
   if(state.buildMode && m.inside){
     const a = snapToCellCenter(m.x, m.y);
-    const ok = canPlace(a.x, a.y, state.buildMode);
+    const ok = canPlace(a.x, a.y, state.buildMode) && footprintFogFree(a.x, a.y, buildingFootprint(state.buildMode));
     showFootprint(state.buildMode, a.x, a.y, ok);
     showGhostBuilding(state.buildMode, a.x, a.y, ok);
     showPlacementIndicators(state.buildMode, a, ok, t);
@@ -1805,19 +1921,20 @@ function drawZones(){
     } else {
       const chest=heldChest();
       if(chest){
-        const a=snapToCellCenter(m.x,m.y),ok=canPlace(a.x,a.y,null,null,null,chest);
+        const a=snapToCellCenter(m.x,m.y),ok=canPlace(a.x,a.y,null,null,null,chest)&&footprintFogFree(a.x,a.y,chest.footprint);
         showFootprint(null,a.x,a.y,ok);showSelector(cellWorldRect(a.x,a.y),{color:css(ok?PAL.cellOk:PAL.cellBad),opacity:.9,pulse:indicatorPulse(t)});
       }
       const prop=heldProp();
       if(prop){
-        const a=snapToCellCenter(m.x,m.y),ok=canPlace(a.x,a.y,null,null,prop);
+        const a=snapToCellCenter(m.x,m.y),ok=canPlace(a.x,a.y,null,null,prop)&&footprintFogFree(a.x,a.y,prop.footprint);
         showFootprint(null,a.x,a.y,ok);showSelector(cellWorldRect(a.x,a.y),{color:css(ok?PAL.cellOk:PAL.cellBad),opacity:.9,pulse:indicatorPulse(t)});
       }
       const b = heldBuilding();
       if(b){
-        const a = snapToCellCenter(m.x, m.y), ok = canPlace(a.x, a.y, b.type, b);
+        const a = snapToCellCenter(m.x, m.y), ok = canPlace(a.x, a.y, b.type, b) && footprintFogFree(a.x, a.y, buildingFootprint(b.type));
         showFootprint(b.type, a.x, a.y, ok);
-        showGhostBuilding(b.type, a.x, a.y, ok, 1.6 + Math.sin(t*5)*.12);
+        // Damage orbs' live model already follows the cursor and remains animated/active.
+        if(b.type!=="damageOrbs")showGhostBuilding(b.type, a.x, a.y, ok, 1.6 + Math.sin(t*5)*.12);
         // A held tower keeps whatever variant it was upgraded to, so its radius comes from the
         // building itself (towerRadius -> its own variant), never from the basic chassis.
         showPlacementIndicators(b.type, a, ok, t, b);
@@ -1862,10 +1979,19 @@ export function drawScene(){
   // Fully transparent lines still cost a draw call; overview hides the object as well as fading it.
   if(terrainGrid)terrainGrid.visible=gridMat.opacity>0;
 
-  syncGrass();syncTrees(trees); syncRocks(rocks); syncDiamonds(diamonds);
-  syncChests(heldChest()?[...chests,heldChest()]:chests);
+  // Entities under standing fog are dormant in the simulation and hidden here; the held chest is
+  // in the player's hand, so it renders regardless of what cell the cursor floats over.
+  const revealed=e=>!fogAtPoint(e.x,e.y);
+  syncGrass();syncFog();syncFogPops();
+  syncTrees(trees.filter(revealed)); syncRocks(rocks.filter(revealed)); syncDiamonds(diamonds.filter(revealed));
+  const visibleChests=chests.filter(revealed);
+  syncChests(heldChest()?[...visibleChests,heldChest()]:visibleChests);
   syncDrops(resourceDrops); syncCorpses(workerCorpses);
-  syncEnemies(heldEnemy()?[...state.enemies,heldEnemy()]:state.enemies);syncFriendlyBrutes(friendlyBrutes);syncControlledEnemies(controlledEnemies);syncWorkers();
+  // Same contract as the resources above: an enemy inside standing fog is untargetable in the
+  // simulation (clicks, towers and the king all skip it), so it must not be drawn either — a body
+  // on screen that no click can reach is worse than no body at all. The held enemy is in hand.
+  const visibleEnemies=state.enemies.filter(revealed);
+  syncEnemies(heldEnemy()?[...visibleEnemies,heldEnemy()]:visibleEnemies);syncFriendlyBrutes(friendlyBrutes);syncControlledEnemies(controlledEnemies);syncWorkers();
   syncDummies(damageDummies);syncShowcaseProps(showcaseProps);
   syncBuildings(); syncParticles(); syncHand();
 

@@ -28,6 +28,7 @@ import {
 } from "../game/data.js";
 import {
   state, trees, rocks, diamonds, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, damageNumbers, resourceDrops,
+  fogAtPoint,
   badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget, captureYardOccupancy,
   buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldBuilding, heldChest, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, workerMaxHp, clamp
 } from "../game/simulation.js";
@@ -183,6 +184,9 @@ export function drawOverlay(){
   for(const chest of heldChest()?[...chests,heldChest()]:chests)
     marks(chest===heldChest()&&state.mouse.inside?state.mouse.x:chest.x,chest===heldChest()&&state.mouse.inside?state.mouse.y:chest.y,46,43,rowsFor(chest.hp/chest.max,css(PAL.chestLatch)));
   for(const e of state.enemies){
+    // The scene hides bodies standing in fog because the simulation makes them untargetable; a
+    // health track floating over a blank fog block would be the only trace of one, so it goes too.
+    if(fogAtPoint(e.x,e.y)) continue;
     const s = ENEMY_TYPES[e.type].size;
     marks(e.x,e.y,28*s,Math.round(40*s), rowsFor(e.hp/e.max, "#c65343"));
   }

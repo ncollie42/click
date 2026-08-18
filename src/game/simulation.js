@@ -5,7 +5,7 @@ import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
   CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
   FOOTPRINT_1x1,FOOTPRINT_3x3,RESOURCE_FOOTPRINT,
-  RESOURCE_KINDS,RESOURCE_NODE_HP,RESOURCE_SOURCE,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
+  RESOURCE_KINDS,RESOURCE_NODE_HP,RESOURCE_SOURCE,FOG,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
   HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
@@ -13,7 +13,7 @@ import {
   ENEMY_POOL,
   NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,WAVE_THREAT_CURVE,WAVE_BOSS_SPAWNS,WIN_WAVE,
   DAY_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
-  KING,STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_ORBS,SUMMONING_CIRCLE,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
+  KING,STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_TARGET_TYPE,DAMAGE_ORBS,SUMMONING_CIRCLE,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
 } from "./data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -49,6 +49,7 @@ import {CARDS,RARITY_WEIGHTS,cardById} from "./cards.js";
 // Authored siblings that are NEVER written (STEADY_HAND_RATE) live in data.js.
 export const TUNE = {
   chopTime:.7,       // seconds of held left-click per harvest hit   [slider vChopT]
+  snapRadius:110,    // game px a held swing stays locked to its target after the cursor slips off [slider vSnapR]
   vacuumRadius:45,   // game px that collectDrop() sweeps            [slider vRadius]
   suckRate:.08,      // seconds between vacuum pickups               [slider vRate]
   chopYield:1,       // drops spawned per completed player chop      [slider vYield]
@@ -101,12 +102,12 @@ export function connect(impl){ effects = {...NO_EFFECTS, ...impl}; return effect
 function sound(freq,duration){ effects.sound(freq,duration); }
 
 // Harvesting is hold-to-fill rather than per-click, so it needs its own timer.
-const chopState={target:null,kind:null,t:0};
+const chopState={target:null,kind:null,action:null,t:0};
 function beginChop(hit){
   if(chopState.target===hit.target)return;
-  chopState.target=hit.target;chopState.kind=hit.kind;chopState.t=0;
+  chopState.target=hit.target;chopState.kind=hit.kind;chopState.action=hit;chopState.t=0;
 }
-function resetChop(){chopState.target=null;chopState.kind=null;chopState.t=0;}
+function resetChop(){chopState.target=null;chopState.kind=null;chopState.action=null;chopState.t=0;}
 function chopProgress(){return chopState.target?clamp(chopState.t/TUNE.chopTime,0,1):0;}
 
 const trees = [];
@@ -304,7 +305,8 @@ function installTerrain(tags,metadata={}){
   terrainDescriptor=Object.freeze({...terrainDescriptor,revision:terrainRevision,seed:(metadata.seed??0)>>>0,targets:metadata.targets||null});
   terrainRuntime=Object.freeze({...terrainDescriptor,terrain:terrainStorage});
 }
-function installAllLandTerrain(){installTerrain(Array(terrainDescriptor.terrainCols*terrainDescriptor.terrainRows).fill(LAND));}
+// The showcase sandbox is all revealed land by definition, so this path also drops the fog field.
+function installAllLandTerrain(){installTerrain(Array(terrainDescriptor.terrainCols*terrainDescriptor.terrainRows).fill(LAND));clearAllFog();}
 function replaceGrass(cells){
   grass.length=0;grassByCell.clear();
   for(const cell of cells){const {x,y}=cellToWorld(cell.cx,cell.cy),tuft={x,y,hp:1,max:1,variant:cell.variant??0};grass.push(tuft);grassByCell.set(cell.cy*GRID_COLS+cell.cx,tuft);}
@@ -325,9 +327,81 @@ function terrainAtWorldPoint(worldX,worldY){return queryTerrainAtWorldPoint(terr
 function terrainWorldRectEntirelyOnLand(rect){return worldRectEntirelyOnLand(terrainRuntime,rect);}
 function terrainMetadata(){return terrainDescriptor;}
 function vegetationMetadata(){return Object.freeze({revision:vegetationRevision,count:grass.length});}
+// ── mineable fog of war ─────────────────────────────────────────────────────
+// The unexplored map is a field of destructible fog blocks, one per fully-on-land placement cell
+// beyond the starting clearing. Blocks are mined like resource nodes (player clicks or idle
+// workers); a cleared cell is gone for the run. `fogByCell` is the identity index every lookup
+// uses; `fogRevision` invalidates the render layer's instanced field.
+const fog=[],fogByCell=new Map();
+// Pending cascade pops: {cell,at,ring} entries scheduled by a mined-out block, popped when the
+// clock reaches them. cell.popQueued marks membership so a cell is never scheduled twice.
+const fogPopQueue=[];
+// Presentation-only death records: a cleared block leaves gameplay INSTANTLY (index, revision,
+// targeting all updated) but lingers here for popAnimTime so the render layer can play its
+// inflate-then-collapse tween. Nothing in gameplay may ever read this list.
+const fogPops=[];
+let fogRevision=0;
+// The field extends FOG.marginCells beyond the world rect, so indices go negative: the key pads
+// both axes by 64 and strides wider than any padded column count can reach, keeping keys unique.
+const FOG_KEY_PAD=64,FOG_KEY_STRIDE=2048;
+const fogCellKey=(cx,cy)=>(cy+FOG_KEY_PAD)*FOG_KEY_STRIDE+(cx+FOG_KEY_PAD);
+function fogAtPoint(x,y){const cell=worldToCell(x,y);return fogByCell.get(fogCellKey(cell.cx,cell.cy))||null;}
+function fogHpAtRing(ring){for(const tier of FOG.ringTiers)if(ring<tier.rings)return tier.hp;return FOG.farHp;}
+function buildFogField(){
+  fog.length=0;fogByCell.clear();fogPopQueue.length=0;fogRevision++;
+  // Fog covers EVERYTHING beyond the clearing — land, coast, open water, and a marginCells-wide
+  // apron past every world edge — so neither the map silhouette nor the sea rim shows until mined.
+  const minC=-FOG.marginCells,maxCx=GRID_COLS+FOG.marginCells,maxCy=GRID_ROWS+FOG.marginCells;
+  for(let cy=minC;cy<maxCy;cy++)for(let cx=minC;cx<maxCx;cx++){
+    const {x,y}=cellToWorld(cx,cy),d=distance(x,y,BASE.x,BASE.y);
+    if(d<FOG.clearRadius)continue;
+    // The water tag is presentation truth (blocks sit down at water level) and worker policy truth
+    // (the scheduler never sends a walker out onto water to mine). idx is the cell's live position
+    // in `fog`, maintained by clearFogCell's swap-remove so clears are O(1).
+    const cell={x,y,cx,cy,idx:fog.length,ring:-1,hp:0,max:0,shake:0,water:terrainAtWorldPoint(x,y)!==LAND,footprint:RESOURCE_FOOTPRINT};
+    fog.push(cell);fogByCell.set(fogCellKey(cx,cy),cell);
+  }
+  // Health comes from BFS ring depth measured from the STARTING CLEARING only: seeds are cells
+  // bordering a missing cell that lies inside the field rectangle (the clearing), never cells on
+  // the outer apron rim, whose missing neighbours are simply outside the built field.
+  const inField=(cx,cy)=>cx>=minC&&cx<maxCx&&cy>=minC&&cy<maxCy;
+  // 8-connected: rings are Chebyshev bands (squares), so diagonal expansion prices the same as
+  // cardinal — a 4-connected sweep would tax diagonals ~40% extra in Manhattan diamonds.
+  const STEPS=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  let frontier=[];
+  for(const cell of fog)for(const [dx,dy] of STEPS){
+    const nx=cell.cx+dx,ny=cell.cy+dy;
+    if(inField(nx,ny)&&!fogByCell.has(fogCellKey(nx,ny))){cell.ring=0;frontier.push(cell);break;}
+  }
+  let ring=0;
+  while(frontier.length){
+    const next=[];
+    ring++;
+    for(const cell of frontier)for(const [dx,dy] of STEPS){
+      const neighbour=fogByCell.get(fogCellKey(cell.cx+dx,cell.cy+dy));
+      if(neighbour&&neighbour.ring<0){neighbour.ring=ring;next.push(neighbour);}
+    }
+    frontier=next;
+  }
+  for(const cell of fog){
+    if(cell.ring<0)cell.ring=ring;   // an unreachable enclave prices as the deepest ring
+    cell.hp=cell.max=cell.water?FOG.waterHp:fogHpAtRing(cell.ring);
+  }
+  fogPops.length=0;
+}
+function clearAllFog(){if(!fog.length&&fogRevision>0)return;fog.length=0;fogByCell.clear();fogPopQueue.length=0;fogPops.length=0;fogRevision++;}
+function fogMetadata(){return Object.freeze({revision:fogRevision,count:fog.length});}
+/** Every cell of a candidate footprint must be fog-free before anything may occupy it. */
+function footprintFogFree(x,y,footprint=FOOTPRINT_1x1){
+  if(!fog.length)return true;
+  const cell=worldToCell(x,y),b=footprintCellBounds(cell.cx,cell.cy,footprint);
+  for(let cy=b.minY;cy<=b.maxY;cy++)for(let cx=b.minX;cx<=b.maxX;cx++)if(fogByCell.has(fogCellKey(cx,cy)))return false;
+  return true;
+}
 // The world is authored data, not an algorithm: src/game/maps/starter.map.json,
 // edited in tools/map-editor.html. Startup is fully deterministic.
 materializeWorld(buildStarterWorld());
+buildFogField();
 
 const RUN_MODES=new Set(["normal","showcase"]);
 const RESOURCE_KIND_SET=new Set(RESOURCE_KINDS);
@@ -335,7 +409,7 @@ const RESOURCE_KIND_SET=new Set(RESOURCE_KINDS);
 // `guard` exists only as a GARRISON posting — reached by dropping a worker onto a station or by the
 // autonomous muster answering a nearby hostile. Dropping a worker on open ground or a house
 // repositions it as free, and no other path in the game mints a guard.
-const WORKER_JOBS=new Set(["free","build","haul","harvest","staff","guard"]);
+const WORKER_JOBS=new Set(["free","build","haul","harvest","staff","guard","clearfog"]);
 let initializedMode=null;
 function invariant(condition,message){if(!condition)throw new Error("simulation invariant: "+message);}
 function assertCombatKind(target){
@@ -475,6 +549,21 @@ export function validateSimulationInvariants(){
   for(const dummy of damageDummies){invariant(assertCombatKind(dummy)==="damage-dummy","non-dummy in dummy collection");invariant(dummy.hp>=0&&dummy.hp<=dummy.max,"illegal dummy health");}
   invariant(grassByCell.size===grass.length,"grass cell index disagrees with vegetation collection");
   for(const tuft of grass){const cell=worldToCell(tuft.x,tuft.y),center=cellToWorld(cell.cx,cell.cy);invariant(tuft.x===center.x&&tuft.y===center.y&&tuft.hp===1&&tuft.max===1,"illegal grass tuft");invariant(grassByCell.get(cell.cy*GRID_COLS+cell.cx)===tuft,"grass cell index lost identity");}
+  invariant(fogByCell.size===fog.length,"fog cell index disagrees with the fog collection");
+  fog.forEach((cell,i)=>{
+    const center=cellToWorld(cell.cx,cell.cy);
+    invariant(cell.idx===i,"fog block idx drifted from its live position");
+    invariant(Number.isInteger(cell.ring)&&cell.ring>=0,"fog block has no BFS ring");
+    invariant(cell.x===center.x&&cell.y===center.y,"fog block is not cell aligned");
+    invariant(Number.isInteger(cell.hp)&&Number.isInteger(cell.max)&&cell.max>0&&cell.hp>0&&cell.hp<=cell.max,"illegal fog block health");
+    invariant(fogByCell.get(fogCellKey(cell.cx,cell.cy))===cell,"fog cell index lost identity");
+    invariant(cell.water===(terrainAtWorldPoint(cell.x,cell.y)!==LAND),"fog block water tag disagrees with terrain");
+    if(cell.claimedBy!==undefined)invariant(state.workers.includes(cell.claimedBy)||heldWorker()===cell.claimedBy,"fog block claimed by unknown worker");
+    if(cell.claimedBy!==undefined)invariant(!cell.water,"a walker claimed a water fog block");
+  });
+  for(const entry of fogPopQueue)invariant(entry.cell.popQueued===true&&Number.isFinite(entry.at),"malformed fog cascade entry");
+  for(const pop of fogPops)invariant(pop.age>=0&&pop.age<FOG.popAnimTime&&!fogByCell.has(fogCellKey(pop.cx,pop.cy)),"fog death record outlived its tween or shadows a standing block");
+  if(state.runMode==="showcase")invariant(fog.length===0,"showcase mode contains fog");
   for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){
     const cell=worldToCell(node.x,node.y),center=cellToWorld(cell.cx,cell.cy);
     invariant(node.x===center.x&&node.y===center.y,"resource is not cell aligned");
@@ -528,6 +617,9 @@ export function validateSimulationInvariants(){
     // may mint one without a station. Showcase guards are inert display fixtures, exempt by design.
     if(worker.job==="guard"&&state.runMode==="normal")invariant(isGuardStation(worker.jobTarget),"a guard is not posted to a completed garrison");
     if(worker.job==="free")invariant(worker.autonomous&&worker.jobTarget===null&&worker.taskTarget===null&&worker.selfSupply===null,"free worker retains job state");
+    // Only the scheduler mints fog miners; the target may be a just-cleared cell for one frame
+    // (the miner resolves to free on its next update), so identity is not asserted here.
+    if(worker.job==="clearfog")invariant(worker.autonomous&&worker.jobTarget&&Number.isInteger(worker.jobTarget.cx)&&Number.isInteger(worker.jobTarget.cy),"fog miner has no fog cell");
   }
   // Guard occupancy is DERIVED from the workers pointing at each garrison — held workers included —
   // so a reservation can never drift from a stored counter or oversubscribe the authored capacity.
@@ -620,18 +712,60 @@ function enemyAt(x,y){
   const candidates=state.runMode==="showcase"?damageDummies:state.enemies;
   for(const enemy of candidates){
     if(enemy.displayUnit||enemy.defeatedTimer>0)continue;
+    if(state.runMode==="normal"&&fogAtPoint(enemy.x,enemy.y))continue;   // hidden in fog: not clickable
     const d=distance(x,y,enemy.x,enemy.y),hitRadius=assertCombatKind(enemy)==="damage-dummy"?24:24*ENEMY_TYPES[enemy.type].size;
     if(d<hitRadius&&d<best){best=d;target=enemy;}
   }
   return target;
 }
+function dropBossChest(x,y){
+  let anchor=null,bestDistanceSq=Infinity;
+  // Bosses may die over water or occupied ground. The chest remains an ordinary placed chest, so
+  // choose the nearest cell satisfying the same terrain and occupancy contract as player placement.
+  for(let cy=0;cy<GRID_ROWS;cy++)for(let cx=0;cx<GRID_COLS;cx++){
+    const point=cellToWorld(cx,cy),dx=point.x-x,dy=point.y-y,distanceSq=dx*dx+dy*dy;
+    if(distanceSq>=bestDistanceSq||!canPlace(point.x,point.y)||!footprintFogFree(point.x,point.y,CHEST.footprint))continue;
+    anchor=point;bestDistanceSq=distanceSq;
+  }
+  invariant(anchor,"boss death found no free cell for its chest");
+  const chest={x:anchor.x,y:anchor.y,hp:CHEST.maxHp,max:CHEST.maxHp,shake:0,footprint:CHEST.footprint};
+  chests.push(chest);
+  return chest;
+}
+function spawnDeathTreeNear(x,y){
+  let anchor=null,bestDistanceSq=Infinity;
+  for(let cy=0;cy<GRID_ROWS;cy++)for(let cx=0;cx<GRID_COLS;cx++){
+    const point=cellToWorld(cx,cy),dx=point.x-x,dy=point.y-y,distanceSq=dx*dx+dy*dy;
+    if(distanceSq>=bestDistanceSq||!canPlace(point.x,point.y)||!footprintFogFree(point.x,point.y,RESOURCE_FOOTPRINT))continue;
+    anchor=point;bestDistanceSq=distanceSq;
+  }
+  if(!anchor)return false; // A saturated map cannot represent another physical tree.
+  const hp=RESOURCE_NODE_HP.wood;
+  trees.push({x:anchor.x,y:anchor.y,hp,max:hp,stump:0,shake:0,variant:(Math.random()*3)|0,footprint:RESOURCE_FOOTPRINT});
+  clearGrassInFootprint(anchor.x,anchor.y,RESOURCE_FOOTPRINT);
+  burst(anchor.x,anchor.y,"#6f965c",10);
+  return true;
+}
+function resolveEnemyDeathBuffs(enemy){
+  if(buffStacks("deathTree")>0&&Math.random()<CARD_BUFFS.deathTreeChance)spawnDeathTreeNear(enemy.x,enemy.y);
+  if(buffStacks("deathExplosion")<=0)return;
+  burst(enemy.x,enemy.y,"#d96a3f",20);sound(80,.18);
+  // The dead enemy has already left ownership. Explosion kills recurse through this same finite
+  // death pipeline; the shared dispatcher snapshots and safely visits the shrinking enemy roster.
+  applyAreaDamage({centers:[enemy],radius:CARD_BUFFS.deathExplosionRadius,damage:CARD_BUFFS.deathExplosionDamage,targetType:CARD_BUFFS.deathExplosionTargetType,color:"#d96a3f"});
+}
 function killEnemy(enemy,announce=true){
   const at=state.enemies.indexOf(enemy);if(at<0)return;
   // Death owns status teardown so every damage path releases tower/source references immediately.
   enemy.status={burn:null,slow:null};enemy.retaliationTower=null;state.enemies.splice(at,1);
+  const droppedChest=!!ENEMY_TYPES[enemy.type].boss;
+  if(droppedChest)dropBossChest(enemy.x,enemy.y);
+  resolveEnemyDeathBuffs(enemy);
   const droppedDust=Math.random()<.25;
   if(droppedDust)spawnResource("dust",enemy.x+rand(-7,7),enemy.y);
-  burst(enemy.x,enemy.y,"#4b3b50",12);if(announce||droppedDust)toast(droppedDust?"enemy defeated — dust dropped":"enemy defeated");sound(150,.12);
+  burst(enemy.x,enemy.y,"#4b3b50",12);
+  if(announce||droppedDust||droppedChest)toast(droppedChest?(droppedDust?"boss defeated — chest and dust dropped":"boss defeated — chest dropped"):(droppedDust?"enemy defeated — dust dropped":"enemy defeated"));
+  sound(150,.12);
 }
 const MAX_PLAYER_HIT_EFFECT_DEPTH=12;
 function combatTargetActive(target){const kind=assertCombatKind(target);return kind==="damage-dummy"?damageDummies.includes(target)&&target.defeatedTimer<=0:state.enemies.includes(target)&&target.hp>0;}
@@ -668,7 +802,7 @@ function chainLightningTargets(fromX,fromY,jumps,range,visited,combatOnly=false)
   let x=fromX,y=fromY;
   for(let i=0;i<jumps;i++){
     let next=null,best=range;
-    for(const enemy of chainCombatRoster()){const d=distance(x,y,enemy.x,enemy.y);if(!visited.has(enemy)&&enemy.hp>0&&d<best){best=d;next={target:enemy,combat:true,resource:null};}}
+    for(const enemy of chainCombatRoster()){if(state.runMode==="normal"&&fogAtPoint(enemy.x,enemy.y))continue;const d=distance(x,y,enemy.x,enemy.y);if(!visited.has(enemy)&&enemy.hp>0&&d<best){best=d;next={target:enemy,combat:true,resource:null};}}
     if(!combatOnly)for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of nodes){const d=distance(x,y,node.x,node.y);if(!visited.has(node)&&resourceIsActive(node,kind)&&d<best){best=d;next={target:node,combat:false,resource:kind};}}
     if(!next)break;
     visited.add(next.target);targets.push(next);x=next.target.x;y=next.target.y;
@@ -867,13 +1001,13 @@ function dropHeldObject(){
   }
   if(held.kind==="showcase-prop"){
     const prop=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
-    if(anchor&&canPlace(anchor.x,anchor.y,null,null,prop)){prop.x=anchor.x;prop.y=anchor.y;toast(prop.id+" placed");}
+    if(anchor&&canPlace(anchor.x,anchor.y,null,null,prop)&&footprintFogFree(anchor.x,anchor.y,prop.footprint)){prop.x=anchor.x;prop.y=anchor.y;toast(prop.id+" placed");}
     else{prop.x=held.originX;prop.y=held.originY;toast("invalid ground — "+prop.id+" returned");}
     invariant(showcaseProps.includes(prop),"placed prop left its owned collection");state.heldObject=null;sound(260,.06);return true;
   }
   if(held.kind==="chest"){
     const chest=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
-    if(anchor&&canPlace(anchor.x,anchor.y,null,null,null,chest)){chest.x=anchor.x;chest.y=anchor.y;toast("unopened chest placed");}
+    if(anchor&&canPlace(anchor.x,anchor.y,null,null,null,chest)&&footprintFogFree(anchor.x,anchor.y,chest.footprint)){chest.x=anchor.x;chest.y=anchor.y;toast("unopened chest placed");}
     else{chest.x=held.originX;chest.y=held.originY;toast("invalid ground — chest returned");}
     chests.push(chest);state.heldObject=null;sound(260,.06);return true;
   }
@@ -882,27 +1016,24 @@ function dropHeldObject(){
   // and an invalid drop restores the exact origin recorded at pickup.
   invariant(assertHeldKind(held)==="building","unhandled held drop kind "+held.kind);
   const building=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
-  if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)){building.x=anchor.x;building.y=anchor.y;clearGrassInFootprint(building.x,building.y,buildingFootprint(building.type));toast((building.type==="tower"?towerVariant(building).name:BUILDING_TYPES[building.type].name)+" placed");}
+  if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)&&footprintFogFree(anchor.x,anchor.y,buildingFootprint(building.type))){building.x=anchor.x;building.y=anchor.y;clearGrassInFootprint(building.x,building.y,buildingFootprint(building.type));toast((building.type==="tower"?towerVariant(building).name:BUILDING_TYPES[building.type].name)+" placed");}
   else{building.x=held.originX;building.y=held.originY;toast("invalid ground — "+(building.type==="tower"?"tower":BUILDING_TYPES[building.type].name)+" returned");}
   buildings.push(building);state.heldObject=null;sound(260,.06);return true;
 }
 function activateManualTower(building){
   const tower=building.tower,variant=towerVariant(building);if(!variant.manual)return;
   if(tower.cooldown>0){toast(variant.name+" recharging: "+tower.cooldown.toFixed(1)+"s");return;}
-  const radius=towerAttackRadius(variant);
+  const radius=towerAttackRadius(building,variant);
   if(state.runMode==="showcase"&&!damageDummies.some(dummy=>dummy.defeatedTimer<=0&&distance(building.x,building.y,dummy.x,dummy.y)<=radius))return;
   tower.cooldown=towerCooldown(variant);tower.flash=.35;
-  const damage=towerDamage(variant);
-  eachTowerCombatTarget(enemy=>{
-    if(distance(building.x,building.y,enemy.x,enemy.y)<=radius)damageCombatTarget(enemy,damage,variant.accent,7,building);
-  });
+  const damage=towerDamage(building,variant);
+  applyAreaDamage({centers:[building],radius,damage,targetType:variant.damageTargetType,color:variant.accent,source:building});
   burst(building.x,building.y,variant.accent,24);toast("shock pulse fired");sound(variant.sound,.28);
 }
 function detonateBlast(building){
-  for(const enemy of [...state.enemies]){
-    const d=distance(building.x,building.y,enemy.x,enemy.y),radius=BUILDING_TYPES.blast.effectRadius;if(d>radius)continue;
-    damageEnemy(enemy,d<radius*.5?BUILDING_TYPES.blast.innerDamage:BUILDING_TYPES.blast.damage,"#e39a3f",0);
-  }
+  const def=BUILDING_TYPES.blast,center=[building];
+  applyAreaDamage({centers:center,radius:def.effectRadius,damage:def.damage,targetType:def.damageTargetType,color:"#e39a3f"});
+  applyAreaDamage({centers:center,radius:def.effectRadius*.5,damage:def.innerDamage-def.damage,targetType:def.damageTargetType,color:"#e39a3f"});
   for(let i=0;i<42;i++)particles.push({x:building.x,y:building.y,vx:rand(-180,180),vy:rand(-190,40),life:rand(.35,.9),col:i%2?"#e39a3f":"#b84b38"});
   buildings.splice(buildings.indexOf(building),1);toast("blast charge detonated");sound(70,.3);
 }
@@ -918,21 +1049,21 @@ function createBuilding(type,x,y){
 
 function chestAt(x,y){
   let target=null,best=32;
-  for(const chest of chests){const d=distance(x,y,chest.x,chest.y);if(chest.hp>0&&d<best){target=chest;best=d;}}
+  for(const chest of chests){const d=distance(x,y,chest.x,chest.y);if(chest.hp>0&&!fogAtPoint(chest.x,chest.y)&&d<best){target=chest;best=d;}}
   return target;
 }
 function grassAt(x,y){
   const center=worldToCell(x,y);let target=null,best=24;
   for(let cy=center.cy-1;cy<=center.cy+1;cy++)for(let cx=center.cx-1;cx<=center.cx+1;cx++){
-    const tuft=grassByCell.get(cy*GRID_COLS+cx);if(!tuft)continue;const d=distance(x,y,tuft.x,tuft.y);if(d<best){target=tuft;best=d;}
+    const tuft=grassByCell.get(cy*GRID_COLS+cx);if(!tuft||fogAtPoint(tuft.x,tuft.y))continue;const d=distance(x,y,tuft.x,tuft.y);if(d<best){target=tuft;best=d;}
   }
   return target;
 }
 function playerResourceAt(x,y){
   let target=null,kind=null,best=34;
-  for(const tree of trees){if(tree.stump>0)continue;const d=distance(x,y,tree.x,tree.y-10);if(d<best){best=d;target=tree;kind="wood";}}
-  for(const rock of rocks){if(rock.depleted>0)continue;const d=distance(x,y,rock.x,rock.y);if(d<best){best=d;target=rock;kind="stone";}}
-  for(const diamond of diamonds){if(diamond.depleted>0)continue;const d=distance(x,y,diamond.x,diamond.y);if(d<best){best=d;target=diamond;kind="diamond";}}
+  for(const tree of trees){if(!resourceIsActive(tree,"wood"))continue;const d=distance(x,y,tree.x,tree.y-10);if(d<best){best=d;target=tree;kind="wood";}}
+  for(const rock of rocks){if(!resourceIsActive(rock,"stone"))continue;const d=distance(x,y,rock.x,rock.y);if(d<best){best=d;target=rock;kind="stone";}}
+  for(const diamond of diamonds){if(!resourceIsActive(diamond,"diamond"))continue;const d=distance(x,y,diamond.x,diamond.y);if(d<best){best=d;target=diamond;kind="diamond";}}
   return target?{target,kind}:null;
 }
 
@@ -946,7 +1077,8 @@ const PRIMARY_ACTIONS={
   diamond:{kind:"mine",   icon:"pickaxe"},
   chest:  {kind:"break-chest",icon:"axe"},
   grass:  {kind:"cut-grass",icon:"axe"},
-  enemy:  {kind:"attack", icon:"sword"}
+  enemy:  {kind:"attack", icon:"sword"},
+  fog:    {kind:"mine-fog",icon:"pickaxe"}
 };
 /**
  * THE authority for direct timed left-click work at a world point.
@@ -970,6 +1102,9 @@ function resolvePrimaryAction(x,y){
   // showcase. The membership guard rejects stale references after death/reset/rebuild.
   if(enemy&&enemy.hp>0&&(assertCombatKind(enemy)==="damage-dummy"?damageDummies.includes(enemy):state.enemies.includes(enemy)))
     return {target:enemy,kind:PRIMARY_ACTIONS.enemy.kind,resource:null,icon:PRIMARY_ACTIONS.enemy.icon};
+  // A fog block owns its whole cell: while one stands, nothing beneath or beside it resolves.
+  const fogCell=fogAtPoint(x,y);
+  if(fogCell)return {target:fogCell,kind:PRIMARY_ACTIONS.fog.kind,resource:null,icon:PRIMARY_ACTIONS.fog.icon};
   const chest=chestAt(x,y);
   if(chest)return {target:chest,kind:PRIMARY_ACTIONS.chest.kind,resource:null,icon:PRIMARY_ACTIONS.chest.icon};
   const node=playerResourceAt(x,y);   // already skips stumps and depleted nodes
@@ -977,6 +1112,28 @@ function resolvePrimaryAction(x,y){
   const tuft=grassAt(x,y);
   if(tuft)return {target:tuft,kind:PRIMARY_ACTIONS.grass.kind,resource:null,icon:PRIMARY_ACTIONS.grass.icon};
   return null;
+}
+
+// ── click snapping ──────────────────────────────────────────────────────────
+// A swing in progress is committed: while the primary button stays down, the armed target keeps
+// taking the fill even after the cursor slips off it, so a chase stays locked to the running enemy
+// and fog keeps chipping while the hand drifts. The lock breaks only when the target dies,
+// depletes, hides in fog, drifts past TUNE.snapRadius of the cursor, or the button comes up;
+// only then does the cursor re-resolve. A press always resolves fresh (leftClick), so the badge
+// preview and the armed target still agree — the lock never survives a release.
+function primaryActionAlive(action){
+  const target=action.target;
+  if(action.kind==="attack")return target.hp>0&&(assertCombatKind(target)==="damage-dummy"?damageDummies.includes(target):state.enemies.includes(target)&&!(state.runMode==="normal"&&fogAtPoint(target.x,target.y)));
+  if(action.kind==="mine-fog")return fogByCell.get(fogCellKey(target.cx,target.cy))===target;
+  if(action.kind==="break-chest")return chests.includes(target)&&target.hp>0;
+  if(action.kind==="cut-grass")return grass.includes(target);
+  return resourceIsActive(target,action.resource);
+}
+function stickyChopAction(){
+  const action=chopState.action;
+  if(!action||!state.primaryClick.held)return null;
+  if(distance(state.mouse.x,state.mouse.y,action.target.x,action.target.y)>TUNE.snapRadius)return null;
+  return primaryActionAlive(action)?action:null;
 }
 
 // Harvesting and attacking both run through updatePrimaryClick()'s hold timer.
@@ -988,10 +1145,10 @@ function updatePrimaryClick(dt){
   if(effects.isModalOpen()||state.paused||state.gameOver){resetChop();stopPrimaryClick();return;}
   const m=state.mouse;
   if(!m.inside){resetChop();return;}
-  // Nodes and enemies share one hold-to-fill timer; moving off resets it.
-  // Re-resolved every tick through the one authority, so a target that dies,
-  // depletes, or is swapped under the cursor drops or restarts the fill here.
-  const hit=resolvePrimaryAction(m.x,m.y);
+  // Nodes and enemies share one hold-to-fill timer. The armed target is sticky while the button
+  // stays down (stickyChopAction); only when that lock is gone does the cursor re-resolve through
+  // the one authority, so a dead, depleted, or out-of-leash target drops or restarts the fill here.
+  const hit=stickyChopAction()||resolvePrimaryAction(m.x,m.y);
   if(!hit){resetChop();return;}
   beginChop(hit);
   chopState.t+=dt*chopFillRate();
@@ -1001,6 +1158,7 @@ function updatePrimaryClick(dt){
   if(hit.kind==="attack")hitCombatTarget(hit.target,quiet);
   else if(hit.kind==="break-chest")hitChest(hit.target,quiet);
   else if(hit.kind==="cut-grass")hitGrass(hit.target,quiet);
+  else if(hit.kind==="mine-fog")hitFog(hit.target,quiet);
   else hitResource(hit.target,hit.resource,false,quiet);
   if(!quiet)primary.audioCooldown=.25;
 }
@@ -1061,6 +1219,75 @@ function removeGrass(tuft,withFeedback=false,quiet=false){
   return true;
 }
 function hitGrass(tuft,quiet=false){return removeGrass(tuft,true,quiet);}
+
+// ── mining fog ──────────────────────────────────────────────────────────────
+// Fog blocks take chip damage like resource nodes but never drop anything: the reveal is the yield.
+// Identity is checked through fogByCell so a stale reference (already-cleared cell) can never be
+// hit twice; a cleared cell leaves the map for the rest of the run and bumps fogRevision.
+/** Buried loot: one independent roll per cleared land block. The chest is the jackpot and needs a
+ * genuinely placeable revealed cell (fully on land, nothing occupying it) — otherwise it degrades
+ * to the coin, so the jackpot is never silently lost to a hidden tree. */
+function rollFogLoot(cell){
+  const roll=Math.random(),loot=FOG.loot;
+  if(roll<loot.chestChance){
+    if(terrainWorldRectEntirelyOnLand(footprintWorldRect(cell.cx,cell.cy))&&canPlace(cell.x,cell.y)){
+      chests.push({x:cell.x,y:cell.y,hp:CHEST.maxHp,max:CHEST.maxHp,shake:0,footprint:CHEST.footprint});
+      toast("the fog hid a buried cache");sound(660,.2);
+    }else spawnResource("coin",cell.x,cell.y);
+  }
+  else if(roll<loot.chestChance+loot.coinChance)spawnResource("coin",cell.x+rand(-8,8),cell.y+rand(-5,5));
+  else if(roll<loot.chestChance+loot.coinChance+loot.dustChance)spawnResource("dust",cell.x+rand(-8,8),cell.y+rand(-5,5));
+}
+function clearFogCell(cell,ring=0){
+  if(fog[cell.idx]!==cell)return false;
+  // Swap-remove keeps clears O(1); render layers rebuild off the count change, so order is free.
+  const last=fog[fog.length-1];
+  fog[cell.idx]=last;last.idx=cell.idx;fog.pop();
+  fogByCell.delete(fogCellKey(cell.cx,cell.cy));fogRevision++;
+  if(chopState.target===cell)resetChop();
+  fogPops.push({x:cell.x,y:cell.y,cx:cell.cx,cy:cell.cy,water:cell.water,age:0});
+  if(!cell.water&&state.runMode==="normal")rollFogLoot(cell);
+  burst(cell.x,cell.y,"#8d8798",16);burst(cell.x,cell.y,"#c9c4d4",8);
+  // Cascade pops climb in pitch with distance from the mined block, so a clear reads as one
+  // rising "pop-pop-pop" figure rather than a pile of identical thuds.
+  sound(520+ring*90,ring?.08:.12);
+  return true;
+}
+/** A block mined to death takes its neighbourhood with it: the 3x3 core always pops, and cells
+ * beyond it out to FOG.popRadius (roughly circular) pop with FOG.popEdgeChance, so every clearing
+ * grows a ragged organic rim instead of a stamped square. Pops stagger outward by euclidean
+ * distance, ignore remaining HP, and never cascade again themselves — one swing, one neighbourhood. */
+function queueFogCascade(origin){
+  const r=FOG.popRadius;
+  for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+    if(!dx&&!dy)continue;
+    const d=Math.hypot(dx,dy);
+    if(d>r+.5)continue;
+    if(d>1.5&&Math.random()>=FOG.popEdgeChance)continue;
+    const cell=fogByCell.get(fogCellKey(origin.cx+dx,origin.cy+dy));
+    if(!cell||cell.popQueued)continue;
+    cell.popQueued=true;
+    fogPopQueue.push({cell,at:state.clock.elapsed+d*FOG.popDelay,ring:Math.max(Math.abs(dx),Math.abs(dy))});
+  }
+}
+function updateFogPops(){
+  if(!fogPopQueue.length)return;
+  const now=state.clock.elapsed;
+  for(let i=fogPopQueue.length-1;i>=0;i--){
+    const entry=fogPopQueue[i];
+    if(entry.at>now)continue;
+    fogPopQueue.splice(i,1);
+    // A queued cell the player (or an earlier pop) already cleared is simply gone; skip it.
+    if(fogByCell.get(fogCellKey(entry.cell.cx,entry.cell.cy))===entry.cell)clearFogCell(entry.cell,entry.ring);
+  }
+}
+function hitFog(cell,quiet=false){
+  if(fogByCell.get(fogCellKey(cell.cx,cell.cy))!==cell)return false;
+  cell.hp--;cell.shake=1;addDamageNumber(cell,1);burst(cell.x,cell.y-6,"#6f6a7c",5);
+  if(!quiet)sound(200+cell.hp*20,.05);
+  if(cell.hp<=0){clearFogCell(cell);queueFogCascade(cell);}
+  return true;
+}
 function clearGrassInFootprint(x,y,footprint){
   const cell=worldToCell(x,y),bounds=footprintCellBounds(cell.cx,cell.cy,footprint),removed=[];
   for(let cy=bounds.minY;cy<=bounds.maxY;cy++)for(let cx=bounds.minX;cx<=bounds.maxX;cx++){const tuft=grassByCell.get(cy*GRID_COLS+cx);if(tuft)removed.push(tuft);}
@@ -1312,7 +1539,7 @@ function recallResources(){
 // instant it is PLAYED out of the hand. Buff entries are deliberately empty: their whole effect is
 // the stack tally, layered over the authored numbers by the accessors below.
 const CARD_EFFECTS={
-  clickSpeed(){},critClicks(){},freeHit(){},enemyPickup(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},buildCapacity(){},towerDamage(){},towerSpeed(){},towerRange(){},clickDamage(){},chainLightning(){},
+  clickSpeed(){},critClicks(){},freeHit(){},enemyPickup(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},buildCapacity(){},towerDamage(){},towerSpeed(){},towerRange(){},clickDamage(){},chainLightning(){},deathTree(){},deathExplosion(){},
   handCarry(){state.capacity+=CARD_BUFFS.handCarry;},
   baseHp(){state.baseMax+=CARD_BUFFS.baseHp;state.baseHp+=CARD_BUFFS.baseHp;},
   woodBundle(){state.stored.wood+=CARD_CONSUMABLES.woodBundle;state.basePulse=1;},
@@ -1396,7 +1623,7 @@ function blueprintPlacement(ref){
 function blueprintName(spec){return spec.variant?TOWER_VARIANTS[spec.variant].name:BUILDING_TYPES[spec.type].name;}
 function cardCharges(id){return cardById[id].charges??1;}
 function castMeteor(x,y){
-  eachTowerCombatTarget(target=>{if(distance(x,y,target.x,target.y)<=METEOR.radius)damageCombatTarget(target,METEOR.damage,"#d06a38",14,null,{announce:true});});
+  applyAreaDamage({centers:[{x,y}],radius:METEOR.radius,damage:METEOR.damage,targetType:METEOR.damageTargetType,color:"#d06a38"});
   rocks.push({x,y,hp:METEOR.rockHp,max:METEOR.rockHp,depleted:0,shake:0,meteor:true,footprint:FOOTPRINT_3x3});
   clearGrassInFootprint(x,y,FOOTPRINT_3x3);
   for(let i=0;i<64;i++)particles.push({x,y,vx:rand(-220,220),vy:rand(-240,20),life:rand(.45,1.1),col:i%3?"#8b6248":"#e18a43"});
@@ -1404,7 +1631,7 @@ function castMeteor(x,y){
 }
 /** The fireball's whole effect: one area hit at the anchor, no building, blast-style noise and dust. */
 function castFireball(x,y){
-  for(const enemy of [...state.enemies])if(distance(x,y,enemy.x,enemy.y)<=FIREBALL.radius)damageEnemy(enemy,FIREBALL.damage,"#ef7b3f",0);
+  applyAreaDamage({centers:[{x,y}],radius:FIREBALL.radius,damage:FIREBALL.damage,targetType:FIREBALL.damageTargetType,color:"#ef7b3f"});
   for(let i=0;i<42;i++)particles.push({x,y,vx:rand(-180,180),vy:rand(-190,40),life:rand(.35,.9),col:i%2?"#ef7b3f":"#b84b38"});
   toast("fireball");sound(70,.3);
 }
@@ -1426,7 +1653,7 @@ function beginCardTargeting(entry){
 function placeCardCharge(anchor){
   const targeting=state.cardTargeting,entry=handEntry(targeting.id);
   if(!entry||!(entry.charges>0)){endCardTargeting();return false;}
-  if(!canPlace(anchor.x,anchor.y,targeting.type)){toast("needs clear ground away from the base");return false;}
+  if(!canPlace(anchor.x,anchor.y,targeting.type)||!footprintFogFree(anchor.x,anchor.y,buildingFootprint(targeting.type))){toast("needs clear ground away from the base");return false;}
   if(targeting.cast)targeting.cast(anchor.x,anchor.y);
   else{
     const placed=createBuilding(targeting.type,anchor.x,anchor.y);
@@ -1467,9 +1694,17 @@ function chainLightningJumps(){const stacks=buffStacks("chainLightning");return 
 function chainLightningChance(){const stacks=buffStacks("chainLightning");return stacks>0?CARD_BUFFS.chainChance+CARD_BUFFS.chainChanceStack*(stacks-1):0;}
 function workerSpeed(){return WORKER_SPEED*CARD_BUFFS.workerSpeed**buffStacks("workerSpeed");}
 function workerCarry(){return WORKER_CARRY+CARD_BUFFS.workerCarry*buffStacks("workerCarry");}
-function towerDamage(variant){return Math.ceil(variant.damage*CARD_BUFFS.towerDamage**buffStacks("towerDamage"));}
+function towerDamageBuildingBonus(tower){
+  const shrine=BUILDING_TYPES.warShrine;
+  return buildings.some(building=>building.complete&&building.type==="warShrine"&&distance(tower.x,tower.y,building.x,building.y)<=shrine.effectRadius)?shrine.damageBonus:0;
+}
+function towerDamage(tower,variant=towerVariant(tower)){return Math.ceil(variant.damage*CARD_BUFFS.towerDamage**buffStacks("towerDamage"))+towerDamageBuildingBonus(tower);}
 function towerCooldown(variant){return variant.cooldown/CARD_BUFFS.towerSpeed**buffStacks("towerSpeed");}
-function towerAttackRadius(variant){return (variant.range||variant.effectRadius)+CARD_BUFFS.towerRange*buffStacks("towerRange");}
+function towerRangeBeaconBonus(tower){
+  const beacon=BUILDING_TYPES.rangeBeacon;
+  return buildings.some(building=>building.complete&&building.type==="rangeBeacon"&&distance(tower.x,tower.y,building.x,building.y)<=beacon.effectRadius)?beacon.rangeBonus:0;
+}
+function towerAttackRadius(tower,variant=towerVariant(tower)){return (variant.range||variant.effectRadius)+CARD_BUFFS.towerRange*buffStacks("towerRange")+towerRangeBeaconBonus(tower);}
 function dropToBase(){feedBase(state.carried,state.mouse.x,state.mouse.y);}
 
 function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
@@ -1589,11 +1824,18 @@ function updateWorkerSpawns(dt){
   }
 }
 
-function resourceIsActive(node,kind){return kind==="wood"?node.stump<=0:node.depleted<=0;}
+// A node under fog is DORMANT: invisible, untargetable by player and workers alike, and reserving
+// no work — the fog block above it owns the cell until it is mined away.
+function resourceIsActive(node,kind){if(fogAtPoint(node.x,node.y))return false;return kind==="wood"?node.stump<=0:node.depleted<=0;}
 // Dust is player-only for now. Every worker path gates loose-drop claims through this predicate.
 function workerCanPickupDrop(drop){return drop.kind!=="dust";}
 function workerLoad(worker){return RESOURCE_KINDS.reduce((total,kind)=>total+worker.carried[kind],0);}
-function clearWorkerTask(worker){if(worker.taskTarget?.claimedBy===worker)delete worker.taskTarget.claimedBy;worker.taskTarget=null;}
+function clearWorkerTask(worker){
+  if(worker.taskTarget?.claimedBy===worker)delete worker.taskTarget.claimedBy;worker.taskTarget=null;
+  // A fog miner's reservation lives on its jobTarget cell; every abandonment path (death, lift,
+  // muster, flee, reassignment) runs through here, so the claim can never outlive the job.
+  if(worker.job==="clearfog"&&worker.jobTarget?.claimedBy===worker)delete worker.jobTarget.claimedBy;
+}
 function clearWorkerSelfSupply(worker){clearWorkerTask(worker);worker.selfSupply=null;}
 // ── the free-worker scheduler ───────────────────────────────────────────────
 // THE canonical transition into free. Releases every claim and transient task ownership so no
@@ -1656,6 +1898,33 @@ function freeWorkerGatherCandidate(worker,radius){
   }
   return choice;
 }
+// Fog-mining claims mirror drop claims (targetIsClaimed): stale owners self-heal on read.
+function fogIsClaimed(cell){
+  const owner=cell.claimedBy;
+  if(owner&&(!state.workers.includes(owner)||owner.jobTarget!==cell)){delete cell.claimedBy;return false;}
+  return !!owner;
+}
+/** Only frontier blocks are mineable by workers: at least one cardinal neighbour must be revealed
+ * land, so the field is always chewed from the open edge inward, never from an unreachable core. */
+function fogCellIsFrontier(cell){
+  for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+    const cx=cell.cx+dx,cy=cell.cy+dy;
+    if(fogByCell.has(fogCellKey(cx,cy)))continue;
+    const point=cellToWorld(cx,cy);
+    if(terrainAtWorldPoint(point.x,point.y)===LAND)return true;
+  }
+  return false;
+}
+function freeWorkerFogCandidate(worker,radius){
+  let choice=null,best=Infinity;
+  for(const cell of fog){
+    if(cell.water)continue;   // walkers never wade out to mine over water
+    const d=distance(worker.x,worker.y,cell.x,cell.y);
+    if(d>radius||d>=best||fogIsClaimed(cell)||!fogCellIsFrontier(cell))continue;
+    choice=cell;best=d;
+  }
+  return choice;
+}
 /** One tier of the search, strict priority: construction, then hauling, then gathering. */
 function assignFreeWorkerWithin(worker,radius){
   const site=freeWorkerBuildCandidate(worker,radius);
@@ -1670,6 +1939,10 @@ function assignFreeWorkerWithin(worker,radius){
   }
   const gather=freeWorkerGatherCandidate(worker,radius);
   if(gather){worker.job="harvest";worker.jobTarget=gather;worker.autonomous=true;worker.postX=worker.x;worker.postY=worker.y;return true;}
+  // Fog is deliberately NOT autonomous work: the scheduler never mints clearfog, so the frontier
+  // only moves when the player pushes it. The clearfog job, its claim machinery and
+  // freeWorkerFogCandidate() stay live for the planned explicit-assignment path (drop a worker on
+  // the frontier), which will decide its own trigger.
   return false;
 }
 // ── the garrison muster ─────────────────────────────────────────────────────
@@ -1915,7 +2188,7 @@ function damageFriendlyBrute(brute,damage){
 function updateFriendlyBrute(brute,dt){
   brute.attackCooldown-=dt;brute.wob+=dt*5;brute.combatTarget=null;
   let target=null,best=FRIENDLY_BRUTE.guardRadius;
-  for(const enemy of state.enemies){const d=distance(brute.x,brute.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}}
+  for(const enemy of state.enemies){if(fogAtPoint(enemy.x,enemy.y))continue;const d=distance(brute.x,brute.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}}
   if(!target){const d=distance(brute.x,brute.y,brute.homeX,brute.homeY);if(d>60){const a=Math.atan2(brute.homeY-brute.y,brute.homeX-brute.x);brute.x+=Math.cos(a)*FRIENDLY_BRUTE.speed*dt;brute.y+=Math.sin(a)*FRIENDLY_BRUTE.speed*dt;}return;}
   brute.combatTarget=target;
   if(best>FRIENDLY_BRUTE.range){const a=Math.atan2(target.y-brute.y,target.x-brute.x);brute.x+=Math.cos(a)*FRIENDLY_BRUTE.speed*dt;brute.y+=Math.sin(a)*FRIENDLY_BRUTE.speed*dt;return;}
@@ -1999,6 +2272,7 @@ function updateKing(dt){
   if(king.cooldown>0)return;
   let target=null,best=KING.range;
   for(const enemy of state.enemies){
+    if(fogAtPoint(enemy.x,enemy.y))continue;   // the king cannot see into the fog either
     const d=distance(king.x,king.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}
   }
   if(!target)return;
@@ -2008,12 +2282,18 @@ function updateKing(dt){
 function updateHazard(building,dt){
   const hazard=building.hazard;hazard.cooldown-=dt;hazard.flash=Math.max(0,hazard.flash-dt);
   if(hazard.cooldown>0)return;
+  if(building.type==="tar"){
+    const def=BUILDING_TYPES.tar,targets=state.enemies.filter(enemy=>distance(building.x,building.y,enemy.x,enemy.y)<=def.effectRadius);
+    if(!targets.length)return;
+    hazard.cooldown=def.cooldown;hazard.flash=.12;
+    for(const enemy of targets)applySlow(enemy,def.slowDuration,def.slowMultiplier);
+    return;
+  }
   const enemy=state.enemies.find(item=>distance(building.x,building.y,item.x,item.y)<20);
   if(!enemy)return;
-  if(building.type==="tar"){
-    const def=BUILDING_TYPES.tar;hazard.cooldown=def.cooldown;hazard.flash=.12;applySlow(enemy,def.slowDuration,def.slowMultiplier);
-  }else if(building.type==="landmine"){
-    for(const target of [...state.enemies]){if(distance(building.x,building.y,target.x,target.y)>BUILDING_TYPES.landmine.effectRadius)continue;damageEnemy(target,BUILDING_TYPES.landmine.damage,"#e09b43",7);}
+  if(building.type==="landmine"){
+    const def=BUILDING_TYPES.landmine;
+    applyAreaDamage({centers:[building],radius:def.effectRadius,damage:def.damage,targetType:def.damageTargetType,color:"#e09a3f"});
     for(let i=0;i<28;i++)particles.push({x:building.x,y:building.y,vx:rand(-140,140),vy:rand(-160,20),life:rand(.3,.7),col:i%2?"#d9893d":"#6e5540"});
     building.remove=true;sound(75,.25);
   }else{
@@ -2029,32 +2309,19 @@ function walkingStompContacts(enemy,def,fromWob,fromX,fromY){
   const fromPhase=fromWob*.12,toPhase=enemy.wob*.12,firstContact=Math.floor(fromPhase-.5)+1.5;
   for(let contact=firstContact;contact<=toPhase;contact++){
     const progress=(contact-fromPhase)/(toPhase-fromPhase),x=fromX+(enemy.x-fromX)*progress,y=fromY+(enemy.y-fromY)*progress;
-    let workerDied=false;
-    for(const worker of [...state.workers])if(distance(x,y,worker.x,worker.y)<=def.stompRadius){worker.retaliationTarget=enemy;addDamageNumber(worker,def.stompDamage,{tone:"received"});worker.hp=Math.max(0,worker.hp-def.stompDamage);if(worker.hp<=0)workerDied=killWorker(worker)||workerDied;}
-    for(const brute of [...friendlyBrutes])if(distance(x,y,brute.x,brute.y)<=def.stompRadius)damageFriendlyBrute(brute,def.stompDamage);
-    for(const unit of [...controlledEnemies])if(distance(x,y,unit.x,unit.y)<=def.stompRadius)damageControlledEnemy(unit,def.stompDamage);
-    for(const building of [...buildings])if(building.complete&&building.tower&&building.tower.hp>0&&distance(x,y,building.x,building.y)<=def.stompRadius+26)damageTower(building,def.stompDamage);
-    if(distance(x,y,BASE.x,BASE.y)<=def.stompRadius){if(!DBG.invulnBase){addDamageNumber(BASE,def.stompDamage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-def.stompDamage);}state.basePulse=1;}
+    const result=applyAreaDamage({centers:[{x,y}],radius:def.stompRadius,damage:def.stompDamage,targetType:def.stompDamageTargetType,color:"#76558f",source:enemy});
     burst(x,y,"#76558f",18);sound(58,.16);
-    if(workerDied)toast("worker died — replacement in "+WORKER_SPAWN_TIME+"s");
-    if(state.baseHp<=0){endGame();return;}
+    if(result.workerDied)toast("worker died — replacement in "+WORKER_SPAWN_TIME+"s");
+    if(state.gameOver)return;
   }
 }
-/** Bomber detonation: removal first (killEnemy owns wave accounting and the dust roll), then one
- * radial sweep over every player-side target class. Damage sites match the ordinary enemy swing —
- * towers keep their 26px footprint grace and the invulnerable-base debug check stays at the base. */
+/** Bomber detonation: removal first (killEnemy owns wave accounting and the dust roll), then the
+ * authored target policy runs through the same radial dispatcher as every other area source. */
 function detonateBomber(enemy,def){
-  const {x,y}=enemy,radius=def.blastRadius;
-  killEnemy(enemy,false);
-  let workerDied=false;
-  for(const worker of [...state.workers])if(distance(x,y,worker.x,worker.y)<=radius){addDamageNumber(worker,def.damage,{tone:"received"});worker.hp=Math.max(0,worker.hp-def.damage);if(worker.hp<=0)workerDied=killWorker(worker)||workerDied;}
-  for(const brute of [...friendlyBrutes])if(distance(x,y,brute.x,brute.y)<=radius)damageFriendlyBrute(brute,def.damage);
-  for(const unit of [...controlledEnemies])if(distance(x,y,unit.x,unit.y)<=radius)damageControlledEnemy(unit,def.damage);
-  for(const building of [...buildings])if(building.complete&&building.tower&&building.tower.hp>0&&distance(x,y,building.x,building.y)<=radius+26)damageTower(building,def.damage);
-  if(distance(x,y,BASE.x,BASE.y)<=radius){if(!DBG.invulnBase){addDamageNumber(BASE,def.damage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-def.damage);}state.basePulse=1;}
+  const {x,y}=enemy;killEnemy(enemy,false);
+  const result=applyAreaDamage({centers:[{x,y}],radius:def.blastRadius,damage:def.damage,targetType:def.damageTargetType,color:"#e0913f",source:enemy});
   for(let i=0;i<24;i++)particles.push({x,y,vx:rand(-150,150),vy:rand(-170,20),life:rand(.3,.7),col:i%2?"#e0913f":"#6e5540"});
-  toast(workerDied?"worker died — replacement in "+WORKER_SPAWN_TIME+"s":def.name+" exploded");sound(75,.28);
-  if(state.baseHp<=0)endGame();
+  toast(result.workerDied?"worker died — replacement in "+WORKER_SPAWN_TIME+"s":def.name+" exploded");sound(75,.28);
 }
 function addDamageNumber(target,amount,{critical=false,tone="dealt"}={}){
   if(!(amount>0)||!Number.isFinite(amount))return;
@@ -2078,11 +2345,45 @@ function damageCombatTarget(target,damage,color,count=5,source=null,hit={}){
   if(kind==="enemy")return damageEnemy(target,damage,color,count,source,hit);
   invariant(false,"unhandled combat kind "+kind);
 }
+function damageTargetFlags(type){
+  switch(type){
+    case DAMAGE_TARGET_TYPE.ENEMIES_ONLY:return {enemies:true,resources:false,player:false};
+    case DAMAGE_TARGET_TYPE.RESOURCES_ONLY:return {enemies:false,resources:true,player:false};
+    case DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES:return {enemies:true,resources:true,player:false};
+    case DAMAGE_TARGET_TYPE.PLAYER_RESOURCES:return {enemies:false,resources:true,player:true};
+    case DAMAGE_TARGET_TYPE.ALL:return {enemies:true,resources:true,player:true};
+    default:invariant(false,"unknown damage target type "+type);
+  }
+}
+function insideAnyDamageArea(target,centers,radius){return centers.some(center=>distance(center.x,center.y,target.x,target.y)<=radius);}
+function damageResourceAmount(target,kind,amount){
+  for(let hit=0;hit<amount&&resourceIsActive(target,kind);hit++)damageResourceTarget(target,kind,false,true);
+}
+/** Reusable radial damage boundary. Target policy is one closed DAMAGE_TARGET_TYPE; each owned
+ * entity is hit at most once even when several source circles overlap. Resources are live mineable
+ * nodes (wood, stone, diamond), while player means workers, allied units, towers, and the base. */
+function applyAreaDamage({centers,radius,damage,targetType,color="#d25b49",source=null}){
+  invariant(Array.isArray(centers)&&centers.length>0&&centers.every(center=>Number.isFinite(center.x)&&Number.isFinite(center.y)),"area damage has invalid centers");
+  invariant(Number.isFinite(radius)&&radius>=0&&Number.isInteger(damage)&&damage>0,"area damage has invalid magnitude");
+  const flags=damageTargetFlags(targetType),result={hits:0,workerDied:false};
+  if(flags.enemies)eachTowerCombatTarget(target=>{if(insideAnyDamageArea(target,centers,radius)){result.hits++;damageCombatTarget(target,damage,color,4,source);}});
+  if(flags.resources)for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])for(const node of [...nodes])
+    if(resourceIsActive(node,kind)&&insideAnyDamageArea(node,centers,radius)){result.hits++;damageResourceAmount(node,kind,damage);}
+  if(!flags.player||state.runMode!=="normal")return result;
+  for(const worker of [...state.workers])if(insideAnyDamageArea(worker,centers,radius)){result.hits++;if(source?.combatKind==="enemy"&&state.enemies.includes(source))worker.retaliationTarget=source;addDamageNumber(worker,damage,{tone:"received"});worker.hp=Math.max(0,worker.hp-damage);if(worker.hp<=0)result.workerDied=killWorker(worker)||result.workerDied;}
+  for(const brute of [...friendlyBrutes])if(insideAnyDamageArea(brute,centers,radius)){result.hits++;damageFriendlyBrute(brute,damage);}
+  for(const unit of [...controlledEnemies])if(insideAnyDamageArea(unit,centers,radius)){result.hits++;damageControlledEnemy(unit,damage);}
+  for(const building of [...buildings])if(building.complete&&building.tower?.hp>0&&insideAnyDamageArea(building,centers,radius)){result.hits++;damageTower(building,damage);}
+  if(insideAnyDamageArea(BASE,centers,radius)){result.hits++;if(!DBG.invulnBase){addDamageNumber(BASE,damage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-damage);}state.basePulse=1;if(state.baseHp<=0)endGame();}
+  return result;
+}
 function visitStableTargets(targets,visit){
   for(let i=0;i<targets.length;){const target=targets[i];visit(target);if(targets[i]===target)i++;}
 }
 function eachTowerCombatTarget(visit){
-  if(state.runMode==="normal"){visitStableTargets(state.enemies,visit);return;}
+  // An enemy still inside standing fog is hidden and therefore not a combat subject: towers,
+  // meteors and orbs all read this one funnel, so "invisible" and "untargetable" cannot drift.
+  if(state.runMode==="normal"){visitStableTargets(state.enemies,enemy=>{if(!fogAtPoint(enemy.x,enemy.y))visit(enemy);});return;}
   if(state.runMode==="showcase"){visitStableTargets(damageDummies,dummy=>{if(dummy.defeatedTimer<=0)visit(dummy);});return;}
   invariant(false,"invalid run mode "+state.runMode);
 }
@@ -2108,11 +2409,11 @@ function lineIntersectsEnemy(x1,y1,x2,y2,enemy,width){
   return distance(enemy.x,enemy.y,closestX,closestY)<=width/2+enemyRadius;
 }
 function fireTowerAttack(building,variant,target){
-  const tower=building.tower,color=variant.impactColor||variant.accent,damage=towerDamage(variant);tower.targetX=target.x;tower.targetY=target.y;tower.flash=.2;
+  const tower=building.tower,color=variant.impactColor||variant.accent,damage=towerDamage(building,variant);tower.targetX=target.x;tower.targetY=target.y;tower.flash=.2;
   if(variant.attackMode==="splash"){
-    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;eachTowerCombatTarget(enemy=>{if(distance(impactX,impactY,enemy.x,enemy.y)<=variant.splashRadius)damageCombatTarget(enemy,damage,color,8,building);});burst(impactX,impactY,color,18);
+    const impactX=target.x,impactY=target.y;tower.impactX=impactX;tower.impactY=impactY;applyAreaDamage({centers:[{x:impactX,y:impactY}],radius:variant.splashRadius,damage,targetType:variant.damageTargetType,color,source:building});burst(impactX,impactY,color,18);
   }else if(variant.attackMode==="line"){
-    const range=towerAttackRadius(variant),angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*range,endY=building.y+Math.sin(angle)*range;tower.targetX=endX;tower.targetY=endY;
+    const range=towerAttackRadius(building,variant),angle=Math.atan2(target.y-building.y,target.x-building.x),endX=building.x+Math.cos(angle)*range,endY=building.y+Math.sin(angle)*range;tower.targetX=endX;tower.targetY=endY;
     eachTowerCombatTarget(enemy=>{if(lineIntersectsEnemy(building.x,building.y,endX,endY,enemy,variant.beamWidth))damageCombatTarget(enemy,damage,color,7,building);});
   }else if(variant.attackMode==="chain"){
     // Full tower damage on every strike; jumps ignore the tower's own range and only obey
@@ -2135,10 +2436,10 @@ function updateTower(building,dt){
   const tower=building.tower,variant=towerVariant(building);tower.cooldown=Math.max(0,tower.cooldown-dt);tower.flash=Math.max(0,tower.flash-dt);tower.hitFlash=Math.max(0,(tower.hitFlash||0)-dt);
   if(variant.manual||tower.cooldown>0)return;
   if(variant.attackMode==="periodic area"){
-    const radius=towerAttackRadius(variant);let attacked=false;eachTowerCombatTarget(enemy=>{if(distance(building.x,building.y,enemy.x,enemy.y)>radius)return;if(!attacked){tower.cooldown=towerCooldown(variant);tower.flash=.4;attacked=true;}damageCombatTarget(enemy,towerDamage(variant),variant.accent,5,building);});
-    if(attacked)sound(variant.sound,.22);return;
+    const result=applyAreaDamage({centers:[building],radius:towerAttackRadius(building,variant),damage:towerDamage(building,variant),targetType:variant.damageTargetType,color:variant.accent,source:building});
+    if(result.hits){tower.cooldown=towerCooldown(variant);tower.flash=.4;sound(variant.sound,.22);}return;
   }
-  const target=nearestTowerTarget(building,towerAttackRadius(variant));if(!target)return;tower.cooldown=towerCooldown(variant);fireTowerAttack(building,variant,target);
+  const target=nearestTowerTarget(building,towerAttackRadius(building,variant));if(!target)return;tower.cooldown=towerCooldown(variant);fireTowerAttack(building,variant,target);
 }
 
 function updateGuard(worker,dt){
@@ -2215,6 +2516,19 @@ function updateGatherer(worker,dt){
     if(!resourceIsActive(node,kind)){if(worker.job==="harvest")worker.jobTarget={node:null,kind};else worker.taskTarget=null;}
   }
 }
+/** Autonomous fog mining follows the harvest contract exactly: walk to the block, land ONE strike,
+ * resolve to free. A block cleared or claimed away mid-walk resolves to free without striking. */
+function updateFogMiner(worker,dt){
+  const cell=worker.jobTarget;
+  // Abandon a cell that was cleared, or claimed away while this worker was interrupted (a combat
+  // detour releases the claim through clearWorkerTask); otherwise re-assert the claim and resume.
+  if(!cell||fogByCell.get(fogCellKey(cell.cx,cell.cy))!==cell||(fogIsClaimed(cell)&&cell.claimedBy!==worker)){releaseWorkerToFree(worker);return;}
+  cell.claimedBy=worker;
+  if(moveWorker(worker,cell.x,cell.y,dt,24)&&worker.hitCooldown<=0){
+    worker.hitCooldown=WORKER_HIT_COOLDOWN;hitFog(cell,true);
+    releaseWorkerToFree(worker);
+  }
+}
 function updateWorker(worker,dt){
   // Reconcile the fortified kit against the predicate before anything reads health this frame: a
   // station that was razed, recalled or completed out from under the worker settles here, so no
@@ -2252,6 +2566,7 @@ function updateWorker(worker,dt){
   else if(worker.job==="guard")updateGuard(worker,dt);
   else if(worker.job==="haul")updateHauler(worker,dt);
   else if(worker.job==="harvest"||worker.job==="staff")updateGatherer(worker,dt);
+  else if(worker.job==="clearfog")updateFogMiner(worker,dt);
   // A free worker with no assignment is INERT at its position: it never runs guard AI, and only the
   // melee self-defense above ever moves it into combat.
   else if(worker.job==="free"){}
@@ -2364,6 +2679,9 @@ function updateResourceNodes(dt){
   for(const tree of trees)tree.shake=Math.max(0,tree.shake-dt*7);
   for(const rock of rocks)rock.shake=Math.max(0,rock.shake-dt*7);
   for(const diamond of diamonds)diamond.shake=Math.max(0,diamond.shake-dt*7);
+  for(const cell of fog)if(cell.shake>0)cell.shake=Math.max(0,cell.shake-dt*7);
+  updateFogPops();
+  for(let i=fogPops.length-1;i>=0;i--){const pop=fogPops[i];pop.age+=dt;if(pop.age>=FOG.popAnimTime)fogPops.splice(i,1);}
   for(const chest of chests)chest.shake=Math.max(0,chest.shake-dt*7);
   const held=heldChest();if(held)held.shake=Math.max(0,held.shake-dt*7);
 }
@@ -2389,8 +2707,10 @@ function updateTemporaryBuilding(building,dt,active=true){
   if(building.orbs){
     const orbs=building.orbs;orbs.remaining-=dt;orbs.angle+=dt*2.4;orbs.cooldown-=dt;
     if(active&&orbs.cooldown<=0){
-      orbs.cooldown=DAMAGE_ORBS.cooldown;const centers=Array.from({length:orbs.count},(_,i)=>{const a=orbs.angle+i*Math.PI*2/orbs.count;return {x:building.x+Math.cos(a)*DAMAGE_ORBS.orbitRadius,y:building.y+Math.sin(a)*DAMAGE_ORBS.orbitRadius};});
-      for(const enemy of [...state.enemies])if(centers.some(center=>distance(center.x,center.y,enemy.x,enemy.y)<=DAMAGE_ORBS.aoeRadius))damageEnemy(enemy,DAMAGE_ORBS.damage,"#8fd9ee",4);
+      orbs.cooldown=DAMAGE_ORBS.cooldown;
+      const held=heldBuilding()===building&&state.mouse.inside,x=held?state.mouse.x:building.x,y=held?state.mouse.y:building.y;
+      const centers=Array.from({length:orbs.count},(_,i)=>{const a=orbs.angle+i*Math.PI*2/orbs.count;return {x:x+Math.cos(a)*DAMAGE_ORBS.orbitRadius,y:y+Math.sin(a)*DAMAGE_ORBS.orbitRadius};});
+      applyAreaDamage({centers,radius:DAMAGE_ORBS.aoeRadius,damage:DAMAGE_ORBS.damage,targetType:DAMAGE_ORBS.damageTargetType,color:"#8fd9ee"});
     }
     return orbs.remaining<=0;
   }
@@ -2434,7 +2754,9 @@ function updateBuildings(dt,includeHazards){
   if(includeHazards)for(let i=buildings.length-1;i>=0;i--)if(buildings[i].remove){const expired=buildings.splice(i,1)[0];burst(expired.x,expired.y,"#77638f",10);}
   const held=heldBuilding();
   if(held?.tower)updateTower(held,dt);
-  if(includeHazards&&held&&updateTemporaryBuilding(held,dt,false)){state.heldObject=null;burst(held.x,held.y,"#77638f",10);toast(BUILDING_TYPES[held.type].name+" expired");}
+  // Damage orbs remain active around the cursor while carried; other temporary deployables only
+  // age in hand and resume their active effect after placement.
+  if(includeHazards&&held&&updateTemporaryBuilding(held,dt,held.type==="damageOrbs")){state.heldObject=null;burst(held.x,held.y,"#77638f",10);toast(BUILDING_TYPES[held.type].name+" expired");}
 }
 function updateParticles(dt){
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
@@ -2557,12 +2879,13 @@ function continueAfterVictory(){
 
 function burst(x,y,col,count){for(let i=0;i<count;i++)particles.push({x,y,vx:rand(-55,55),vy:rand(-90,-25),life:rand(.3,.7),col});}
 
-function towerRadius(building){return towerAttackRadius(towerVariant(building));}
+function towerRadius(building){return towerAttackRadius(building,towerVariant(building));}
 
 function chopTarget(){
   const m = state.mouse;
   if(!m.inside) return null;
-  return resolvePrimaryAction(m.x,m.y);
+  // Same sticky-first order as updatePrimaryClick, so the badge follows the locked target.
+  return stickyChopAction() || resolvePrimaryAction(m.x,m.y);
 }
 
 function badgeAction(){
@@ -2956,7 +3279,7 @@ function skillTreeEdges(){
 
 export {
   // live collections — iterate, never mutate
-  state, trees, rocks, diamonds, grass, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers, lightningArcs,
+  state, trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers, lightningArcs,
   // debug flags (the gameplay pane's own bindings are the only writers)
   DBG,
   // the step
@@ -2969,7 +3292,7 @@ export {
   // placement + immutable, coordinate-explicit terrain queries
   canPlace, indicatorRadius, towerRadius, towerVariant,
   terrainAtRasterCell,terrainAtWorldPoint,terrainWorldRectEntirelyOnLand,terrainMetadata,terrainRaisedAtCell,
-  vegetationMetadata,
+  vegetationMetadata, fogMetadata, fogAtPoint, footprintFogFree, clearAllFog,
   // costs and progress
   buildingCost, costText, upgradeList, towerUpgradeList, nextHouseCost,
   // world lookups the render layer projects
