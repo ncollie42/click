@@ -135,7 +135,7 @@ export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER
 
 // ── buildings ───────────────────────────────────────────────────────────────
 // Every entry carries an explicit `footprint` (odd cells, anchor-centered). Resource sources, the
-// tower chassis, and the capture yard are persistent 3x3s; ordinary buildings/deployables are 1x1
+// tower chassis, capture yard, and tar pit are persistent 3x3s; ordinary buildings/deployables are 1x1
 // (the summoning circle and meteor target are temporary/instant 3x3s). Tower VARIANTS inherit the chassis footprint -
 // upgrading never resizes an already-placed tower, so variants deliberately declare no footprint.
 // `buildSlots` is construction staffing capacity; material totals >=12 use three builders. Every
@@ -155,7 +155,7 @@ export const BUILDING_TYPES = {
   blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:135,damage:3,innerDamage:5,instant:true,footprint:FOOTPRINT_1x1},
   spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},buildSlots:0,damage:2,cooldown:.55,instant:true,stack:true,footprint:FOOTPRINT_1x1},
   landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:65,damage:8,instant:true,stack:true,footprint:FOOTPRINT_1x1},
-  tar:{name:"tar",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:22,damage:0,cooldown:.25,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_1x1},
+  tar:{name:"tar pit",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:48,damage:0,cooldown:.25,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_3x3},
   damageOrbs:{name:"damage orbs",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:DAMAGE_ORBS.orbitRadius+DAMAGE_ORBS.aoeRadius,instant:true,movable:true,footprint:FOOTPRINT_1x1},
   summoningCircle:{name:"summoning circle",resource:null,cost:{wood:0,stone:0},buildSlots:0,instant:true,movable:true,footprint:FOOTPRINT_3x3},
   meteorTarget:{name:"meteor impact",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:METEOR.radius,instant:true,targetOnly:true,footprint:FOOTPRINT_3x3}
