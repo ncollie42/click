@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- Red Giraffe reference test scene — a standalone host for the `pixel` render pipeline.
+     Purpose: reproduce one frame of Red Giraffe's "Volumetric Lighting in Pixel Art?!" through
+     OUR pipeline so the look can be judged against a real target instead of adjectives.
+     Reference frame + measured proof shots: tools/shots/redgiraffe-scene-r1/.
+
+     Serve from REPO ROOT (`node tools/serve.mjs`, or the ephemeral server in
+     tools/snap-scene.mjs) and open /tools/test-scene.html.
+     R opens the render tuning panel, F9 toggles current/pixel, B blink-compares.
+
+     URL params (tools/test-scene/boot.js owns the parsing):
+       ?t=12      freeze performance.now() at 12s — deterministic clouds/rays for screenshots
+       ?seed=3    terrain + dirt noise seed
+       ?<pixelTune key>=<value>   overrides any pixelTune knob, e.g. &clouds=0&rays=0
+     window.__ready === true once the pipeline is active and a few frames have landed;
+     window.__testScene exposes {scene, camera, sun, preset} for console poking. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>test scene — red giraffe reference</title>
+<!-- Inline favicon: without it the page's only console noise is a 404, which would make the
+     "zero console problems" check in tools/snap-scene.mjs useless. -->
+<link rel="icon" href="data:,">
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#0c0f0a;overflow:hidden}
+  #c{display:block;width:100vw;height:100vh}
+  #hint{position:fixed;left:8px;bottom:6px;z-index:20;color:#cfd8e3a0;font:11px monospace;
+        pointer-events:none;text-shadow:0 1px 2px #000}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">R = render panel · F9 = pipeline · B = blink</div>
+<script type="module" src="test-scene/boot.js"></script>
+</body>
+</html>
