@@ -88,8 +88,17 @@
     <legend>preview</legend>
     <button id="uResetCamera" type="button">top-down</button>
     <button id="uGameView" type="button" title="match the in-game camera angle">game view</button>
-    <label title="depth foam is the picked water treatment; flat is what the game ships today">water <select id="uWaterMode">
+    <span id="uSolveStatus" class="status"></span>
+  </fieldset>
+  <!-- Water audition tab: the mode select plus the sliders each candidate answers to. data-water-mode
+       on the fieldset (set by editor.js) decides which slider groups are visible, the same way
+       data-authoring-panel gates the brush controls. Element ids are load-bearing (editor.js wiring
+       and tools/map-editor-smoke.mjs): controls may move between fieldsets, never be renamed. -->
+  <fieldset id="waterControls" data-water-mode="4">
+    <legend>water</legend>
+    <label title="depth foam is the picked water treatment; flat is what the game ships today; voyage is the newest candidate">mode <select id="uWaterMode">
       <option value="4" selected>4 depth foam</option>
+      <option value="5">5 voyage</option>
       <option value="0">0 flat</option>
     </select></label>
     <div id="waterTuning">
@@ -98,7 +107,21 @@
       <label title="depth falloff — lower carries the shallow gradient deeper into the water">fade <input id="uWaterFade" type="range" min="0.05" max="0.8" step="0.01" value="0.45"></label>
       <label title="how far shore walls and the lake floor drop below ground — sets how far the gradient can run (game walls use 0.9)">shore depth <input id="uWaterShoreDepth" type="range" min="0.9" max="8" step="0.1" value="5"></label>
     </div>
-    <span id="uSolveStatus" class="status"></span>
+    <div id="waterVoyageTuning">
+      <label title="how far the shallow→deep tint takes over from the refracted scene behind the water">tint <input id="uWaterTint" type="range" min="0" max="1" step="0.02" value="0.8"></label>
+      <label title="refraction offset from the procedural flow field, in fractions of the screen">distort <input id="uWaterDistort" type="range" min="0" max="0.05" step="0.001" value="0.015"></label>
+      <label title="how fast the flow field scrolls — the devlog keeps this slow">flow speed <input id="uWaterDistortSpeed" type="range" min="0" max="1.5" step="0.05" value="0.35"></label>
+      <label title="phase rate of the two multiplied perpendicular sine waves — the ebb-flow swell (0 freezes it)">wave speed <input id="uWaterWaveSpeed" type="range" min="0" max="2" step="0.05" value="0.6"></label>
+      <label title="scattered surface whitecaps — sparse on purpose, the devlog warns dense foam muddies pixel art">whitecaps <input id="uWaterCaps" type="range" min="0" max="1" step="0.05" value="0.15"></label>
+      <label title="planar reflection strength, weighted by fresnel (grazing views mirror most)">reflect <input id="uWaterReflect" type="range" min="0" max="1" step="0.02" value="0.8"></label>
+      <label title="second mirrored camera renders the scene again every frame — the devlog shipped this behind a toggle for exactly that cost">reflections <input id="uWaterReflectOn" type="checkbox" checked></label>
+    </div>
+  </fieldset>
+  <fieldset id="viewControls">
+    <legend>view</legend>
+    <button id="uViewPaint" type="button" title="full-width paint map">map</button>
+    <button id="uViewPreview" type="button" title="full-width 3D preview">3D</button>
+    <button id="uViewSplit" type="button" title="side by side">split</button>
   </fieldset>
 </header>
 <main id="panes">

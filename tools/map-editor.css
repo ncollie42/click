@@ -16,6 +16,12 @@ button:disabled{opacity:.45;cursor:default}
 .fileButton{background:#3a4132;border:1px solid #5a6350;border-radius:4px;padding:3px 10px;cursor:pointer}
 .fileButton input[type=file]{display:none}
 #panes{display:flex;flex:1;min-height:0}
+/* View tabs: one pane can take the whole width; the other stays alive but collapsed, so canvas
+   state, undo history and the 3D scene survive switching. */
+#panes.view-paint #previewPane{display:none}
+#panes.view-paint #paintPane{border-right:0}
+#panes.view-preview #paintPane{display:none}
+#viewControls button.on{background:#5d7346;color:#fff}
 #paintPane,#previewPane{flex:1;min-width:0;position:relative;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:10px}
 #paintPane{background:#181b14;border-right:1px solid #4a5140}
 #previewPane{background:#11130e;overflow:hidden;padding:0}
@@ -74,8 +80,14 @@ body[data-region-selected="false"] #scatterSelectionControls{display:none}
 
 @media(max-width:1050px){body{grid-template-columns:290px minmax(0,1fr)}}
 
-  #waterTuning{display:grid;gap:3px;width:100%}                               
-  #waterTuning label{display:flex;align-items:center;justify-content:space-   
-  between;gap:8px}                                                            
-  #waterTuning input[type=range]{width:120px}                                 
+/* Water tab: the mode select plus one slider group per candidate. #waterControls[data-water-mode]
+   (written by editor.js) reveals only the groups the active mode actually reads — flat water has no
+   knobs at all, voyage adds tint/distortion/reflection on top of the shared height/foam/fade. */
+#waterControls{flex-direction:column;gap:6px}
+#waterTuning,#waterVoyageTuning{display:grid;gap:3px;width:100%}
+#waterTuning label,#waterVoyageTuning label{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#waterTuning input[type=range],#waterVoyageTuning input[type=range]{width:120px}
+#waterVoyageTuning{display:none;border-top:1px solid #46503d;padding-top:5px}
+#waterControls[data-water-mode="5"] #waterVoyageTuning{display:grid}
+#waterControls[data-water-mode="0"] #waterTuning{display:none}
 

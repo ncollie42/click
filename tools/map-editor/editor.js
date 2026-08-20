@@ -609,17 +609,35 @@ query("uUndo").onclick = undo;
 query("uRedo").onclick = redo;
 query("uResetCamera").onclick = () => preview.resetCamera();
 query("uGameView").onclick = () => preview.gameView();
-query("uWaterMode").onchange = event => preview.setWaterMode(Number(event.target.value));
-for(const [sliderId, param] of Object.entries({uWaterAmp: "amp", uWaterFoam: "foam", uWaterFade: "fade"}))
-  query(sliderId).oninput = event => preview.setWaterParams({[param]: Number(event.target.value)});
+// ── water tab ────────────────────────────────────────────────────────────────
+// One fieldset owns the audition: the mode select picks the treatment and stamps data-water-mode so
+// the CSS shows only the sliders that mode reads (mode 5 "voyage" adds tint/distortion/wave
+// speed/whitecaps/reflection on top of the shared height/foam/fade). Every knob pushes the whole slider set through setParams, so
+// the DOM stays the single source of truth; the reflection toggle rides along as 0/1 because
+// setParams validates numbers only (see water-modes.js).
+const WATER_SLIDERS = {
+  uWaterAmp: "amp", uWaterFoam: "foam", uWaterFade: "fade",
+  uWaterTint: "tint", uWaterDistort: "distort", uWaterDistortSpeed: "distortSpeed",
+  uWaterWaveSpeed: "waveSpeed", uWaterCaps: "caps", uWaterReflect: "reflect",
+};
+function applyWaterMode(next){
+  query("waterControls").dataset.waterMode = String(next);
+  preview.setWaterMode(next);
+}
+function waterParamsFromUI(){
+  const partial = {reflectOn: query("uWaterReflectOn").checked ? 1 : 0};
+  for(const [sliderId, param] of Object.entries(WATER_SLIDERS)) partial[param] = Number(query(sliderId).value);
+  return partial;
+}
+const pushWaterParams = () => preview.setWaterParams(waterParamsFromUI());
+query("uWaterMode").onchange = event => applyWaterMode(Number(event.target.value));
+for(const sliderId of Object.keys(WATER_SLIDERS)) query(sliderId).oninput = pushWaterParams;
+query("uWaterReflectOn").onchange = pushWaterParams;   // off = the mirrored camera pass is skipped entirely
 query("uWaterShoreDepth").onchange = event => preview.setShoreDepth(Number(event.target.value));  // rebuilds terrain: on release, not per-tick
-// Sliders are the source of truth on boot so UI and preview state always agree.
-preview.setWaterParams({
-  amp: Number(query("uWaterAmp").value),
-  foam: Number(query("uWaterFoam").value),
-  fade: Number(query("uWaterFade").value),
-});
+// Controls are the source of truth on boot so UI and preview state always agree.
+pushWaterParams();
 preview.setShoreDepth(Number(query("uWaterShoreDepth").value));
+applyWaterMode(Number(query("uWaterMode").value));
 
 query("uNew").onclick = () => {
   try{
@@ -680,10 +698,28 @@ window.addEventListener("keydown", event => {
   else if(key === "y" || (key === "z" && event.shiftKey)){ event.preventDefault(); redo(); }
 });
 
+// ── view tabs ────────────────────────────────────────────────────────────────
+// map / 3D / split: one pane can take the whole width. Both panes stay in the DOM (only display
+// toggles) so paint state, history and the 3D scene all survive switching; the render loop below
+// skips the 3D draw while its pane is hidden. Choice persists across reloads.
+const panesBox = document.getElementById("panes"), VIEW_KEY = "mapEditor.view";
+const VIEW_BUTTONS = {paint: query("uViewPaint"), preview: query("uViewPreview"), split: query("uViewSplit")};
+function setView(name){
+  if(!VIEW_BUTTONS[name]) name = "split";
+  panesBox.classList.toggle("view-paint", name === "paint");
+  panesBox.classList.toggle("view-preview", name === "preview");
+  for(const [key, button] of Object.entries(VIEW_BUTTONS)) button.classList.toggle("on", key === name);
+  localStorage.setItem(VIEW_KEY, name);
+}
+for(const [key, button] of Object.entries(VIEW_BUTTONS)) button.onclick = () => setView(key);
+setView(localStorage.getItem(VIEW_KEY) || "split");
+
 // ── render loop ──────────────────────────────────────────────────────────────
 
 (function frame(){
-  preview.renderOnce();
+  // offsetParent is null while the preview pane is display:none — skip the 3D draw entirely
+  // (including the water pre-pass and any active render pipeline) while the map tab is up.
+  if(query("preview").offsetParent !== null) preview.renderOnce();
   requestAnimationFrame(frame);
 })();
 
@@ -734,7 +770,7 @@ window.__mapEditor = {
   setPreviewView: next => preview.setView(next),
   resetCamera: () => preview.resetCamera(),
   gameView: () => preview.gameView(),
-  setWaterMode: next => { query("uWaterMode").value = String(next); preview.setWaterMode(next); },
+  setWaterMode: next => { query("uWaterMode").value = String(next); applyWaterMode(next); },
   setWaterParams: partial => preview.setWaterParams(partial),
   setShoreDepth: next => { query("uWaterShoreDepth").value = String(next); preview.setShoreDepth(next); },
   // Reduced module sets make real WFC contradictions reachable in tests.

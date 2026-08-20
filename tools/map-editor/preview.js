@@ -12,6 +12,7 @@ import {makeGrassTuftGeometry} from "../../src/render/models.js";
 import {PAL} from "../../src/render/palette.js";
 import {resolveAuthoredMapScatter} from "../../src/game/authored-map.js";
 import {createWaterModes} from "./water-modes.js";
+import {configurePipelines, renderFrame, resizePipeline} from "../../src/render/pipelines/index.js";
 
 // Fixed authored elevations in world units (1 unit = 16 game px, matching models.js).
 export const GROUND_TOP = 0;
@@ -218,6 +219,17 @@ export function createTerrainPreview({canvas}){
       : {status: "contradiction", attempts: solve.attempts, contradictions: solve.contradictions.map(entry => ({...entry}))};
   }
 
+  // Hand this page's renderer to the shared pipeline registry (its own module instance — the game
+  // page has its own). waterPrePass with no size = the old per-frame water.update; with a size, a
+  // low-res pipeline keeps the foam depth-read aligned to its offscreen target.
+  configurePipelines({
+    THREE, renderer, scene,
+    getCamera: () => camera,
+    getSun: () => sun,
+    waterPrePass: (w, h) => water.update(camera, w, h),
+    view,
+  });
+
   const preview = {
     // Re-solve both thresholds and rebuild all derived scene state.
     rebuild(doc){
@@ -293,10 +305,16 @@ export function createTerrainPreview({canvas}){
         renderer.setSize(width, height, false);
         camera.aspect = width / Math.max(1, height);
         camera.updateProjectionMatrix();
+        resizePipeline(width, height);
       }
       applyCamera();
-      water.update(camera);   // animates waves; modes 4/5 run their pre-pass here
-      renderer.render(scene, camera);
+      // Same registry as the game: F9 cycles current/retro/splat/full, R opens the slider panel.
+      // The "current" pipeline reproduces the old direct draw exactly (it calls waterPrePass()
+      // with no size, which is the old water.update(camera) — waves + pre-pass — then renders).
+      // Caveat, deliberate: this renderer tone-maps (ACES); three skips tone mapping into
+      // offscreen targets, so the experimental pipelines render the editor slightly differently
+      // than "current". The game itself has no tone mapping, so only the editor sees the gap.
+      renderFrame();
     },
     dispose(){
       disposeBuilt();
