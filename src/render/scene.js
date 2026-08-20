@@ -548,6 +548,15 @@ function makeLayer(build, update){
 // one hook; the simulation's coordinates stay flat 2D.
 const setXZ = (g,e,y=0)=>g.position.set(gx(e.x), y+terrainLiftAt(e.x,e.y), gz(e.y));
 const shakeOf = e => e.shake ? Math.sin(e.shake*28)*.12 : 0;
+// A struck node also COMPRESSES, not just wobbles: `shake` lands at 1 and decays over ~.14s, so
+// height dips hardest on the impact frame and springs back while the wobble rings out. The matching
+// horizontal bulge keeps the silhouette roughly volume-preserving so it reads as a thump, not a
+// shrink. Presentation only — the simulation's `shake` field is unchanged and unread here otherwise.
+const hitSquashOf = e => 1 - (e.shake||0)*.13;
+const hitBulgeOf  = e => 1 + (e.shake||0)*.06;
+// A felled/depleted node topples toward a stable per-node side, hashed off its cell-aligned
+// coordinates, so a cleared forest falls in a mix of directions and never re-rolls mid-animation.
+const collapseDir = e => (((e.x*7 + e.y*13)|0) & 1) ? 1 : -1;
 
 // Thousands of tufts remain one bounded draw object. Simulation revision is the only invalidation
 // input; camera frames never rebuild matrices, and removed tufts disappear on the next revision.
@@ -621,18 +630,20 @@ function makeScatterLayer(buildTemplate, variantCount){
   return layer;
 }
 const _sm=new THREE.Matrix4(),_sq=new THREE.Quaternion(),_sv=new THREE.Vector3(),_ssc=new THREE.Vector3(),_axisZ=new THREE.Vector3(0,0,1);
-// classify(e) -> [unitIndex, rotZ, wear]; scale is (wear, wear*heightScale, wear) like the old groups.
+// classify(e) -> [unitIndex, rotZ, wear, squash]; scale is (wear, wear*heightScale*squash, wear).
+// `squash` defaults to 1 and scales HEIGHT ONLY, so an impact thump or a collapsing node can flatten
+// toward the ground without its footprint shrinking with it.
 function syncScatter(layer, list, classify){
   if(list.length !== layer.capacity) layer.rebuild(list.length);
   for(const u of layer.units){ u.mesh.count = 0; u.mesh.userData.entities.length = 0; }
   const hs = view.heightScale/100;
   for(const e of list){
-    const [unit, rotZ, wear] = classify(e);
+    const [unit, rotZ, wear, squash = 1] = classify(e);
     const u = layer.units[unit], i = u.mesh.count++;
     u.mesh.userData.entities[i] = e;
     _sq.setFromAxisAngle(_axisZ, rotZ);
     _sv.set(gx(e.x), terrainLiftAt(e.x,e.y), gz(e.y));
-    _ssc.set(wear, wear*hs, wear);
+    _ssc.set(wear, wear*hs*squash, wear);
     _sm.compose(_sv, _sq, _ssc);
     u.mesh.setMatrixAt(i, _sm);
   }
@@ -644,23 +655,56 @@ function syncScatter(layer, list, classify){
 }
 const treeLayer = makeScatterLayer(v => makeTree({variant:v}), PAL.leaf.length);
 const rockLayer = makeScatterLayer(() => makeRock(), 1);
-const syncTrees = list => syncScatter(treeLayer, list, t => t.stump>0
-  ? [treeLayer.variantCount, 0, 1]
-  : [PAL.leaf[t.variant] !== undefined ? t.variant : 0, shakeOf(t), .78 + .22*(t.hp/t.max)]);
+// The felling tween. `collapse` is the sim's presentation countdown (1 at the killing blow, 0 when
+// the fall is done); while it runs the LIVE canopy keeps drawing and swings about its base on Z —
+// the instanced geometry is authored around the ground point, so a Z rotation is a clean topple —
+// then the stump this layer has always drawn takes over. Gameplay finished the node the moment
+// stump went 1: the yield, the toast and the click target all resolved before this ever ran.
+const TREE_FALL_ANGLE = 1.5;                       // radians past vertical: flat on the ground
+const treeVariantOf = t => PAL.leaf[t.variant] !== undefined ? t.variant : 0;
+const syncTrees = list => syncScatter(treeLayer, list, t => {
+  if(t.stump<=0)
+    return [treeVariantOf(t), shakeOf(t), (.78 + .22*(t.hp/t.max))*hitBulgeOf(t), hitSquashOf(t)];
+  if(t.collapse>0){
+    const p = 1-t.collapse;                        // 0 at the felling hit, 1 with the trunk down
+    return [treeVariantOf(t), TREE_FALL_ANGLE*p*p*collapseDir(t), .78, 1];   // p² : slow tip, fast fall
+  }
+  return [treeLayer.variantCount, 0, 1];
+});
 const syncRocks = list => syncScatter(rockLayer, list, r => {
   // A landed meteor rock swells past its resting 2.25x while its sim-owned `pop` decays — the
   // touchdown compression. Ordinary click shakes never write `pop`, so mining doesn't re-pop it.
   const spent = r.depleted>0, meteor = r.meteor ? 2.25*(1 + .3*(r.pop||0)**2) : 1;
-  return spent ? [1, 0, meteor] : [0, shakeOf(r), (.8 + .2*(r.hp/r.max))*meteor];
+  if(spent && r.collapse>0){
+    // The crumble: the live boulder settles into the ground and spreads as it goes, so the rubble
+    // it becomes appears to be what is left of it rather than a swapped-in prop.
+    const p = 1-r.collapse;
+    return [0, shakeOf(r) + .22*p*collapseDir(r), (.8 + .38*p)*meteor, Math.max(.06, 1-p*p)];
+  }
+  return spent ? [1, 0, meteor]
+               : [0, shakeOf(r), (.8 + .2*(r.hp/r.max))*meteor*hitBulgeOf(r), hitSquashOf(r)];
 });
 const syncDiamonds = makeLayer(makeDiamond, (g,n)=>{
   setXZ(g,n);
   const d = g.userData, spent = n.depleted>0;
-  for(const m of d.live) m.visible = !spent;
-  d.spent.visible = spent;
-  g.rotation.z = spent ? 0 : shakeOf(n);
-  if(!spent) d.gem.rotation.y += .02;
-  g.scale.y = view.heightScale/100;
+  // Same felling contract as trees/rocks: an exhausted deposit keeps its live crystals for the
+  // length of the sim's `collapse` countdown, sinking and spinning out, before the spent husk
+  // takes over. The simulation considers it finished from the frame `depleted` went 1.
+  const collapsing = spent && n.collapse>0, p = collapsing ? 1-n.collapse : 0;
+  for(const m of d.live) m.visible = !spent || collapsing;
+  d.spent.visible = spent && !collapsing;
+  g.rotation.z = collapsing ? .55*p*p*collapseDir(n) : spent ? 0 : shakeOf(n);
+  // Spin each crystal about its own base, not the cluster about the node centre — `gem` is now a
+  // GROUP of offset crystals, and rotating it orbits the whole formation (reads as the rock itself
+  // slowly turning). Children first; the fallback keeps the old single-mesh contract working.
+  if(!spent || collapsing){
+    const spin = collapsing ? .10 : .02;
+    if(d.gem.children?.length) for(const crystal of d.gem.children) crystal.rotation.y += spin;
+    else d.gem.rotation.y += spin;
+  }
+  const squash = collapsing ? Math.max(.06, 1-p*p) : spent ? 1 : hitSquashOf(n);
+  const bulge  = collapsing ? 1 + .3*p            : spent ? 1 : hitBulgeOf(n);
+  g.scale.set(bulge, squash*view.heightScale/100, bulge);
 });
 const syncChests = makeLayer(makeChest,(g,chest)=>{
   const held=chest===heldChest()&&state.mouse.inside,t=performance.now()/1000,wear=.9+.1*(chest.hp/chest.max);
@@ -680,9 +724,17 @@ const syncDrops = makeLayer(e=>makeDrop(e.kind), (g,r)=>{
     g.userData.body.visible = true;
     return;
   }
-  setXZ(g, r, 0);
-  g.rotation.set(0, r.spin*.25, 0);      // sim spins at 4 rad/s; that reads far too fast
-  g.scale.setScalar(1);
+  // A settled drop breathes; one inside the live vacuum's reach lifts, spins up and swells. The
+  // ring at the cursor says "this area", this says "THESE ones" — and it is a read of the same
+  // vacuumRadius() collectDrop() sweeps with, so it can never advertise a pickup the sim refuses.
+  // Purely a read: the simulation alone decides which drop is actually taken.
+  const t = performance.now()/1000;
+  const reachable = state.collecting && state.mouse.inside && !r.target
+    && distance(state.mouse.x, state.mouse.y, r.x, r.y) < vacuumRadius();
+  const bob = r.ground ? Math.sin(t*3 + r.spin)*.09 : 0;
+  setXZ(g, r, bob + (reachable ? .6 : 0));
+  g.rotation.set(0, r.spin*.25 + (reachable ? t*3 : 0), 0);   // sim spins at 4 rad/s; too fast raw
+  g.scale.setScalar(reachable ? 1.2 : 1);
   const fading = r.ttl!==null && r.ttl<2 && Math.floor(r.ttl*7)%2===0;
   g.userData.body.visible = !fading;
 });
@@ -1080,7 +1132,6 @@ function syncBuildings(){
 // the thing). Its gulp is driven off the sim's basePulse RISING EDGE with a local clock, because
 // basePulse itself decays in a third of a second — too fast to phase a readable swallow.
 let baseRec = null, lastBasePulse = 0, gulpStart = -9;
-const BASE_FEED_WASH = .7;   // seconds the ground ring drawZones() draws off the same gulp edge runs
 function syncBase(t){
   const awake = state.xp >= XP_TIERS[0];
   if(!baseRec || baseRec.awake!==awake){
@@ -1411,7 +1462,9 @@ function syncParticles(){
     m.position.set(gx(p.x), .45 + Math.max(0,p.life)*1.2, gz(p.y));
     m.material.color.set(p.col);
     m.material.opacity = clamp(p.life*3,0,1);
-    const s = p.resource ? 1.6 : 1;
+    // `size` is the sim's optional per-piece scale (the fx* emitters write it; burst() never does),
+    // so heavy debris reads as chunks and dust as grit without needing a second particle pool.
+    const s = (p.resource ? 1.6 : 1) * (p.size || 1);
     m.scale.setScalar(s);
   }
   for(let i=partUsed;i<partPool.length;i++) partPool[i].visible=false;

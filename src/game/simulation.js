@@ -200,6 +200,15 @@ const state = {
 };
 
 const rand = (a,b) => a + Math.random()*(b-a);
+// ── presentation randomness (juice only) ────────────────────────────────────
+// A SECOND, independent stream, used by the fx* emitters below and by nothing else. Gameplay rolls
+// (spawn points, loot, crits, resource-source cells) all draw from Math.random, and headless runs
+// pin outcomes against a seeded replacement for it — scripts/validate.mjs installs an LCG over
+// Math.random and asserts against the results. One extra rand() inside a dust puff would therefore
+// reshuffle real gameplay, so garnish is never allowed to touch that stream. This one is seeded
+// from a constant, so it is deterministic too: two identical runs still emit identical debris.
+let fxSeed=0x9e3779b9>>>0;
+const fxRand=(a,b)=>a+((fxSeed=Math.imul(fxSeed,1664525)+1013904223>>>0)/0x100000000)*(b-a);
 const distance = (a,b,c,d) => Math.hypot(a-c,b-d);
 const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
 const carriedTotal=()=>RESOURCE_KINDS.reduce((total,kind)=>total+state.carried[kind],0);
@@ -771,6 +780,17 @@ function killEnemy(enemy,announce=true){
   const droppedDust=Math.random()<.25;
   if(droppedDust)spawnResource("dust",enemy.x+rand(-7,7),enemy.y);
   burst(enemy.x,enemy.y,"#4b3b50",12);
+  // JUICE — death reads at the body's scale. The 12-piece burst above is the LIGHT-enemy baseline
+  // and stays exactly as authored (a raider dies as it always did); everything below is additive
+  // and keyed to the authored `size`, so a brute throws real debris and the 5.4x boss comes apart
+  // with a floor-shaking boom. `heft` is clamped so no future giant can flood the particle pool.
+  // Reads a frozen data.js constant to pick counts — no simulation state is written.
+  const heft=clamp(ENEMY_TYPES[enemy.type].size,1,4);
+  if(heft>1){
+    fxDebris(enemy.x,enemy.y,"#4b3b50",Math.round(12*(heft-1)),{spread:58*heft,lift:105*heft,jitter:5*heft,size:.85*heft});
+    fxDustRing(enemy.x,enemy.y,"#6a5570",Math.round(4*heft),{radius:12*heft,speed:64*heft,size:heft});
+    if(heft>2){addScreenShake(clamp(.13*heft,0,.6));sound(150/heft,.34);}
+  }
   if(announce||droppedDust||droppedChest)toast(droppedChest?(droppedDust?"boss defeated — chest and dust dropped":"boss defeated — chest dropped"):(droppedDust?"enemy defeated — dust dropped":"enemy defeated"));
   sound(150,.12);
 }
@@ -1025,7 +1045,10 @@ function dropHeldObject(){
   const building=held.object,anchor=state.mouse.inside?snapToCellCenter(state.mouse.x,state.mouse.y):null;
   if(anchor&&canPlace(anchor.x,anchor.y,building.type,building)&&footprintFogFree(anchor.x,anchor.y,buildingFootprint(building.type))){building.x=anchor.x;building.y=anchor.y;clearGrassInFootprint(building.x,building.y,buildingFootprint(building.type));toast((building.type==="tower"?towerVariant(building).name:BUILDING_TYPES[building.type].name)+" placed");}
   else{building.x=held.originX;building.y=held.originY;toast("invalid ground — "+(building.type==="tower"?"tower":BUILDING_TYPES[building.type].name)+" returned");}
-  buildings.push(building);state.heldObject=null;sound(260,.06);return true;
+  // JUICE — a relocated structure sets down with the same dust/thud vocabulary a fresh site uses.
+  // Runs for the restored-origin case too: the thing landed there either way.
+  fxGroundThump(building.x,building.y,buildingFootprint(building.type),"#8a7358");
+  buildings.push(building);state.heldObject=null;sound(260,.06);sound(104,.13);return true;
 }
 function activateManualTower(building){
   const tower=building.tower,variant=towerVariant(building);if(!variant.manual)return;
@@ -1314,14 +1337,51 @@ function damageResourceTarget(target,kind,critical,automatic=false){
   burst(target.x,target.y-12,kind==="wood"?"#9fb351":kind==="diamond"?"#78d7e5":"#bbb7ae",5);
   if(target.hp<=0&&kind==="wood"){
     target.stump=1;burst(target.x,target.y-10,"#557036",13);if(!automatic)toast("tree felled");
+    // JUICE — the fall. `collapse` is a presentation-only countdown decayed in updateResourceNodes();
+    // scene.js keeps drawing the LIVE trunk and tips it over while it runs, then swaps to the stump
+    // it has always drawn. Gameplay already treats the node as spent (stump=1 above), so nothing
+    // waits on this: the yield, the toast and the click target all resolved on the line before.
+    target.collapse=1;
+    fxDustRing(target.x,target.y,"#6d5a3d",10,{radius:20,speed:74});
+    sound(96,.26);sound(150,.13);
   }else if(target.hp<=0){
     target.depleted=1;burst(target.x,target.y,kind==="diamond"?"#78d7e5":"#8b8985",11);if(!automatic)toast(kind==="diamond"?"diamond deposit exhausted":"rock cleared");
+    // JUICE — the crumble. Same presentation-only countdown; the renderer squashes the live rock or
+    // deposit into the ground over it instead of swapping to rubble on the same frame.
+    target.collapse=1;
+    fxDebris(target.x,target.y,kind==="diamond"?"#5fa9b6":"#7d7c78",9,{spread:88,lift:120,jitter:9,size:1.25});
+    fxDustRing(target.x,target.y,kind==="diamond"?"#4d6264":"#8d8c88",9,{radius:16,speed:62});
+    sound(kind==="diamond"?520:118,.22);
   }
   return true;
 }
 
 function spawnResource(kind,x,y,ttl=null){
   resourceDrops.push({kind,x,y,groundY:clamp(y+rand(10,22),35,H-20),vx:rand(-35,35),vy:rand(-75,-35),ground:false,target:null,t:0,spin:rand(0,6),ttl});
+}
+/** Reusable radial impulse on loose drops — the small shockwave impacts use to shove floating
+ * resources aside (first caller: the meteor). Every drop inside `radius` is pushed away from (x,y)
+ * with linear falloff through the exact toss physics spawnResource() seeds — outward vx, an upward
+ * hop in vy, the landing spot (groundY) displaced along ground-plane y — so a pushed drop bounces,
+ * settles and stays collectable exactly like a fresh one. Drops tweening to the hand or base are
+ * left alone (that channel owns their motion); a claimed-but-grounded drop moves and its worker
+ * simply follows, since pickup re-reads drop.x/y every frame. When the push is up-screen the drop
+ * is reseated at its new landing spot before the hop (updateLooseResources()'s ground clamp would
+ * otherwise eat the impulse) — an instant step of at most `push` px, hidden under the impact
+ * effects that call this. */
+function applyShockwave(x,y,{radius=120,force=120,push=16,hop=55}={}){
+  for(const drop of resourceDrops){
+    if(drop.target)continue;
+    const d=distance(x,y,drop.x,drop.y);
+    if(d>=radius)continue;
+    const falloff=1-d/radius;
+    const a=d>1e-3?Math.atan2(drop.y-y,drop.x-x):fxRand(0,Math.PI*2);   // fx stream: garnish must not shift gameplay RNG
+    drop.vx+=Math.cos(a)*force*falloff;
+    drop.vy=Math.min(drop.vy,0)-hop*falloff;
+    drop.groundY=clamp(drop.groundY+Math.sin(a)*push*falloff,35,H-20);
+    if(drop.y>drop.groundY)drop.y=drop.groundY;
+    drop.ground=false;
+  }
 }
 function spawnCoin(){
   // On or just past the player's screen, not anywhere on the 5x map: ±1.15× the visible
@@ -1637,6 +1697,8 @@ function castMeteor(x,y){
 }
 function meteorImpact(x,y){
   applyAreaDamage({centers:[{x,y}],radius:METEOR.radius,damage:METEOR.damage,targetType:METEOR.damageTargetType,color:"#d06a38"});
+  // Loose drops inside the blast get a small outward shove — same reach as the damage.
+  applyShockwave(x,y,{radius:METEOR.radius});
   // The footprint was clear at CAST, but the fall is real time — a building or chest raised under
   // the falling rock keeps its ground: the rock then shatters and the strike is damage-only.
   if(canPlace(x,y,"meteorTarget")){
@@ -1685,6 +1747,9 @@ function placeCardCharge(anchor){
       if(targeting.variant)for(const kind of RESOURCE_KINDS)placed.cost[kind]=(placed.cost[kind]||0)+(TOWER_VARIANTS[targeting.variant].cost[kind]||0);
     }
     buildings.push(placed);clearGrassInFootprint(placed.x,placed.y,buildingFootprint(placed.type));
+    // JUICE — the site lands rather than blinking in: footprint-sized dust plus a low thud under
+    // the existing placement blip. Emissions only; the building record above is untouched.
+    fxGroundThump(placed.x,placed.y,buildingFootprint(placed.type),"#8a7358");
     // A kit's charges are free: these are the authored cost-0 instant buildings, and the CARD is
     // the only thing that pays for them — there is no separate stack counter anywhere any more.
     if(!targeting.site)
@@ -1692,7 +1757,7 @@ function placeCardCharge(anchor){
     // free costs (debug) resolves the same single completion transition.
     else if(DBG.freeCosts)completeBuilding(placed);
     else toast(blueprintName(targeting)+" build placed — carry its resources to it");
-    sound(240,.06);
+    sound(240,.06);sound(104,.15);   // JUICE: the blip keeps its identity, the thud gives it weight
   }
   entry.charges--;
   if(entry.charges<=0){consumeHandCopy(entry);endCardTargeting();}
@@ -1747,6 +1812,14 @@ function completeBuilding(building){
   // an earlier builder unresolved until the next tick would expose its durable vacancy to autofill.
   resolveBuildingCompletionWorkers(building);
   burst(building.x,building.y-12,"#ead28d",18);
+  // JUICE — completion pop. `pulse` is the existing renderer-owned bump channel (dropToBuilding,
+  // the stockpile and tower damage already write it, updateBuildings decays it); writing it here
+  // makes the finished structure snap up on the frame it replaces its blueprint instead of just
+  // swapping models. The dust settles out over the pad it now owns.
+  building.pulse=1;
+  fxGroundThump(building.x,building.y,buildingFootprint(building.type),"#c0a170");
+  fxDebris(building.x,building.y-14,"#ead28d",10,{spread:66,lift:135,size:.85});
+  sound(300,.11);
   const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
   toast(def.resourceSource?def.name+" complete — growing "+def.resource+" automatically":readyMessage);sound(760,.18);effects.buildHudChanged();
 }
@@ -2611,6 +2684,9 @@ function transitionPhase(){
     }
     state.draft.calmNight=false;wave.activePlan=plan;wave.threatBudget=plan.threatBudget;wave.spawnedThreat=0;
     wave.totalSpawns=plan.entries.length;wave.remainingSpawns=wave.totalSpawns;wave.elapsed=0;wave.nextSpawnAt=plan.entries[0].at;wave.nightNumber++;wave.activeNightNumber=wave.nightNumber;
+    // JUICE — dusk had no cue of its own: the border telegraph simply stops and the tint slides in
+    // silently. Two descending notes mark the flip, after every phase field above is committed.
+    sound(196,.34);sound(131,.52);
   }else{
     // A long day drafted at night is banked here, so the card is never silently wasted.
     clock.phase="day";clock.remaining=DAY_DURATION+state.draft.dayBonus;state.draft.dayBonus=0;clock.completedNights++;
@@ -2623,6 +2699,9 @@ function transitionPhase(){
     // Surviving the night earns two back-to-back picks: permanent buff, then consumable. Existing
     // level rewards stay ahead of both rather than being replaced.
     queueWaveClearRewards();
+    // JUICE — and dawn answers dusk, rising where the dusk pair fell. Placed last so the reward
+    // queue above is already settled; sound() is a pure output hook either way.
+    sound(392,.26);sound(523,.4);
   }
 }
 function updateClock(dt){
@@ -2696,10 +2775,14 @@ function updateTransientTimers(dt){
   if(state.collecting&&state.mouse.inside&&state.collectCooldown<=0){collectDrop(true);state.collectCooldown=TUNE.suckRate;}
   if(state.toastTimer<=0)effects.toastExpired();
 }
+// Presentation-only countdown shared by every spent node: 1 at the moment of depletion, 0 when the
+// renderer's topple/crumble has finished. Decayed here rather than on wall clock so the collapse
+// pauses with the sim exactly like `shake` and the meteor rock's `pop` do. Nothing reads it back.
+const decayCollapse=(node,dt)=>{if(node.collapse)node.collapse=Math.max(0,node.collapse-dt*1.7);};
 function updateResourceNodes(dt){
-  for(const tree of trees)tree.shake=Math.max(0,tree.shake-dt*7);
-  for(const rock of rocks){rock.shake=Math.max(0,rock.shake-dt*7);if(rock.pop)rock.pop=Math.max(0,rock.pop-dt*3);}
-  for(const diamond of diamonds)diamond.shake=Math.max(0,diamond.shake-dt*7);
+  for(const tree of trees){tree.shake=Math.max(0,tree.shake-dt*7);decayCollapse(tree,dt);}
+  for(const rock of rocks){rock.shake=Math.max(0,rock.shake-dt*7);if(rock.pop)rock.pop=Math.max(0,rock.pop-dt*3);decayCollapse(rock,dt);}
+  for(const diamond of diamonds){diamond.shake=Math.max(0,diamond.shake-dt*7);decayCollapse(diamond,dt);}
   for(const cell of fog)if(cell.shake>0)cell.shake=Math.max(0,cell.shake-dt*7);
   updateFogPops();
   for(let i=fogPops.length-1;i>=0;i--){const pop=fogPops[i];pop.age+=dt;if(pop.age>=FOG.popAnimTime)fogPops.splice(i,1);}
@@ -2753,7 +2836,8 @@ function growResourceSourceNode(building){
   }
   if(!candidates.length)return false;
   const {point,node:existing}=candidates[(Math.random()*candidates.length)|0],hp=RESOURCE_NODE_HP[kind];
-  if(existing){existing.hp=existing.max=hp;existing.shake=0;existing.sourceBuilding=building;if(kind==="wood")existing.stump=0;else existing.depleted=0;}
+  // `collapse` clears with `shake`: a revived node must not be drawn mid-topple by the renderer.
+  if(existing){existing.hp=existing.max=hp;existing.shake=0;existing.collapse=0;existing.sourceBuilding=building;if(kind==="wood")existing.stump=0;else existing.depleted=0;}
   else if(kind==="wood")trees.push({x:point.x,y:point.y,hp,max:hp,stump:0,shake:0,variant:(Math.random()*3)|0,footprint:RESOURCE_FOOTPRINT,sourceBuilding:building});
   else rocks.push({x:point.x,y:point.y,hp,max:hp,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT,sourceBuilding:building});
   building.pulse=1;
@@ -2913,6 +2997,38 @@ function continueAfterVictory(){
 }
 
 function burst(x,y,col,count){for(let i=0;i<count;i++)particles.push({x,y,vx:rand(-55,55),vy:rand(-90,-25),life:rand(.3,.7),col});}
+
+// ── juice emitters ──────────────────────────────────────────────────────────
+// Same particle record burst() pushes ({x,y,vx,vy,life,col} + an optional `size` the renderer reads
+// as a scale multiplier), on the fx stream instead of the gameplay one. Nothing in this module ever
+// READS a particle, so these are pure output: adding, removing or retuning a call below cannot
+// change a single simulated outcome.
+/** Chunky debris: a burst() with authorable spread/lift/lifetime and per-piece size. */
+function fxDebris(x,y,col,count,{spread=70,lift=110,drop=25,life=[.35,.85],size=1,jitter=0}={}){
+  for(let i=0;i<count;i++)particles.push({
+    x:x+fxRand(-jitter,jitter),y:y+fxRand(-jitter,jitter),
+    vx:fxRand(-spread,spread),vy:fxRand(-lift,drop),life:fxRand(life[0],life[1]),col,
+    size:size*fxRand(.7,1.35)});
+}
+/** Ground-hugging dust: pieces fired OUTWARD around a ring with almost no lift, so a landing or a
+ *  collapse reads as floor dust kicked sideways rather than another upward spark shower. */
+function fxDustRing(x,y,col,count,{radius=16,speed=70,life=[.35,.8],size=1.1,rise=18}={}){
+  for(let i=0;i<count;i++){
+    // Even angular spacing with a small wobble: a ring that reads as a ring even at low counts.
+    const a=(i/count)*Math.PI*2+fxRand(-.35,.35),v=speed*fxRand(.55,1);
+    particles.push({x:x+Math.cos(a)*radius*fxRand(.2,1),y:y+Math.sin(a)*radius*fxRand(.2,1)*.6,
+      vx:Math.cos(a)*v,vy:Math.sin(a)*v*.5-fxRand(0,rise),life:fxRand(life[0],life[1]),col,
+      size:size*fxRand(.75,1.3)});
+  }
+}
+/** The "something heavy just took the ground here" signature, sized to the footprint it reserves:
+ *  a dust ring on the pad's edge plus a few chips off the middle. Shared by blueprint placement,
+ *  relocation and completion so all three land in the same visual language. */
+function fxGroundThump(x,y,footprint=FOOTPRINT_1x1,col="#9a8763"){
+  const radius=footprint.w*CELL/2;
+  fxDustRing(x,y,col,8+footprint.w*3,{radius:radius*.85,speed:50+footprint.w*11,life:[.3,.72]});
+  fxDebris(x,y,col,4,{spread:54,lift:80,jitter:radius*.45,size:.9});
+}
 
 function towerRadius(building){return towerAttackRadius(building,towerVariant(building));}
 
