@@ -609,6 +609,12 @@ query("uUndo").onclick = undo;
 query("uRedo").onclick = redo;
 query("uResetCamera").onclick = () => preview.resetCamera();
 query("uGameView").onclick = () => preview.gameView();
+// Grass perf toggle: the game's meadow over the authored land. Count lands in the readout;
+// frame cost is the R panel's ms meter. Rebuilding the doc re-grows it automatically.
+query("uGrass").onchange = event => {
+  const count = preview.setGrass(event.target.checked);
+  query("uGrassCount").textContent = event.target.checked ? `${count.toLocaleString()} blades` : "";
+};
 // ── water tab ────────────────────────────────────────────────────────────────
 // One fieldset owns the audition: the mode select picks the treatment and stamps data-water-mode so
 // the CSS shows only the sliders that mode reads. Every knob pushes the whole slider set through

@@ -13,6 +13,7 @@ import {PAL} from "../../src/render/palette.js";
 import {resolveAuthoredMapScatter} from "../../src/game/authored-map.js";
 import {createWaterModes} from "./water-modes.js";
 import {configurePipelines, renderFrame, resizePipeline} from "../../src/render/pipelines/index.js";
+import {createGrass, grassTune, GRASS_PANEL} from "../../src/render/grass.js";
 
 // Fixed authored elevations in world units (1 unit = 16 game px, matching models.js).
 export const GROUND_TOP = 0;
@@ -228,7 +229,39 @@ export function createTerrainPreview({canvas}){
     getSun: () => sun,
     waterPrePass: (w, h) => water.update(camera, w, h),
     view,
+    // Same grass sliders the game/test scene get, so density-vs-ms is tunable right here.
+    panelSections: [{title: "grass", tune: grassTune, spec: GRASS_PANEL}],
   });
+
+  // ── grass (perf audition toggle) ──
+  // The same src/render/grass.js meadow the game runs, sampled off the editor's own rasters:
+  // land cells grow at GROUND_TOP, raised at RAISED_TOP (+.03 anti-z-fight, same as the game),
+  // water/raised-void cells skip. grassTune (R panel "grass" section / window.grassTune) drives
+  // it live, so density-vs-ms can be judged here against the R panel's frame meter on any map
+  // size. Off by default: the editor's first job is authoring, not the meadow.
+  let meadow = null, meadowOn = false;
+  const GRASS_LIFT = .03;
+  function buildMeadow(doc){
+    if(meadow){ scene.remove(meadow.mesh); meadow.dispose(); meadow = null; }
+    if(!meadowOn || !doc) return;
+    const tile = doc.cellSize * S;
+    const groundC = new THREE.Color(MATERIAL_COLORS["ground:top:base"]);
+    const raisedC = new THREE.Color(MATERIAL_COLORS["raised:top:base"]);
+    const SKIP = {skip: true}, UP = [0, 1, 0];
+    const sample = (x, z) => {
+      const cx = Math.floor(x / tile), cy = Math.floor(z / tile);
+      if(cx < 0 || cy < 0 || cx >= doc.width || cy >= doc.height) return SKIP;
+      const i = cy * doc.width + cx;
+      if(doc.land[i] !== 1) return SKIP;
+      const raised = doc.raised[i] === 1;
+      const c = raised ? raisedC : groundC;
+      return {height: (raised ? RAISED_TOP : GROUND_TOP) + GRASS_LIFT, normal: UP,
+              color: [c.r, c.g, c.b], dirt: 0};
+    };
+    meadow = createGrass(THREE, {seed: 7, sample,
+      region: {x0: 0, z0: 0, x1: doc.width * tile, z1: doc.height * tile}});
+    scene.add(meadow.mesh);
+  }
 
   const preview = {
     // Re-solve both thresholds and rebuild all derived scene state.
@@ -253,6 +286,7 @@ export function createTerrainPreview({canvas}){
       sun.shadow.camera.updateProjectionMatrix();
       if(!lastDoc || lastDoc.width !== doc.width || lastDoc.height !== doc.height || lastDoc.cellSize !== doc.cellSize) fitCamera(doc);
       lastDoc = doc;
+      buildMeadow(doc);   // rasters may have changed under the blades
       lastSolves = {ground: summary(ground), raised: summary(raised)};
       return lastSolves;
     },
@@ -260,6 +294,12 @@ export function createTerrainPreview({canvas}){
     // The in-game perspective: same pitch/yaw as the game's default view state
     // (scene.js view = {pitch:40, yaw:0, fov:38}); distance/target are kept.
     gameView(){ view.pitch = 40; view.yaw = 0; },
+    /** Grass perf toggle; returns the live blade count (0 when off). */
+    setGrass(on){
+      meadowOn = !!on;
+      buildMeadow(lastDoc);
+      return meadow ? meadow.instanceCount() : 0;
+    },
     // Water candidates 0-5; rebuilds only the water, terrain is untouched.
     setWaterMode(next){ water.setMode(next); if(lastDoc) water.build(scene, lastDoc); },
     setWaterParams(partial){ water.setParams(partial); },
@@ -308,6 +348,7 @@ export function createTerrainPreview({canvas}){
         resizePipeline(width, height);
       }
       applyCamera();
+      meadow?.sync(performance.now() / 1000);   // wind clock; no-op cost when the toggle is off
       // Same registry as the game: F9 toggles current/pixel, R opens the slider panel.
       // The "current" pipeline reproduces the old direct draw exactly (it calls waterPrePass()
       // with no size, which is the old water.update(camera) — waves + pre-pass — then renders).
@@ -317,6 +358,7 @@ export function createTerrainPreview({canvas}){
       renderFrame();
     },
     dispose(){
+      if(meadow){ scene.remove(meadow.mesh); meadow.dispose(); meadow = null; }
       disposeBuilt();
       for(const material of materialCache.values()) material.dispose();
       materialCache.clear();
