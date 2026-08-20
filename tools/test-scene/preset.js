@@ -124,7 +124,9 @@ export const SUN = {
 // ROUND 4: intensity 0.431 -> 0.48. The upper-left corner stacks cloud shade ON dirt, and
 // dirt*amb sat at L38 — a quarter-frame just under the <40 L gate. +11% ambient floats it to
 // ~42 and lifts p5 toward the reference's 55; the grass-shade sample drifts ~Δ3, accepted.
-export const HEMI = {skyColor: 0xffde82, groundColor: 0x6b5a4a, intensity: 0.48};
+// Round 6 (grass calibration): 0.48 -> 0.60. With the meadow bladed, cloud-shade areas measured
+// p25 66 vs the reference's 89 — the shade floor needed the ambient, not the grass, lifted.
+export const HEMI = {skyColor: 0xffde82, groundColor: 0x6b5a4a, intensity: 0.60};
 
 // ── terrain ───────────────────────────────────────────────────────────────────────────────────
 // The whole frame is ground: at 55 deg pitch the top of the frame still hits the ground ~79 wu

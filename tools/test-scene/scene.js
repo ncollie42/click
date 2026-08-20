@@ -188,6 +188,39 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
   });
   if(grass) scene.add(grass.mesh);
 
+  // Prop seating via the wear field (the same setWearMap mechanism the game's buildings use):
+  // a bare disc under each prop's footprint with a ~2.5 wu LinearFilter rim, so blades SHRINK
+  // toward the bases instead of standing through them — the box stops drowning, the domes lose
+  // their hedge collars, and the rim's short blades read as growth hugging the object.
+  if(grass && !noProps){
+    const RES = 256, wear = new Uint8Array(RES * RES);
+    const feather = 1.8;
+    for(const spec of OBJECTS){
+      const r = spec.kind === "sphere"
+        ? spec.r * Math.sqrt(Math.max(0, 1 - Math.pow(1 - 2 * spec.sink, 2)))  // ground-cut radius
+        : Math.hypot(spec.size[0], spec.size[2]) / 2;
+      const x0 = CAMERA.target[0] - half, z0 = CAMERA.target[2] - half;
+      const lo = Math.max(0, Math.floor(((spec.x - r - feather) - x0) / GRASS.span * RES));
+      const hi = Math.min(RES - 1, Math.ceil(((spec.x + r + feather) - x0) / GRASS.span * RES));
+      const lz = Math.max(0, Math.floor(((spec.z - r - feather) - z0) / GRASS.span * RES));
+      const hz = Math.min(RES - 1, Math.ceil(((spec.z + r + feather) - z0) / GRASS.span * RES));
+      for(let tz = lz; tz <= hz; tz++)for(let tx = lo; tx <= hi; tx++){
+        const wx = x0 + (tx + 0.5) / RES * GRASS.span, wz = z0 + (tz + 0.5) / RES * GRASS.span;
+        const d = Math.hypot(wx - spec.x, wz - spec.z);
+        const w = Math.max(0, Math.min(1, 1 - (d - r) / feather));
+        const i = tz * RES + tx;
+        wear[i] = Math.max(wear[i], Math.round(w * 255));
+      }
+    }
+    const wearTex = new THREE.DataTexture(wear, RES, RES, THREE.RedFormat, THREE.UnsignedByteType);
+    wearTex.name = "test-scene-wear";
+    wearTex.magFilter = wearTex.minFilter = THREE.LinearFilter;   // the rim IS the filtering
+    wearTex.generateMipmaps = false;
+    wearTex.unpackAlignment = 1;
+    wearTex.needsUpdate = true;
+    grass.setWearMap(wearTex);
+  }
+
   // ── the pixelTune preset, applied before the first frame ──
   // pixel.js live-reads this object every frame, so the R panel keeps working on top of it.
   Object.assign(pixelTune, PIXEL_PRESET, tuneOverrides);

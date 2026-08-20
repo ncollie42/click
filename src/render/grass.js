@@ -57,6 +57,10 @@ export const grassTune = {
   windScale: 0.09,     // 1/wu — features ~11 wu, smaller than the clouds' ~26 wu on purpose
   windDivergeDeg: 15,  // ± rotation of the two noise sample directions
   windLift: 0.18,      // brightness bias added to the multiplied noises (video's "arbitrary value")
+  windGlow: 0.55,      // wind→albedo coupling: crests brighten, troughs dim slightly. This is the
+                       // reference's sunlit shimmer — it supplies the frame's >180 L highlight
+                       // tier (measured absent without it: 0.05% vs the reference's 2.4%) and
+                       // makes the wind READ in colour, not just lean
   fps: 10,             // wind time quantize; 0 = smooth
   viewSway: 2.0,       // idle view-space sway, degrees (his "minimal levels" layer)
   viewSwayFreq: 1.4,   // Hz-ish
@@ -70,6 +74,9 @@ export const grassTune = {
   trampleMax: 0.75,    // trample alone never exceeds this (flattened, not permanent dirt)
   regrowSec: 18,       // trample decay time constant, seconds
   clearRadius: 4.5,    // bare-circle radius around resource nodes, wu
+  rootShade: 0.9,      // sprite base-row darkening floor (tip = 1). 0.8 measured the whole field
+                       // ~20 L dark and 2.5x the reference's texture energy — the roots dominate
+                       // the visible sprite area at a low camera. Texture-only swap, no rebuild.
   fakePersp: 0.5,      // 0..1 strength of the UV squash
   sprite: "solid",     // SPRITE_STYLES key — live texture swap, no rebuild. Owner pick Aug 20
                        // (in-game judging): the chunky rounded quads; "leaf" was the test-scene
@@ -97,6 +104,8 @@ export const GRASS_PANEL = {
     ["windScale",     "wind scale 1/wu", 0.01, 0.5, 0.005],
     ["windDivergeDeg","noise diverge", 0, 45, 1],
     ["windLift",      "wind lift", 0, 1, 0.01],
+    ["windGlow",      "wind glow", 0, 1.5, 0.05],
+    ["rootShade",     "root shade floor", 0.5, 1, 0.02],
     ["fps",           "anim fps (0=smooth)", 0, 30, 1],
     ["viewSway",      "idle sway deg", 0, 10, 0.25],
     ["viewSwayFreq",  "idle sway freq", 0.1, 5, 0.05],
@@ -120,6 +129,8 @@ export const GRASS_PANEL = {
     density: "rebuilds ~250ms after the slider settles (CPU resample of the ground)",
     dirtClear: "probability a blade is culled scales with the ground's dirt weight",
     windLift: "baseline of the multiplied noise pair — raises how much of the field sways at once",
+    windGlow: "wind crests brighten blade albedo, troughs dim it — the moving sunlit-shimmer tier; 0 = lean only",
+    rootShade: "how dark sprite base rows bake vs the tip; higher = flatter, brighter, quieter field",
     fps: "wind time is quantized per instance with a random phase, so updates don't all land on the same frame",
     fakePersp: "squashes the sprite toward the tip when the view is parallel to the wind — depth cue for near-ortho cameras",
     sprite: "blade atlas style (authored in grass.js SPRITE_STYLES; previews via tools/test-scene/grass-sprite.mjs)",
@@ -456,7 +467,7 @@ const CHAR_LEVEL = {".": 0.78, "o": 0.88, "#": 1.0};
 
 /** Raw RGBA pixels of one style's atlas (texel row 0 = blade base). Exported for
  *  tools/test-scene/grass-sprite.mjs, which dumps every style to a PNG for eyeballing. */
-export function bladeAtlasPixels(style = "tufts"){
+export function bladeAtlasPixels(style = "tufts", rootFloor = grassTune.rootShade){
   const s = SPRITE_STYLES[style];
   if(!s) throw new Error(`grass: unknown sprite style "${style}"`);
   for(const rows of s.rows){
@@ -468,7 +479,7 @@ export function bladeAtlasPixels(style = "tufts"){
     const rows = s.rows[v];
     for(let ry = 0; ry < s.h; ry++){
       const row = rows[s.h - 1 - ry];             // texel row 0 = base
-      const rootShade = 0.8 + 0.2 * (ry / (s.h - 1));
+      const rootShade = rootFloor + (1 - rootFloor) * (ry / (s.h - 1));
       for(let rx = 0; rx < s.w; rx++){
         const level = CHAR_LEVEL[row[rx]];
         if(level === undefined) continue;
@@ -483,8 +494,8 @@ export function bladeAtlasPixels(style = "tufts"){
 }
 export const SPRITE_STYLE_NAMES = Object.keys(SPRITE_STYLES);
 
-function makeBladeTexture(THREE, style){
-  const {width, height, data} = bladeAtlasPixels(SPRITE_STYLES[style] ? style : "tufts");
+function makeBladeTexture(THREE, style, rootFloor){
+  const {width, height, data} = bladeAtlasPixels(SPRITE_STYLES[style] ? style : "tufts", rootFloor);
   const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.UnsignedByteType);
   tex.name = `grass-${style}`;
   tex.magFilter = THREE.NearestFilter;
@@ -604,7 +615,7 @@ vGrassWind = 0.0; vGrassPersp = 0.0; vGrassPush = 0.0; vGrassWear = 0.0;
 const FRAG_DECL = /* glsl */`
 varying float vGrassWind, vGrassPersp, vGrassPush, vGrassWear;
 varying vec3 vGrassUv;
-uniform float uGrassDebug;
+uniform float uGrassDebug, uGrassGlow;
 `;
 
 // Replaces `#include <map_fragment>`: fake-perspective squash of the LOCAL uv about the sprite
@@ -616,6 +627,11 @@ const FRAG_MAP = /* glsl */`
   vec4 sampledDiffuseColor = uGrassDebug == 1.0 ? vec4(1.0)
     : texture2D(map, vec2((gU + vGrassUv.z) / ${VARIANTS}.0, vGrassUv.y));
   diffuseColor *= sampledDiffuseColor;
+  // Wind glow (the reference's moving sunlit shimmer): crests brighten albedo, troughs dim.
+  // Centered on 0.35 — the field's typical value under the default lift — so the MEAN stays put
+  // and the glow adds contrast range, not exposure.
+  // Upper clamp keeps crest blades under the frame's peak-luma gate (unclamped they measured 217).
+  diffuseColor.rgb *= clamp(1.0 + uGrassGlow * (vGrassWind - 0.35), 0.0, 1.15);
 }
 `;
 
@@ -660,7 +676,11 @@ function buildGeometry(THREE, {seed, region, sample, tune}){
       let h = tune.bladeH * (0.75 + 0.5 * hash2(ix, iz, seed + 59));
       const w = tune.bladeW * (0.8 + 0.4 * hash2(ix, iz, seed + 67));
       let variant = hash2(ix, iz, seed + 71) < 0.5 ? 0 : 1;
-      let tint = 0.92 + 0.16 * hash2(ix, iz, seed + 83);
+      // Mean 1.07, ±5% jitter: sprite level x root shade averages ~0.90, which dimmed the WHOLE
+      // field ~10% against the rig's bare-ground albedo solve (p50 119 vs the reference's 134,
+      // measured) — the tint compensates so a blade-covered meadow keeps the solved exposure.
+      // Jitter tightened from ±8%: root gradient + wind glow already feed per-blade variation.
+      let tint = 1.02 + 0.10 * hash2(ix, iz, seed + 83);
       if(accent){ h *= tune.accentScale; variant = 2; tint *= 1.2; }
       offsets.push(px, g.height, pz);
       datas.push(w, h, hash2(ix, iz, seed + 89), variant);
@@ -697,6 +717,7 @@ export function createGrass(THREE, {seed, region, sample, lightMods = lightModsA
     uGrassWindLift: {value: 0}, uGrassWindAngle: {value: 0},
     uGrassSway: {value: 0}, uGrassSwayFreq: {value: 0},
     uGrassPersp: {value: 0}, uGrassUpright: {value: 0}, uGrassDebug: {value: 0},
+    uGrassGlow: {value: 0},
     uGrassPushAngle: {value: 0},
     uGrassPushers: {value: Array.from({length: MAX_PUSHERS}, () => new THREE.Vector4(0, 0, 0, 0))},
     uGrassWearOn: {value: 0},
@@ -706,7 +727,8 @@ export function createGrass(THREE, {seed, region, sample, lightMods = lightModsA
   };
 
   let spriteStyle = SPRITE_STYLES[tune.sprite] ? tune.sprite : "tufts";
-  let map = makeBladeTexture(THREE, spriteStyle);
+  let builtRootShade = tune.rootShade;
+  let map = makeBladeTexture(THREE, spriteStyle, builtRootShade);
   const mat = new THREE.MeshLambertMaterial({map, alphaTest: 0.5, vertexColors: true});
   mat.name = "grass";
   mat.userData.noToonRamp = true;   // grass is ground; the meadow measured better un-banded
@@ -778,6 +800,7 @@ export function createGrass(THREE, {seed, region, sample, lightMods = lightModsA
     uniforms.uGrassPersp.value = tune.fakePersp;
     uniforms.uGrassUpright.value = tune.billboard === "upright" ? 1 : 0;
     uniforms.uGrassDebug.value = +tune.debugMode || 0;
+    uniforms.uGrassGlow.value = tune.windGlow || 0;
     uniforms.uGrassPushAngle.value = tune.pushAngle * DEG;
     mat.wireframe = !!tune.wireframe;
     mesh.visible = tune.enabled !== false;
@@ -785,11 +808,12 @@ export function createGrass(THREE, {seed, region, sample, lightMods = lightModsA
     const tick = tune.pushFps > 0 ? Math.floor(time * tune.pushFps) : null;
     if(tick === null || tick !== lastPushTick){ lastPushTick = tick; applyPushers(); }
 
-    // Sprite style: texture-only swap, same USE_MAP program — no recompile, no rebuild.
+    // Sprite style / root shade: texture-only swap, same USE_MAP program — no recompile, no rebuild.
     const style = SPRITE_STYLES[tune.sprite] ? tune.sprite : "tufts";
-    if(style !== spriteStyle){
+    if(style !== spriteStyle || tune.rootShade !== builtRootShade){
       spriteStyle = style;
-      const next = makeBladeTexture(THREE, style);
+      builtRootShade = tune.rootShade;
+      const next = makeBladeTexture(THREE, style, builtRootShade);
       mat.map = next;
       map.dispose();
       map = next;
