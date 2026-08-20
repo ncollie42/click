@@ -3,7 +3,7 @@
 // here reaches back into scene.js, so there are no import cycles — pipeline modules are loaded
 // lazily on first activation.
 //
-// Pipeline contract (what retro.js / splat.js must export as default):
+// Pipeline contract (what retro.js / pixel.js must export as default):
 //   {
 //     name: string,
 //     init(ctx)?     — once, on first activation. May allocate targets/materials.
@@ -20,11 +20,14 @@
 //   - Pipelines own their offscreen targets and must leave renderer state (render target,
 //     override material, camera layers, shadowMap.autoUpdate) restored on return.
 //
-// Switching: F9 cycles current → retro → splat. Persisted in localStorage "click.pipeline" so a
-// reload keeps the chosen pipeline. A pipeline that throws during init/render is benched (falls
-// back to "current") instead of black-screening the game.
+// Switching: F9 cycles current → retro → toon → pixel. Persisted in localStorage "click.pipeline"
+// so a reload keeps the chosen pipeline (a stale saved name — e.g. the deleted splat/full — fails
+// the PIPELINES check below and quietly falls back to "current"). A pipeline that throws during
+// init/render is benched (falls back to "current") instead of black-screening the game.
+// splat/full (texel splatting) were deleted Aug 19 2026 after the atlas review — recover from git
+// history (last present at commit c96104a) if world-anchored texels are ever wanted again.
 
-const PIPELINES = ["current", "retro", "toon", "splat", "full"];
+const PIPELINES = ["current", "retro", "toon", "pixel"];
 const STORAGE_KEY = "click.pipeline";
 // Blocked storage (private browsing, quota) must never take the renderer down with it — codex
 // review caught all three call sites throwing into init, setPipeline and the bench-recovery path.
@@ -41,16 +44,17 @@ const benched = new Set();  // pipelines that threw; skipped when cycling until 
 function loaderFor(name){
   if(name === "retro") return import("./retro.js");
   if(name === "toon") return import("./toon.js");
-  if(name === "splat") return import("./splat.js");
-  if(name === "full") return import("./full.js");
+  if(name === "pixel") return import("./pixel.js");
   return null;
 }
 
 /** scene.js calls this once at module init, before the first frame. */
 export function configurePipelines(context){
   ctx = context;
-  const saved = storageGet(STORAGE_KEY);
-  if(saved && PIPELINES.includes(saved) && saved !== "current") setPipeline(saved);
+  // "pixel" is the default (owner pick, Aug 19); a saved choice still wins, and a stale saved
+  // name falls through the PIPELINES check to "current" as before.
+  const saved = storageGet(STORAGE_KEY) || "pixel";
+  if(PIPELINES.includes(saved) && saved !== "current") setPipeline(saved);
   window.addEventListener("keydown", e => {
     if(e.key === "F9"){
       e.preventDefault();
@@ -61,15 +65,18 @@ export function configurePipelines(context){
       }
       return;
     }
-    // R toggles the renderer debug window (sliders over retroTune/splatTune + pipeline switch).
-    // Lazy import: the panel (and both pipeline modules it reads the tunes from) load on first use.
-    if(e.code === "KeyR" && !e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
-       && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName || "")){
+    // composedPath()[0], not e.target: the debug panel lives in a shadow root, and events crossing
+    // the shadow boundary retarget to the host div — e.target would say DIV while the user is
+    // actually typing in one of the panel's value inputs.
+    const target = e.composedPath ? e.composedPath()[0] : e.target;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName || "");
+    // R toggles the renderer debug window (sliders over the pipeline tune objects + the switch).
+    // Lazy import: the panel (and the pipeline modules it reads the tunes from) load on first use.
+    if(e.code === "KeyR" && !e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !typing){
       togglePanel();
     }
     // B blink-compares: flips between the active pipeline and the previous one, for A/B judging.
-    if(e.code === "KeyB" && !e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
-       && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName || "")){
+    if(e.code === "KeyB" && !e.repeat && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !typing){
       if(previousName !== null && previousName !== activeName) setPipeline(previousName);
     }
   });

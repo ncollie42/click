@@ -56,6 +56,6 @@ Everything uncommitted; validate.mjs fully green; every build boot-verified with
 1. Water body-colour salvage (one line, critic-endorsed).
 2. Grass: side with the orchestrator or the critic.
 3. Leafcard trees: fixes LANDED overnight (all 3 numeric gates passed) — taste-check the egg-smooth crown (contourSmooth dial) and size parity, then integrate or bench.
-4. Renderer pick from the matrix (retro / toon·rgb recommended).
+4. Renderer pick from the matrix — ADVANCED Aug 19 (atlas review): merged `pixel` pipeline built (retro outlines + toon clouds/dither + sub-pixel pan + OKLab palette match + dither endpoint fade); splat/full DELETED (recover at c96104a). Remaining: judge `pixel` vs retro/toon in-browser, then prune the losers.
 5. Selective-outline-mask brief.
 6. Gauntlet taste menus (nodes + circle) still open from yesterday.

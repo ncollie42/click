@@ -242,11 +242,12 @@ scene.add(sun, sun.target);
 const GRASS_TILE_PX=64,GRASS_TEXTURE_BYTES=GRASS_TILE_PX*GRASS_TILE_PX*4;
 const grassLayer=document.createElement("canvas");grassLayer.width=grassLayer.height=GRASS_TILE_PX;
 (function bakeGrass(){
+  // Flat fill (owner pick, Aug 19): the old 8px checker + speck noise read as dirt once the pixel
+  // pipeline quantizes it. Real grass presentation comes later; until then the ground is one
+  // colour and the REGION_COLORS vertex tints below carry all macro variation. The old bake is in
+  // git history if the speckled look is ever wanted back.
   const c=grassLayer.getContext("2d");c.imageSmoothingEnabled=false;
-  for(let y=0;y<GRASS_TILE_PX;y+=8)for(let x=0;x<GRASS_TILE_PX;x+=8){
-    const n=(x*13+y*7)%31;c.fillStyle=n%3?css(PAL.grass):css(PAL.grassAlt);c.fillRect(x,y,8,8);
-    if(n<6){c.fillStyle=css(PAL.grassSpeck);c.fillRect(x+n,y+(n*3)%7,2,2);}
-  }
+  c.fillStyle=css(PAL.grass);c.fillRect(0,0,GRASS_TILE_PX,GRASS_TILE_PX);
 })();
 const grassTex=new THREE.CanvasTexture(grassLayer);
 grassTex.wrapS=grassTex.wrapT=THREE.RepeatWrapping;grassTex.repeat.set(W/GRASS_TILE_PX,H/GRASS_TILE_PX);
@@ -565,9 +566,17 @@ const collapseDir = e => (((e.x*7 + e.y*13)|0) & 1) ? 1 : -1;
 
 // Thousands of tufts remain one bounded draw object. Simulation revision is the only invalidation
 // input; camera frames never rebuild matrices, and removed tufts disappear on the next revision.
+// Benched (owner pick, Aug 19): the tufts read as floor noise through the pixel pipeline — flat
+// ground until real grass models replace them. Flip to true to bring the system back; the
+// simulation's grass data and destructibility are untouched either way.
+const SHOW_GRASS_TUFTS=false;
 let grassInstances=null,builtVegetationRevision=-1;
 const grassMatrix=new THREE.Matrix4(),grassPosition=new THREE.Vector3(),grassRotation=new THREE.Quaternion(),grassScale=new THREE.Vector3();
 function syncGrass(){
+  if(!SHOW_GRASS_TUFTS){
+    if(grassInstances){scene.remove(grassInstances);grassInstances.geometry.dispose();grassInstances.material.dispose();grassInstances=null;builtVegetationRevision=-1;}
+    return;
+  }
   // Fog revision joins the invalidation key: tufts under standing fog stay out of the build, and
   // every fog clear re-runs it so newly revealed grass appears with the reveal.
   const metadata=vegetationMetadata(),revisionKey=metadata.revision+":"+fogMetadata().revision;
@@ -2148,8 +2157,12 @@ export function drawScene(){
   // The grid is unlit, so without this it would stay bright while the map darkens and end up the
   // loudest thing on screen at night. Fading it keeps it under the terrain and the combat marks.
   // Overview zoom suppresses the 32px lattice; normal/build zoom retains full precision.
+  // Placement-only (owner pick, Aug 19): outside build mode the grid fought the pixel pipeline's
+  // quantizer — a 24%-alpha hairline posterizes onto a full lightness band and reads as bright
+  // texel lines — so it now shows only while a building (or the held chest) owns the cursor.
+  const placing = state.buildMode || state.heldObject ? 1 : 0;
   const overviewFade=THREE.MathUtils.smoothstep(state.camera.zoom,.2,.58);
-  gridMat.opacity = GRID_OPACITY * overviewFade * (1 - night*.55);
+  gridMat.opacity = GRID_OPACITY * overviewFade * (1 - night*.55) * placing;
   // Fully transparent lines still cost a draw call; overview hides the object as well as fading it.
   if(terrainGrid)terrainGrid.visible=gridMat.opacity>0;
 
@@ -2194,8 +2207,8 @@ export function drawScene(){
   return orbited;
 }
 /** The draw call itself, split from drawScene() so pins land in the scene before it runs.
- * Routed through the pipeline registry: "current" reproduces the direct draw exactly, "retro" and
- * "splat" are the experimental pixel-art pipelines (F9 cycles, see src/render/pipelines/). */
+ * Routed through the pipeline registry: "current" reproduces the direct draw exactly; "retro"/
+ * "toon"/"pixel" are the experimental pixel-art pipelines (F9 cycles, see src/render/pipelines/). */
 export function renderScene(){ renderFrame(); }
 
 configurePipelines({

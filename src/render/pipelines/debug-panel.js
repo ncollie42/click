@@ -1,18 +1,18 @@
-// Owns: the renderer debug window — a floating panel of sliders over retroTune / splatTune plus the
-// pipeline switch. Toggled with R (wired in pipelines/index.js, which lazy-imports this file on the
-// first press, so the game's load path never pays for it). Everything here is DOM the panel itself
-// creates; it never touches the game canvas, the view-debugger, or scene.js. The tune objects are
-// live-read by the pipelines every frame, so a slider drag is visible on the next rendered frame
-// with no plumbing — this panel just writes numbers into them.
+// Owns: the renderer debug window — a floating panel of sliders over retroTune / toonTune /
+// pixelTune plus the pipeline switch. Toggled with R (wired in pipelines/index.js, which
+// lazy-imports this file on the first press, so the game's load path never pays for it).
+// Everything here is DOM the panel itself creates; it never touches the game canvas, the
+// view-debugger, or scene.js. The tune objects are live-read by the pipelines every frame, so a
+// slider drag is visible on the next rendered frame with no plumbing — this panel just writes
+// numbers into them.
 //
 // Layout: one column per concern — pipeline radios up top (kept in sync with F9 via a poll while
 // the panel is open), then a section per pipeline. Each section header shows a dot when its
 // pipeline is the active one. Reset buttons restore the values captured at first open.
 
 import {retroTune} from "./retro.js";
-import {splatTune} from "./splat.js";
-import {fullTune, PANEL_SPEC as FULL_SPEC} from "./full.js";
 import {toonTune, PANEL_SPEC as TOON_SPEC} from "./toon.js";
+import {pixelTune, PANEL_SPEC as PIXEL_SPEC} from "./pixel.js";
 
 // [key, label, min, max, step] for sliders; ["key", label] for checkboxes; selects carry options.
 const RETRO_SLIDERS = [
@@ -31,49 +31,38 @@ const RETRO_CHECKS = [
   ["normalEdges","normal edges (hello-threejs)"],
 ];
 
-const SPLAT_SLIDERS = [
-  ["probeSize",    "probe size", 64, 768, 32],
-  ["postHeight",   "post height px", 120, 1080, 8],
-  ["gridStep",     "grid step wu", 0.5, 8, 0.5],
-  ["crossfadeTime","crossfade s", 0, 2, 0.05],
-  ["shadowBias",   "shadow bias", 0, 0.5, 0.01],
-  ["shadowSlope",  "shadow slope", 0, 2, 0.05],
-  ["bands",        "posterize bands", 2, 64, 1],
-  ["normalThresh", "normal crease dot", 0, 1, 0.01],
-  ["edgeThreshold","edge (expand) thresh", 0, 0.02, 0.0005],
-  ["depthEdge",    "outline thresh", 0, 0.2, 0.005],
-  ["expansion",    "quad expansion tx", 0, 2, 0.05],
-  ["hazeDensity",  "haze density", 0, 0.02, 0.0005],
-  ["sunGain",      "sun gain", 0, 3, 0.05],
-  ["ambientGain",  "ambient gain", 0, 3, 0.05],
-];
-const SPLAT_CHECKS = [
-  ["outlines","outlines"], ["water","water/transparents"], ["background","background"],
-];
-const SPLAT_SELECTS = [
-  ["shadowSize","shadow map", [512,1024,2048]],
-  ["debugView", "debug view", [[0,"splat"],[1,"albedo"],[2,"normal"],[3,"radial"],[4,"lit"],[5,"edge"],[6,"shadow"]]],
-  ["showFace",  "face (debugView>0)", [[-1,"atlas"],[0,"+X"],[1,"-X"],[2,"+Y"],[3,"-Y"],[4,"+Z"],[5,"-Z"]]],
-];
-
 const CSS = `
-#rpDebug{position:fixed;top:12px;right:12px;z-index:10000;width:280px;max-height:calc(100vh - 24px);
-  overflow-y:auto;background:#101418f2;color:#cfd8e3;font:11px/1.5 monospace;border:1px solid #2a3542;
+#rpDebug{position:fixed;top:12px;right:12px;z-index:10000;width:min(620px,calc(100vw - 24px));
+  max-height:calc(100vh - 24px);
+  overflow-y:auto;overflow-x:hidden;background:#0f1318fa;color:#cfd8e3;font:11px/1.5 monospace;
+  border:1px solid #2a3542;
   border-radius:6px;padding:10px 12px;box-shadow:0 4px 24px #000a}
+/* Two-column knob layout so a whole section fits on screen without scrolling; the header,
+   checkbox row and preset row span both columns. Falls back to one column on narrow viewports. */
+#rpDebug .sect{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px}
+#rpDebug .sect h4,#rpDebug .sect .checks{grid-column:1/-1}
+@media (max-width:660px){#rpDebug .sect{grid-template-columns:1fr}}
 #rpDebug h3{margin:0 0 6px;font-size:12px;color:#fff;display:flex;justify-content:space-between;align-items:center}
 #rpDebug h4{margin:10px 0 4px;font-size:11px;color:#8fb4ff;border-bottom:1px solid #2a3542;
   padding-bottom:2px;display:flex;justify-content:space-between;align-items:center}
 #rpDebug h4 .dot{color:#5f6;display:none}
 #rpDebug .active h4 .dot{display:inline}
-#rpDebug .row{display:flex;align-items:center;gap:6px;margin:2px 0}
-#rpDebug .row label{flex:0 0 118px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#rpDebug .row input[type=range]{flex:1;min-width:0;accent-color:#8fb4ff}
-#rpDebug .row input.val{flex:0 0 58px;text-align:right;color:#9fe8a8;background:#1a2028;
-  border:1px solid #2a3542;border-radius:3px;font:inherit;padding:0 3px}
-#rpDebug .row select{flex:1;background:#1a2028;color:#cfd8e3;border:1px solid #2a3542;font:inherit}
-#rpDebug .checks{display:flex;flex-wrap:wrap;gap:2px 10px;margin:3px 0}
+#rpDebug .row{display:flex;align-items:center;gap:6px;margin:2px 0;min-width:0}
+#rpDebug .row label{flex:0 0 122px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* width + min-width:0 on every control: form elements have a large intrinsic minimum
+   (~177px for a text input) that flex-basis alone cannot shrink past — without these the
+   readouts blow out their grid cell, overlap the neighbour column and force the panel to
+   scroll sideways. */
+#rpDebug .row input[type=range]{flex:1 1 60px;width:60px;min-width:0;accent-color:#8fb4ff}
+#rpDebug .row input.val{flex:0 0 64px;width:64px;min-width:0;text-align:right;color:#9fe8a8;
+  background:#1a2028;border:1px solid #2a3542;border-radius:3px;font:inherit;padding:0 3px}
+#rpDebug .row select{flex:1 1 60px;width:60px;min-width:0;background:#1a2028;color:#cfd8e3;
+  border:1px solid #2a3542;font:inherit}
+#rpDebug .grp{grid-column:1/-1;margin:8px 0 1px;padding-bottom:1px;color:#8fb4ff;
+  border-bottom:1px solid #222c38;font-size:10px;letter-spacing:.06em}
+#rpDebug .checks{display:flex;flex-wrap:wrap;gap:2px 10px;margin:3px 0;grid-column:1/-1}
 #rpDebug .checks label{display:flex;gap:4px;align-items:center;cursor:pointer}
-#rpDebug .pipes{display:flex;gap:10px;margin:2px 0 4px}
+#rpDebug .pipes{display:flex;flex-wrap:wrap;gap:4px 10px;margin:2px 0 4px}
 #rpDebug .pipes label{display:flex;gap:4px;align-items:center;cursor:pointer;color:#fff}
 #rpDebug button{background:#1a2028;color:#9ab;border:1px solid #2a3542;border-radius:3px;
   font:10px monospace;cursor:pointer;padding:1px 7px}
@@ -86,15 +75,23 @@ function fmt(v){ return Math.abs(v) >= 100 ? String(Math.round(v)) : String(+v.t
 export function createPanel({setPipeline, getPipelineName}){
   // structuredClone, not spread: toonTune.palette is an ARRAY — a shallow copy would share it and
   // an in-place palette edit would silently corrupt the "default" that reset restores (codex catch).
-  const defaults = structuredClone({retro: retroTune, splat: splatTune, full: fullTune, toon: toonTune});
+  const defaults = structuredClone({retro: retroTune, toon: toonTune, pixel: pixelTune});
+  // Shadow DOM, not a bare div: the game's stylesheet has GLOBAL tag rules (styles.css
+  // `button{width:100%;padding:7px;...}`, dark input colors) that mangled the panel when it lived
+  // in the light DOM — stretched buttons, invisible readout text. The shadow boundary keeps both
+  // worlds honest: game CSS can't reach in, panel CSS can't leak out.
+  const host = document.createElement("div");
+  host.id = "rpDebugHost";
+  const shadow = host.attachShadow({mode: "open"});
   const style = document.createElement("style");
   style.textContent = CSS;
-  document.head.appendChild(style);
+  shadow.appendChild(style);
 
   const root = document.createElement("div");
   root.id = "rpDebug";
   root.style.display = "none";
-  document.body.appendChild(root);
+  shadow.appendChild(root);
+  document.body.appendChild(host);
 
   const head = document.createElement("h3");
   head.innerHTML = `<span>renderer</span>`;
@@ -121,7 +118,7 @@ export function createPanel({setPipeline, getPipelineName}){
   const pipes = document.createElement("div");
   pipes.className = "pipes";
   const radios = {};
-  for(const name of ["current","retro","toon","splat","full"]){
+  for(const name of ["current","retro","toon","pixel"]){
     const l = document.createElement("label");
     const r = document.createElement("input");
     r.type = "radio"; r.name = "rpPipe"; r.value = name;
@@ -138,6 +135,7 @@ export function createPanel({setPipeline, getPipelineName}){
     // Everything for one pipeline lives in one wrapper so sync() can show exactly the active
     // pipeline's knobs and nothing else — the stacked all-three view was unusable noise.
     const box = document.createElement("div");
+    box.className = "sect";
     root.appendChild(box);
     sections[title] = box;
     const rootAppend = el => box.appendChild(el);
@@ -149,7 +147,16 @@ export function createPanel({setPipeline, getPipelineName}){
     rootAppend(h);
 
     const outs = [];   // refresh closures, so reset/sync can repaint controls from the tune
-    for(const [key, label, min, max, step] of sliders){
+    for(const entry of sliders){
+      // A bare string in the sliders list is a group header spanning both panel columns —
+      // pixel's spec uses these to give clouds/outlines/quantize their own sections.
+      if(typeof entry === "string"){
+        const g = document.createElement("div");
+        g.className = "grp"; g.textContent = entry;
+        rootAppend(g);
+        continue;
+      }
+      const [key, label, min, max, step] = entry;
       const row = document.createElement("div"); row.className = "row";
       const l = document.createElement("label"); l.textContent = label; l.title = key;
       const s = document.createElement("input");
@@ -159,7 +166,8 @@ export function createPanel({setPipeline, getPipelineName}){
       const o = document.createElement("input"); o.className = "val"; o.value = fmt(tune[key]);
       s.addEventListener("input", ()=>{ tune[key] = +s.value; o.value = fmt(+s.value); });
       o.addEventListener("change", ()=>{ const v = +o.value; if(isFinite(v)){ tune[key] = v; s.value = v; } });
-      outs.push(()=>{ s.value = tune[key]; if(document.activeElement !== o) o.value = fmt(tune[key]); });
+      // shadow.activeElement, not document's — inside a shadow root the document only sees the host.
+      outs.push(()=>{ s.value = tune[key]; if(shadow.activeElement !== o) o.value = fmt(tune[key]); });
       row.append(l, s, o);
       rootAppend(row);
     }
@@ -230,10 +238,9 @@ export function createPanel({setPipeline, getPipelineName}){
   }
 
   const retroOuts = section("retro", retroTune, RETRO_SLIDERS, RETRO_CHECKS);
-  const splatOuts = section("splat", splatTune, SPLAT_SLIDERS, SPLAT_CHECKS, SPLAT_SELECTS);
-  // full and toon ship their own panel descriptions — consumed as-is.
-  const fullOuts = section("full", fullTune, FULL_SPEC.sliders, FULL_SPEC.checks, FULL_SPEC.selects);
+  // toon and pixel ship their own panel descriptions — consumed as-is.
   const toonOuts = section("toon", toonTune, TOON_SPEC.sliders, TOON_SPEC.checks, TOON_SPEC.selects);
+  const pixelOuts = section("pixel", pixelTune, PIXEL_SPEC.sliders, PIXEL_SPEC.checks, PIXEL_SPEC.selects);
 
   // Shown instead of a section when the untuned "current" pipeline is active.
   const noKnobs = document.createElement("div");
@@ -254,14 +261,14 @@ export function createPanel({setPipeline, getPipelineName}){
     if(radios[name] && !radios[name].checked) radios[name].checked = true;
     // Only the active pipeline's knobs are shown; the others' state persists hidden.
     for(const [key, box] of Object.entries(sections)){
-      box.style.display = key === name ? "block" : "none";
+      // "" (not "block") so the .sect grid rule from the stylesheet applies when visible.
+      box.style.display = key === name ? "" : "none";
       box.classList.toggle("active", key === name);
     }
     noKnobs.style.display = name === "current" ? "block" : "none";
     for(const refresh of retroOuts) refresh();
-    for(const refresh of splatOuts) refresh();
-    for(const refresh of fullOuts) refresh();
     for(const refresh of toonOuts) refresh();
+    for(const refresh of pixelOuts) refresh();
   }
 
   function toggle(force){

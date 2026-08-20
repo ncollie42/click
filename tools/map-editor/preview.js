@@ -308,7 +308,7 @@ export function createTerrainPreview({canvas}){
         resizePipeline(width, height);
       }
       applyCamera();
-      // Same registry as the game: F9 cycles current/retro/splat/full, R opens the slider panel.
+      // Same registry as the game: F9 cycles current/retro/toon/pixel, R opens the slider panel.
       // The "current" pipeline reproduces the old direct draw exactly (it calls waterPrePass()
       // with no size, which is the old water.update(camera) — waves + pre-pass — then renders).
       // Caveat, deliberate: this renderer tone-maps (ACES); three skips tone mapping into

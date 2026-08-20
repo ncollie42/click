@@ -45,6 +45,11 @@ export function createPostStage(THREE, makeMaterial){
     rt: null,
     material: makeMaterial(THREE),
     size: [0, 0],                 // targetSize writes here — no per-frame allocation
+    // snapCamera writes the sub-pixel remainder here, in OUTPUT TEXELS ([-0.5, 0.5] each axis):
+    // how far the true camera sits right/up of the snapped one. A composite that samples its RT at
+    // uv + remainder*texel reconstructs the un-snapped view (Red Giraffe's offset-quad upscale),
+    // so pans glide instead of stepping whole texels. Zeroed when the snap doesn't run.
+    snapRemainder: [0, 0],
   };
   const bufSize = new THREE.Vector2();
   const savedPos = new THREE.Vector3();
@@ -110,6 +115,7 @@ export function createPostStage(THREE, makeMaterial){
    * exact frustum for ortho. Returns true when unsnap() must run.
    */
   stage.snapCamera = (cam, w, h) => {
+    stage.snapRemainder[0] = 0; stage.snapRemainder[1] = 0;
     cam.updateMatrixWorld();
     const e = cam.matrixWorld.elements;
     axisR.set(e[0], e[1], e[2]); axisU.set(e[4], e[5], e[6]); axisF.set(-e[8], -e[9], -e[10]);
@@ -127,6 +133,9 @@ export function createPostStage(THREE, makeMaterial){
     if(!(unitX > 0) || !(unitY > 0) || !isFinite(unitX) || !isFinite(unitY)) return false;
     savedPos.copy(cam.position);
     const dr = cam.position.dot(axisR), du = cam.position.dot(axisU);
+    const tx = dr / unitX, ty = du / unitY;
+    stage.snapRemainder[0] = tx - Math.round(tx);
+    stage.snapRemainder[1] = ty - Math.round(ty);
     cam.position
       .addScaledVector(axisR, Math.round(dr / unitX) * unitX - dr)
       .addScaledVector(axisU, Math.round(du / unitY) * unitY - du);
