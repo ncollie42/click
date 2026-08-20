@@ -611,28 +611,24 @@ query("uResetCamera").onclick = () => preview.resetCamera();
 query("uGameView").onclick = () => preview.gameView();
 // ── water tab ────────────────────────────────────────────────────────────────
 // One fieldset owns the audition: the mode select picks the treatment and stamps data-water-mode so
-// the CSS shows only the sliders that mode reads (mode 5 "voyage" adds tint/distortion/wave
-// speed/whitecaps/reflection on top of the shared height/foam/fade). Every knob pushes the whole slider set through setParams, so
-// the DOM stays the single source of truth; the reflection toggle rides along as 0/1 because
-// setParams validates numbers only (see water-modes.js).
+// the CSS shows only the sliders that mode reads. Every knob pushes the whole slider set through
+// setParams, so the DOM stays the single source of truth. (A "voyage/ocean" mode 5 with its own
+// slider group was auditioned here and benched — docs/water.md; implementation at commit ffe6b95.)
 const WATER_SLIDERS = {
   uWaterAmp: "amp", uWaterFoam: "foam", uWaterFade: "fade",
-  uWaterTint: "tint", uWaterDistort: "distort", uWaterDistortSpeed: "distortSpeed",
-  uWaterWaveSpeed: "waveSpeed", uWaterCaps: "caps", uWaterReflect: "reflect",
 };
 function applyWaterMode(next){
   query("waterControls").dataset.waterMode = String(next);
   preview.setWaterMode(next);
 }
 function waterParamsFromUI(){
-  const partial = {reflectOn: query("uWaterReflectOn").checked ? 1 : 0};
+  const partial = {};
   for(const [sliderId, param] of Object.entries(WATER_SLIDERS)) partial[param] = Number(query(sliderId).value);
   return partial;
 }
 const pushWaterParams = () => preview.setWaterParams(waterParamsFromUI());
 query("uWaterMode").onchange = event => applyWaterMode(Number(event.target.value));
 for(const sliderId of Object.keys(WATER_SLIDERS)) query(sliderId).oninput = pushWaterParams;
-query("uWaterReflectOn").onchange = pushWaterParams;   // off = the mirrored camera pass is skipped entirely
 query("uWaterShoreDepth").onchange = event => preview.setShoreDepth(Number(event.target.value));  // rebuilds terrain: on release, not per-tick
 // Controls are the source of truth on boot so UI and preview state always agree.
 pushWaterParams();

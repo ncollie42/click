@@ -82,12 +82,10 @@ body[data-region-selected="false"] #scatterSelectionControls{display:none}
 
 /* Water tab: the mode select plus one slider group per candidate. #waterControls[data-water-mode]
    (written by editor.js) reveals only the groups the active mode actually reads — flat water has no
-   knobs at all, voyage adds tint/distortion/reflection on top of the shared height/foam/fade. */
+   knobs at all. */
 #waterControls{flex-direction:column;gap:6px}
-#waterTuning,#waterVoyageTuning{display:grid;gap:3px;width:100%}
-#waterTuning label,#waterVoyageTuning label{display:flex;align-items:center;justify-content:space-between;gap:8px}
-#waterTuning input[type=range],#waterVoyageTuning input[type=range]{width:120px}
-#waterVoyageTuning{display:none;border-top:1px solid #46503d;padding-top:5px}
-#waterControls[data-water-mode="5"] #waterVoyageTuning{display:grid}
+#waterTuning{display:grid;gap:3px;width:100%}
+#waterTuning label{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#waterTuning input[type=range]{width:120px}
 #waterControls[data-water-mode="0"] #waterTuning{display:none}
 
