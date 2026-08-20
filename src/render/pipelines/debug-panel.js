@@ -1,5 +1,5 @@
-// Owns: the renderer debug window — a floating panel of sliders over retroTune / toonTune /
-// pixelTune plus the pipeline switch. Toggled with R (wired in pipelines/index.js, which
+// Owns: the renderer debug window — a floating panel of sliders over pixelTune plus the
+// pipeline switch. Toggled with R (wired in pipelines/index.js, which
 // lazy-imports this file on the first press, so the game's load path never pays for it).
 // Everything here is DOM the panel itself creates; it never touches the game canvas, the
 // view-debugger, or scene.js. The tune objects are live-read by the pipelines every frame, so a
@@ -10,26 +10,7 @@
 // the panel is open), then a section per pipeline. Each section header shows a dot when its
 // pipeline is the active one. Reset buttons restore the values captured at first open.
 
-import {retroTune} from "./retro.js";
-import {toonTune, PANEL_SPEC as TOON_SPEC} from "./toon.js";
 import {pixelTune, PANEL_SPEC as PIXEL_SPEC} from "./pixel.js";
-
-// [key, label, min, max, step] for sliders; ["key", label] for checkboxes; selects carry options.
-const RETRO_SLIDERS = [
-  ["targetHeight",   "target height px", 64, 1080, 4],
-  ["pixelScale",     "pixel scale (0=off)", 0, 1, 0.05],
-  ["bands",          "posterize bands", 2, 64, 1],
-  ["outlineStrength","outline strength", 0, 4, 0.25],
-  ["depthEdge",      "silhouette thresh", 0.0001, 0.02, 0.0001],
-  ["creaseThreshold","crease thresh", 0, 1, 0.01],
-  ["creaseStrength", "crease strength", 0, 4, 0.25],
-  ["edgeHighlight",  "edge highlight (nrm)", 0, 4, 0.25],
-  ["normalThreshold","normal thresh", 0.01, 1, 0.01],
-];
-const RETRO_CHECKS = [
-  ["posterize","posterize"], ["outlines","outlines"], ["creases","creases"], ["snap","camera snap"],
-  ["normalEdges","normal edges (hello-threejs)"],
-];
 
 const CSS = `
 #rpDebug{position:fixed;top:12px;right:12px;z-index:10000;width:min(620px,calc(100vw - 24px));
@@ -73,9 +54,9 @@ function fmt(v){ return Math.abs(v) >= 100 ? String(Math.round(v)) : String(+v.t
 
 /** Built once by createPanel(); everything else is closure state inside it. */
 export function createPanel({setPipeline, getPipelineName}){
-  // structuredClone, not spread: toonTune.palette is an ARRAY — a shallow copy would share it and
-  // an in-place palette edit would silently corrupt the "default" that reset restores (codex catch).
-  const defaults = structuredClone({retro: retroTune, toon: toonTune, pixel: pixelTune});
+  // structuredClone, not spread: pixelTune.palette can be an ARRAY — a shallow copy would share it
+  // and an in-place palette edit would silently corrupt the "default" that reset restores.
+  const defaults = structuredClone({pixel: pixelTune});
   // Shadow DOM, not a bare div: the game's stylesheet has GLOBAL tag rules (styles.css
   // `button{width:100%;padding:7px;...}`, dark input colors) that mangled the panel when it lived
   // in the light DOM — stretched buttons, invisible readout text. The shadow boundary keeps both
@@ -118,7 +99,7 @@ export function createPanel({setPipeline, getPipelineName}){
   const pipes = document.createElement("div");
   pipes.className = "pipes";
   const radios = {};
-  for(const name of ["current","retro","toon","pixel"]){
+  for(const name of ["current","pixel"]){
     const l = document.createElement("label");
     const r = document.createElement("input");
     r.type = "radio"; r.name = "rpPipe"; r.value = name;
@@ -237,9 +218,7 @@ export function createPanel({setPipeline, getPipelineName}){
     return outs;
   }
 
-  const retroOuts = section("retro", retroTune, RETRO_SLIDERS, RETRO_CHECKS);
-  // toon and pixel ship their own panel descriptions — consumed as-is.
-  const toonOuts = section("toon", toonTune, TOON_SPEC.sliders, TOON_SPEC.checks, TOON_SPEC.selects);
+  // pixel ships its own panel description — consumed as-is.
   const pixelOuts = section("pixel", pixelTune, PIXEL_SPEC.sliders, PIXEL_SPEC.checks, PIXEL_SPEC.selects);
 
   // Shown instead of a section when the untuned "current" pipeline is active.
@@ -266,8 +245,6 @@ export function createPanel({setPipeline, getPipelineName}){
       box.classList.toggle("active", key === name);
     }
     noKnobs.style.display = name === "current" ? "block" : "none";
-    for(const refresh of retroOuts) refresh();
-    for(const refresh of toonOuts) refresh();
     for(const refresh of pixelOuts) refresh();
   }
 

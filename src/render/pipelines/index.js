@@ -3,7 +3,7 @@
 // here reaches back into scene.js, so there are no import cycles — pipeline modules are loaded
 // lazily on first activation.
 //
-// Pipeline contract (what retro.js / pixel.js must export as default):
+// Pipeline contract (what pixel.js must export as default):
 //   {
 //     name: string,
 //     init(ctx)?     — once, on first activation. May allocate targets/materials.
@@ -20,14 +20,14 @@
 //   - Pipelines own their offscreen targets and must leave renderer state (render target,
 //     override material, camera layers, shadowMap.autoUpdate) restored on return.
 //
-// Switching: F9 cycles current → retro → toon → pixel. Persisted in localStorage "click.pipeline"
-// so a reload keeps the chosen pipeline (a stale saved name — e.g. the deleted splat/full — fails
-// the PIPELINES check below and quietly falls back to "current"). A pipeline that throws during
-// init/render is benched (falls back to "current") instead of black-screening the game.
-// splat/full (texel splatting) were deleted Aug 19 2026 after the atlas review — recover from git
-// history (last present at commit c96104a) if world-anchored texels are ever wanted again.
+// Switching: F9 toggles current ↔ pixel. Persisted in localStorage "click.pipeline" so a reload
+// keeps the chosen pipeline (a stale saved name — e.g. a deleted pipeline — fails the PIPELINES
+// check below and quietly falls back to "current"). A pipeline that throws during init/render is
+// benched (falls back to "current") instead of black-screening the game.
+// The bake-off losers are deleted, recoverable from git: splat/full (texel splatting) at c96104a,
+// retro/toon (pixel's merged parents) at 43ad59b.
 
-const PIPELINES = ["current", "retro", "toon", "pixel"];
+const PIPELINES = ["current", "pixel"];
 const STORAGE_KEY = "click.pipeline";
 // Blocked storage (private browsing, quota) must never take the renderer down with it — codex
 // review caught all three call sites throwing into init, setPipeline and the bench-recovery path.
@@ -42,8 +42,6 @@ let loading = false;
 const benched = new Set();  // pipelines that threw; skipped when cycling until reload
 
 function loaderFor(name){
-  if(name === "retro") return import("./retro.js");
-  if(name === "toon") return import("./toon.js");
   if(name === "pixel") return import("./pixel.js");
   return null;
 }

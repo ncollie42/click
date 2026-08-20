@@ -1,9 +1,10 @@
-// Owns: the "pixel" render pipeline — the MERGED best-of of retro + toon, plus the wins the
+// Owns: the "pixel" render pipeline — THE renderer pick: the merged best-of of the retro and
+// toon experiments (both deleted at 43ad59b after judging), plus the wins the
 // Aug 19 research pass surfaced (Red Giraffe "Pixel Perfect", hello-threejs, Photosounder pixel
 // math; full map in the Pixel Rendering Atlas artifact). Same borrowed-object discipline as
 // retro/toon: everything comes through ctx, every borrowed object is restored on return.
 //
-// What it takes from each parent (both stay in the registry until nico judges this one):
+// What it took from each parent (deleted at 43ad59b; recover from git if ever needed):
 //   retro — depth-Laplacian silhouettes + crease modes (depth-tangent or hello-threejs normal
 //           buffer), outlines applied as an OKLab lightness step of the pixel's OWN colour
 //           ("selout": the ink inherits the material, and lands on a real band once quantized).
@@ -29,16 +30,16 @@
 //   0. camera texel snap (post-stage) — also records the sub-pixel remainder.
 //   1. ctx.waterPrePass(rtW, rtH)
 //   2. scene → low-res colour+depth target (NEAREST both ways = the upscale)
-//   2b. optional normals pass (normalEdges mode, +1 scene draw, shadows frozen — as retro)
+//   2b. optional normals pass (normalEdges mode, +1 scene draw, shadows frozen)
 //   3. fullscreen composite, in Red Giraffe's order: sharpen → cloud shadow (pre-quantize fold)
 //      → outline band-shift (OKLab, selout) → quantize (one of three modes) → encode.
 //
 // Quantize modes (`quantizeMode`):
 //   0 oklab bands — retro's look: 32-band OKLab lightness posterize + blue shift (default).
 //   1 rgb levels  — toon's look: display-space per-channel floor + Bayer dither.
-//   2 palette     — nearest-in-OKLab against toonTune-style authored palette (dithered on L).
+//   2 palette     — nearest-in-OKLab against an authored palette tier (dithered on L).
 //
-// COLOR SPACE / precision: identical to retro.js (read its header) — linear RT (HalfFloat when the
+// COLOR SPACE / precision: see post-stage.js's COLOR SPACE header — linear RT (HalfFloat when the
 // driver can render to it; the RGBA8 fallback WILL band in the darks before any quantizer runs),
 // manual sRGB encode in the composite, gated on renderer.outputColorSpace.
 
@@ -144,7 +145,7 @@ const FRAG = /* glsl */`
 #include <packing>
 
 // highp on both data samplers — sampler precision defaults to lowp in ES 1.00, which quantizes
-// depth reads and clips the RGBA16F colour target (same trap documented on retro.js / water).
+// depth reads and clips the RGBA16F colour target (same trap as scene.js's water shader).
 uniform highp sampler2D uColor;
 uniform highp sampler2D uDepth;
 uniform sampler2D uNormal;      // only sampled when uNormalEdges is on
@@ -174,7 +175,7 @@ varying vec2 vUv;
 
 ${GLSL_DEPTH_HELPERS}
 ${GLSL_SRGB_ENCODE}
-// ── OKLab (linear sRGB ⇄ OKLab) — same constants as retro.js / pixel reference ──
+// ── OKLab (linear sRGB ⇄ OKLab), ported verbatim from pixel/source/lighting.glsl ──
 vec3 toOKLab(vec3 c){
   float l = 0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b;
   float m = 0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b;
@@ -202,7 +203,7 @@ vec3 fromOKLab(vec3 lab){
   );
 }
 
-// ── value-noise fBm over world XZ (the cloud field) — as toon.js ──
+// ── value-noise fBm over world XZ (the cloud field). Cheap, tileless, deterministic. ──
 float hash21(vec2 p){
   p = fract(p * vec2(234.34, 435.345));
   p += dot(p, p + 34.23);
@@ -220,7 +221,7 @@ float fbm(vec2 p){
   return v;
 }
 
-// ── Bayer 4x4 threshold, float-only lookup — as toon.js ──
+// ── Bayer 4x4 threshold, float-only lookup (no bitwise, no dynamic component index) ──
 float bayer4(vec2 px){
   int x = int(mod(px.x, 4.0)), y = int(mod(px.y, 4.0));
   int i = y * 4 + x;
@@ -255,7 +256,8 @@ void main(){
   float zC = viewDist(uv);
 
   if(uClouds > 0.5 && zC < uFar * 0.99){
-    // Sun-projected cloud plane, banded coverage, folded pre-quantize — toon.js verbatim.
+    // Sun-projected cloud plane, banded coverage, folded pre-quantize (Voyage fold +
+    // Red Giraffe projection; see the header).
     vec3 world = (uCamWorld * vec4(viewPosOf(uv, zC), 1.0)).xyz;
     vec2 cloudUv = world.xz;
     if(uSunDir.y > 0.08){
@@ -269,7 +271,7 @@ void main(){
   }
 
   if(uOutlines > 0.5){
-    // retro.js verbatim: depth-Laplacian silhouettes (near side only → 1px), then one of two
+    // Depth-Laplacian silhouettes (near side only → 1px), then one of two
     // crease detectors. bandShift is applied to the pixel's OWN colour in OKLab — selout.
     float zR = viewDist(uv + dx);
     float zL = viewDist(uv - dx);
@@ -427,7 +429,7 @@ function releaseNormalTarget(){
   normalRt = null;
   if(uniforms) uniforms.uNormal.value = null;
 }
-/** As retro.js: allocated only while normalEdges is on; RGBA8 is plenty for packed normals. */
+/** Allocated only while normalEdges is on; RGBA8 is plenty for packed normals. */
 function ensureNormalTarget(THREE, w, h){
   if(normalRt && normalRt.width === w && normalRt.height === h) return;
   releaseNormalTarget();
@@ -524,7 +526,7 @@ export default {
       renderer.setRenderTarget(stage.rt);
       renderer.render(scene, cam);
       if(normalEdgesOn){
-        // As retro.js: whole scene under MeshNormalMaterial, shadows frozen, override restored
+        // Normals pass: whole scene under MeshNormalMaterial, shadows frozen, override restored
         // in the inner finally.
         if(!normalMat) normalMat = new THREE.MeshNormalMaterial();
         ensureNormalTarget(THREE, w, h);

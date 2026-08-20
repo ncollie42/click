@@ -1,14 +1,22 @@
 // Owns: the scaffolding every post-process pipeline shares — the low-res colour+depth target, the
-// fullscreen-triangle composite, output sizing, and the camera texel snap. retro.js and toon.js
-// consume one stage instance each; their identity lives entirely in their fragment shaders and
-// tunables. Extracted (with nico's consolidation license) after the two files had ~200 duplicated
-// lines and a codex review flagged per-frame [w,h] garbage and a composite that could land in a
-// host-bound target instead of the default framebuffer — both fixed here, once.
+// fullscreen-triangle composite, output sizing, and the camera texel snap. pixel.js consumes one
+// stage instance; its identity lives entirely in its fragment shader and tunables. (Extracted when
+// retro/toon — pixel's merged parents, deleted at 43ad59b — had ~200 duplicated lines; a codex
+// review flagged per-frame [w,h] garbage and a composite that could land in a host-bound target
+// instead of the default framebuffer — both fixed here, once.)
 //
-// GLSL building blocks are exported as string chunks so each pipeline's shader stays one readable
+// COLOR SPACE (deliberate; read before touching the encode): three r160 only honours a render
+// target's texture colorSpace for XR targets — WebGLPrograms picks `currentRenderTarget === null
+// ? renderer.outputColorSpace : LinearSRGBColorSpace` — so a scene rendered into ANY ordinary
+// offscreen target comes out LINEAR regardless of what rt.texture.colorSpace says. The target
+// therefore stays linear and the pipeline's composite does the sRGB encode itself
+// (GLSL_SRGB_ENCODE is byte-for-byte three's LinearTosRGB), gated on renderer.outputColorSpace so
+// a host change can't double-convert. That keeps a pipeline exactly as bright as "current" with
+// its effects off, instead of the washed-out (double-encoded) or muddy (never-encoded) failures.
+//
+// GLSL building blocks are exported as string chunks so the pipeline's shader stays one readable
 // literal: GLSL_DEPTH_HELPERS (viewDist/viewPosOf over the shared uDepth/uUnproj/uNear/uFar/uOrtho
-// uniform set) and GLSL_SRGB_ENCODE (three's exact LinearTosRGB — see retro.js COLOR SPACE for why
-// the encode is manual: three cannot encode into an ordinary offscreen target).
+// uniform set) and GLSL_SRGB_ENCODE (see COLOR SPACE above for why the encode is manual).
 
 export const GLSL_DEPTH_HELPERS = /* glsl */`
 float viewDist(vec2 uv){
@@ -90,7 +98,7 @@ export function createPostStage(THREE, makeMaterial){
       format: THREE.RGBAFormat, type: stage.targetType(renderer),
       depthBuffer: true, stencilBuffer: false, depthTexture: depth,
     });
-    // Stays linear on purpose; the composite owns the sRGB encode (see retro.js COLOR SPACE).
+    // Stays linear on purpose; the composite owns the sRGB encode (see COLOR SPACE in the header).
     stage.rt.texture.colorSpace = THREE.LinearSRGBColorSpace;
     stage.rt.texture.generateMipmaps = false;
     return true;

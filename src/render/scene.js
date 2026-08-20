@@ -2207,8 +2207,8 @@ export function drawScene(){
   return orbited;
 }
 /** The draw call itself, split from drawScene() so pins land in the scene before it runs.
- * Routed through the pipeline registry: "current" reproduces the direct draw exactly; "retro"/
- * "toon"/"pixel" are the experimental pixel-art pipelines (F9 cycles, see src/render/pipelines/). */
+ * Routed through the pipeline registry: "current" reproduces the direct draw exactly; "pixel" is
+ * the shipped pixel-art pipeline (F9 toggles, see src/render/pipelines/). */
 export function renderScene(){ renderFrame(); }
 
 configurePipelines({
