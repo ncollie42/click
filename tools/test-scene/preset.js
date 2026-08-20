@@ -155,7 +155,8 @@ export const TERRAIN = {
 // defaults, same one-source-of-truth rule as PIXEL_PRESET/pixelTune — `tune` carries only diffs).
 // span 180 (not the full 320 plane): the default frame's ground footprint is ~74x77 wu around the
 // origin target; 180 covers every pose the camera panel can reach without paying 3x the instances
-// for meadow no camera sees. At density 1.6 that is ~40k quads (minus dirt culls) in ONE draw.
+// for meadow no camera sees. Instance count follows grassTune.density (~97k at the shipped 3.0,
+// minus dirt culls) in ONE draw.
 export const GRASS = {
   span: 180,
   tune: {},

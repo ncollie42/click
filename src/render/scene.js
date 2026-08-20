@@ -60,7 +60,8 @@ import {
   vacuumRadius,terrainAtRasterCell,terrainMetadata,terrainRaisedAtCell,vegetationMetadata,
   clamp, distance, setCameraZoom
 } from "../game/simulation.js";
-import {LAND} from "../game/authored-map.js";
+import {LAND, TERRAIN_CELL_SIZE} from "../game/authored-map.js";
+import {createGrass, grassTune, GRASS_PANEL} from "./grass.js";
 import {buildModuleCatalog,SHAPE_GEOMETRY,rotateShapePoint} from "../game/terrain-modules.js";
 import {solveTerrainWfc} from "../game/terrain-wfc.js";
 
@@ -266,9 +267,9 @@ const GRASS_TILE_PX=64,GRASS_TEXTURE_BYTES=GRASS_TILE_PX*GRASS_TILE_PX*4;
 const grassLayer=document.createElement("canvas");grassLayer.width=grassLayer.height=GRASS_TILE_PX;
 (function bakeGrass(){
   // Flat fill (owner pick, Aug 19): the old 8px checker + speck noise read as dirt once the pixel
-  // pipeline quantizes it. Real grass presentation comes later; until then the ground is one
-  // colour and the REGION_COLORS vertex tints below carry all macro variation. The old bake is in
-  // git history if the speckled look is ever wanted back.
+  // pipeline quantizes it. The ground stays one colour and the REGION_COLORS vertex tints below
+  // carry all macro variation — the blade layer on top is the meadow (syncMeadow below, built on
+  // src/render/grass.js). The old bake is in git history if the speckled look is ever wanted back.
   const c=grassLayer.getContext("2d");c.imageSmoothingEnabled=false;
   c.fillStyle=css(PAL.grass);c.fillRect(0,0,GRASS_TILE_PX,GRASS_TILE_PX);
 })();
@@ -618,6 +619,145 @@ function syncGrass(){
     grassMatrix.compose(grassPosition,grassRotation,grassScale);grassInstances.setMatrixAt(index,grassMatrix);grassInstances.setColorAt(index,new THREE.Color(PAL.grassTuft[variant]));
   });
   grassInstances.instanceMatrix.needsUpdate=true;if(grassInstances.instanceColor)grassInstances.instanceColor.needsUpdate=true;scene.add(grassInstances);builtVegetationRevision=revisionKey;
+}
+
+// ── the meadow: instanced grass blades (src/render/grass.js) ────────────────
+// The "real grass presentation" the flat-fill bake above waits for. One instanced draw over the
+// whole map: blades spawn on LAND raster cells (16px = 1 wu resolution) outside fog, ride the
+// raised layer's lift, and take the flat meadow albedo (raised cells read 12% lighter, matching
+// tintFor). Terrain relocation and fog clears re-sample via the revision key; entities bend
+// blades through the pusher API every frame. All look knobs live in grassTune (R panel "grass").
+const meadowSample = (() => {
+  const base = new THREE.Color(PAL.grass);
+  const raisedTint = base.clone().lerp(new THREE.Color(0xffffff), .12);
+  const SKIP = {skip: true}, UP = [0, 1, 0];
+  return (x, z) => {
+    const px = x / S, py = z / S;
+    if(px < 0 || py < 0 || px >= W || py >= H) return SKIP;
+    if(terrainAtRasterCell(Math.floor(px / TERRAIN_CELL_SIZE), Math.floor(py / TERRAIN_CELL_SIZE)) !== LAND) return SKIP;
+    if(fogAtPoint(px, py)) return SKIP;
+    const lift = terrainLiftAt(px, py);
+    const c = lift > 0 ? raisedTint : base;
+    // +0.03 keeps blade roots from z-fighting the terrain top at grazing camera pitches.
+    return {height: lift + .03, normal: UP, color: [c.r, c.g, c.b], dirt: 0};
+  };
+})();
+// ── wear field: the 0..1 bare-ground map (grass.js setWearMap) ──────────────
+// One R8 texture at 1 texel/wu over the whole map; blades shrink with its value, and its LINEAR
+// filtering is the clearing's drop-off rim. Composition, refreshed on a ~20Hz tick:
+//   pixels = min(1, STATIC + TRAMPLE)
+//   STATIC  — permanent stamps: the base, building footprint RECTS (+1 wu feathered rim), and a
+//             grassTune.clearRadius circle on every resource node. Restamped when the stamp
+//             population or clearRadius changes.
+//   TRAMPLE — walking units add grassTune.trampleRate/s under themselves (cap trampleMax, so
+//             paths flatten but never go permanently bare), decaying over regrowSec.
+// Authored dirt regions would stamp into STATIC too — none exist in the game yet.
+const WEAR_W = Math.max(2, Math.round(WU)), WEAR_H = Math.max(2, Math.round(HU));
+const wearStatic = new Float32Array(WEAR_W * WEAR_H);
+const wearTrample = new Float32Array(WEAR_W * WEAR_H);
+const wearPixels = new Uint8Array(WEAR_W * WEAR_H);
+const wearTex = new THREE.DataTexture(wearPixels, WEAR_W, WEAR_H, THREE.RedFormat, THREE.UnsignedByteType);
+wearTex.magFilter = wearTex.minFilter = THREE.LinearFilter;
+wearTex.generateMipmaps = false;
+wearTex.unpackAlignment = 1;
+wearTex.needsUpdate = true;
+/** Max-combine a smoothstep circle into `arr` (wu coords; texel centers sit at +0.5). */
+function stampWear(arr, x, z, r, peak){
+  const x0 = Math.max(0, Math.floor(x - r)), x1 = Math.min(WEAR_W - 1, Math.ceil(x + r));
+  const z0 = Math.max(0, Math.floor(z - r)), z1 = Math.min(WEAR_H - 1, Math.ceil(z + r));
+  for(let ty = z0; ty <= z1; ty++) for(let tx = x0; tx <= x1; tx++){
+    const t = 1 - Math.hypot(tx + .5 - x, ty + .5 - z) / r;
+    if(t <= 0) continue;
+    const v = peak * t * t * (3 - 2 * t);
+    const i = ty * WEAR_W + tx;
+    if(v > arr[i]) arr[i] = v;
+  }
+}
+/** Max-combine a rectangle (full peak inside) with a `feather`-wide smoothstep rim — distance
+ *  to the rect, so the rim is even on sides AND corners. cx/cz center, hx/hz half-extents, wu. */
+function stampWearRect(arr, cx, cz, hx, hz, feather, peak){
+  const x0 = Math.max(0, Math.floor(cx - hx - feather)), x1 = Math.min(WEAR_W - 1, Math.ceil(cx + hx + feather));
+  const z0 = Math.max(0, Math.floor(cz - hz - feather)), z1 = Math.min(WEAR_H - 1, Math.ceil(cz + hz + feather));
+  for(let ty = z0; ty <= z1; ty++) for(let tx = x0; tx <= x1; tx++){
+    const dx = Math.max(0, Math.abs(tx + .5 - cx) - hx), dz = Math.max(0, Math.abs(ty + .5 - cz) - hz);
+    const t = 1 - Math.hypot(dx, dz) / feather;   // d=0 inside the rect, so t=1 = full peak there
+    if(t <= 0) continue;
+    const v = peak * t * t * (3 - 2 * t);
+    const i = ty * WEAR_W + tx;
+    if(v > arr[i]) arr[i] = v;
+  }
+}
+function rebuildWearStatic(){
+  wearStatic.fill(0);
+  stampWear(wearStatic, gx(BASE.x), gz(BASE.y), BASE.r * S + 1.5, 1);
+  for(const b of buildings){
+    // The ACTUAL grid footprint (owner ask): full wear across exactly the covered cells, then a
+    // 1 wu feathered rim, even on sides and corners. House/tower models also carry their own
+    // footprint floor pad (models.js makeFootprintFloor), so the footprint itself is bare by
+    // construction — the stamp's job is the rim, and a few rim blades overlapping the building
+    // edge is wanted ("a tad", owner call).
+    const fp = buildingFootprint(b.type);
+    stampWearRect(wearStatic, gx(b.x), gz(b.y), fp.w * CELL * S / 2, fp.h * CELL * S / 2, 1, 1);
+  }
+  const r = grassTune.clearRadius;
+  if(r > 0) for(const list of [trees, rocks, diamonds])
+    for(const e of list) stampWear(wearStatic, gx(e.x), gz(e.y), r, .95);
+}
+let wearStaticKey = "", lastWearT = 0;
+function syncWear(time, pushers){
+  const key = buildings.length + ":" + trees.length + ":" + rocks.length + ":" + diamonds.length
+            + ":" + grassTune.clearRadius;
+  if(time - lastWearT < .05 && key === wearStaticKey) return;
+  if(key !== wearStaticKey){ rebuildWearStatic(); wearStaticKey = key; }
+  const dt = Math.min(.25, Math.max(0, time - lastWearT));
+  lastWearT = time;
+  const decay = Math.exp(-dt / Math.max(1, grassTune.regrowSec));
+  const add = grassTune.trampleRate * dt, cap = grassTune.trampleMax;
+  for(let i = 0; i < wearTrample.length; i++) wearTrample[i] *= decay;
+  if(add > 0 && cap > 0) for(const p of pushers){
+    const r = p.r * .55;   // trample under the body, narrower than the visual push radius
+    const x0 = Math.max(0, Math.floor(p.x - r)), x1 = Math.min(WEAR_W - 1, Math.ceil(p.x + r));
+    const z0 = Math.max(0, Math.floor(p.z - r)), z1 = Math.min(WEAR_H - 1, Math.ceil(p.z + r));
+    for(let ty = z0; ty <= z1; ty++) for(let tx = x0; tx <= x1; tx++){
+      const t = 1 - Math.hypot(tx + .5 - p.x, ty + .5 - p.z) / r;
+      if(t <= 0) continue;
+      const i = ty * WEAR_W + tx;
+      wearTrample[i] = Math.min(cap, wearTrample[i] + add * t * t * (3 - 2 * t));
+    }
+  }
+  for(let i = 0; i < wearPixels.length; i++)
+    wearPixels[i] = Math.min(255, Math.round((wearStatic[i] + wearTrample[i]) * 255));
+  wearTex.needsUpdate = true;
+}
+
+let meadow = null, meadowKey = "";
+function syncMeadow(time){
+  const key = terrainMetadata().revision + ":" + fogMetadata().revision;
+  if(!meadow){
+    meadow = createGrass(THREE, {seed: (terrainMetadata().seed ?? 1) | 0,
+                                 region: {x0: 0, z0: 0, x1: WU, z1: HU}, sample: meadowSample});
+    meadow.setWearMap(wearTex);
+    scene.add(meadow.mesh);
+    meadowKey = key;
+  }else if(key !== meadowKey){
+    meadow.rebuild();
+    meadowKey = key;
+  }
+  // Pushers: everything that walks the meadow, in world units. Fog-dormant entities are hidden
+  // by the sync layers above, so they must not part grass either. The 32-slot cap is grass.js's;
+  // typical load (king + workers + enemies) sits well under it. The same list feeds the wear
+  // field's trample stamps, so what parts the grass is exactly what wears it down.
+  const pushers = [];
+  const push = (e, r) => { if(e && pushers.length < 32 && !fogAtPoint(e.x, e.y)) pushers.push({x: gx(e.x), z: gz(e.y), r}); };
+  push(state.king, 3);
+  for(const w of state.workers) push(w, 1.8);
+  push(heldWorker(), 1.8);
+  for(const e of state.enemies) push(e, 2.2);
+  for(const b of friendlyBrutes) push(b, 2.4);
+  for(const c of controlledEnemies) push(c, 2.2);
+  meadow.setPushers(pushers);
+  syncWear(time, pushers);
+  meadow.sync(time);
 }
 
 // ── instanced resource scatter ──────────────────────────────────────────────
@@ -2195,6 +2335,7 @@ export function drawScene(){
   // than a static import, so the pipeline module stays lazily loaded — when it has never loaded
   // ("current"-only session), the zeros mean stock lighting, which is exactly what "current" is.
   applyLightingMods(THREE, scene);
+  const lightTime = (performance.now() / 1000) % 100000;   // shared by light mods + the meadow
   {
     const tune = window.pixelTune;
     const materialMode = tune && tune.clouds !== false && tune.cloudsMode === "material";
@@ -2204,7 +2345,7 @@ export function drawScene(){
       cloudOffsetX: tune?.cloudOffsetX ?? 0, cloudOffsetZ: tune?.cloudOffsetZ ?? 0,
       cloudHeight: tune?.cloudHeight ?? 60,
       sunDir: _sunDirScratch.subVectors(sun.position, sun.target.position),
-      time: (performance.now() / 1000) % 100000,
+      time: lightTime,
       cloudShade: !!materialMode,
       toon: tune ? tune.toonRamp !== false : false,
     });
@@ -2224,6 +2365,7 @@ export function drawScene(){
   // Entities under standing fog are dormant in the simulation and hidden here; the held chest is
   // in the player's hand, so it renders regardless of what cell the cursor floats over.
   const revealed=e=>!fogAtPoint(e.x,e.y);
+  syncMeadow(lightTime);
   syncGrass();syncFog();syncFogPops();
   syncTrees(trees.filter(revealed)); syncRocks(rocks.filter(revealed)); syncDiamonds(diamonds.filter(revealed));
   const visibleChests=chests.filter(revealed);
@@ -2272,6 +2414,9 @@ configurePipelines({
   getSun: () => sun,
   waterPrePass,
   view,
+  // The R panel's pinned "grass" section — same section the test scene shows, over the same
+  // live grassTune, so a tuning found in either host applies to both.
+  panelSections: [{title: "grass", tune: grassTune, spec: GRASS_PANEL}],
   // The R panel's "camera / sun" section (debug-panel.js) — shared UI with the test scene.
   // Writes go through the SAME paths the view-debugger uses (view fields + placeCamera /
   // setOrthoCamera / setCameraZoom), so the two panels can never disagree about ownership.

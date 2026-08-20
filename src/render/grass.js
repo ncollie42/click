@@ -41,11 +41,14 @@ import {lightModsActive} from "./material-light-mods.js";
 export const grassTune = {
   enabled: true,
   // geometry knobs (any change = debounced CPU rebuild)
-  density: 1.6,        // blade quads per wu²
-  bladeH: 1.35,        // wu; ±25% per-instance jitter on top
-  bladeW: 1.05,        // wu; ±20% jitter
+  // Sized against the GAME's models (owner pass, Aug 20): the first-cut 1.05x1.35 blades read
+  // near tree-scale in-game on the solid sprite. Smaller quads at higher density keep the same
+  // ground coverage (density x W x H ≈ const) with sub-unit bump size.
+  density: 3.0,        // blade quads per wu²
+  bladeH: 0.85,        // wu; ±25% per-instance jitter on top
+  bladeW: 0.7,         // wu; ±20% jitter
   accentRatio: 0.06,   // fraction of quads promoted to accent blades
-  accentScale: 1.65,   // accent height multiplier (sprite variant 2, brightened)
+  accentScale: 1.45,   // accent height multiplier (sprite variant 2, brightened)
   dirtClear: 0.9,      // 1 = dirt patches fully clear of grass, 0 = grass everywhere
   // wind
   windDirDeg: 25,      // world azimuth the wind blows TOWARD (0 = +x, 90 = +z)
@@ -57,9 +60,20 @@ export const grassTune = {
   fps: 10,             // wind time quantize; 0 = smooth
   viewSway: 2.0,       // idle view-space sway, degrees (his "minimal levels" layer)
   viewSwayFreq: 1.4,   // Hz-ish
+  // pushers (setPushers API — moving things + gusts bend blades away from themselves)
+  pushAngle: 40,       // max lean away from a pusher, degrees (at falloff 1, i.e. dead centre)
+  pushFps: 20,         // pusher position quantize; a touch above the wind fps reads best (video's
+                       // note: fast movers under the wind's own fps look laggy). 0 = every frame
+  // wear (setWearMap API — the 0..1 bare-ground field; the HOST stamps it, these knobs are read
+  // by the host's stamping code so both hosts share one tuning home)
+  trampleRate: 0.9,    // wear added per second under a walking unit
+  trampleMax: 0.75,    // trample alone never exceeds this (flattened, not permanent dirt)
+  regrowSec: 18,       // trample decay time constant, seconds
+  clearRadius: 4.5,    // bare-circle radius around resource nodes, wu
   fakePersp: 0.5,      // 0..1 strength of the UV squash
-  sprite: "leaf",      // SPRITE_STYLES key — live texture swap, no rebuild. "leaf" is the owner
-                       // pick (Aug 20): the reference video's fat pinwheel sprite
+  sprite: "solid",     // SPRITE_STYLES key — live texture swap, no rebuild. Owner pick Aug 20
+                       // (in-game judging): the chunky rounded quads; "leaf" was the test-scene
+                       // pick and stays one select away
   billboard: "camera", // "camera" = full camera-plane quads · "upright" = world-up cylindrical
   // debug
   debugMode: 0,        // 0 off · 1 quads (no sprite/alpha — see the plane meshes) · 2 wind noise
@@ -87,12 +101,20 @@ export const GRASS_PANEL = {
     ["viewSway",      "idle sway deg", 0, 10, 0.25],
     ["viewSwayFreq",  "idle sway freq", 0.1, 5, 0.05],
     ["fakePersp",     "fake perspective", 0, 2, 0.05],
+    "push",
+    ["pushAngle",     "push lean deg", 0, 80, 1],
+    ["pushFps",       "push fps (0=every)", 0, 60, 1],
+    "wear",
+    ["trampleRate",   "trample /s", 0, 3, 0.05],
+    ["trampleMax",    "trample cap", 0, 1, 0.05],
+    ["regrowSec",     "regrow s", 1, 60, 1],
+    ["clearRadius",   "resource clear wu", 0, 6, 0.1],
   ],
   checks: [["enabled", "grass"], ["wireframe", "wireframe"]],
   selects: [
     ["sprite", "sprite", ["tufts", "leaf", "sprigs", "blades", "wisps", "solid"]],
     ["billboard", "billboard", [["camera", "camera-plane"], ["upright", "upright"]]],
-    ["debugMode", "debug view", [[0, "off"], [1, "quads"], [2, "wind noise"], [3, "flat color"], [4, "normals"]]],
+    ["debugMode", "debug view", [[0, "off"], [1, "quads"], [2, "wind noise"], [3, "flat color"], [4, "normals"], [5, "push"], [6, "wear"]]],
   ],
   tips: {
     density: "rebuilds ~250ms after the slider settles (CPU resample of the ground)",
@@ -101,13 +123,22 @@ export const GRASS_PANEL = {
     fps: "wind time is quantized per instance with a random phase, so updates don't all land on the same frame",
     fakePersp: "squashes the sprite toward the tip when the view is parallel to the wind — depth cue for near-ortho cameras",
     sprite: "blade atlas style (authored in grass.js SPRITE_STYLES; previews via tools/test-scene/grass-sprite.mjs)",
-    debugMode: "quads = full plane meshes, no sprite cutout; wind noise = the sampled wind field as albedo",
+    debugMode: "quads = full plane meshes, no sprite cutout; wind noise = the sampled wind field as albedo; push = pusher influence, blue→red; wear = bare-ground field on the surviving blades (worn blades shrink away)",
+    pushAngle: "blades inside a pusher's radius lean away from it (setPushers API); gusts are phantom pushers",
+    pushFps: "pusher positions update on this tick so fast movers keep the choppy charm without lag",
+    trampleRate: "walking units add this much wear per second; blades shrink with wear (setWearMap)",
+    trampleMax: "trample saturates here so paths flatten but never turn permanently bare",
+    regrowSec: "trampled grass grows back on this time constant once the traffic stops",
+    clearRadius: "permanent bare circle stamped around trees/rocks/diamonds (buildings use their footprint)",
   },
 };
 
 // Geometry-shaped knobs; a change to any of these re-samples the ground and rebuilds attributes.
 const REBUILD_KEYS = ["density", "bladeH", "bladeW", "accentRatio", "accentScale", "dirtClear"];
-const MAX_INSTANCES = 200000;
+// Covers the largest game map (?mapSize=5: ~153k wu² of land at the default density 3 ≈ 460k
+// blades). Hitting the cap truncates the spawn sweep mid-map — a visible bare band — so it must
+// stay above any real region; the warn below is the tripwire.
+const MAX_INSTANCES = 520000;
 const DEG = Math.PI / 180;
 
 // ── deterministic CPU hash (same family as tools/test-scene/terrain.js; Math.imul is exact) ──
@@ -465,13 +496,21 @@ function makeBladeTexture(THREE, style){
 }
 
 // ── shader injections ────────────────────────────────────────────────────────────────────────
+const MAX_PUSHERS = 32;   // fixed shader array; unused slots carry radius 0 and cost ~nothing
+
 const VERT_DECL = /* glsl */`
+#define GRASS_MAX_PUSHERS ${MAX_PUSHERS}
 attribute vec3 iOffset;
 attribute vec4 iData;    // x width wu · y height wu · z phase 0..1 · w sprite variant
 uniform float uGrassTime, uGrassFps, uGrassWindSpeed, uGrassWindScale, uGrassWindDiv,
-  uGrassWindLift, uGrassWindAngle, uGrassSway, uGrassSwayFreq, uGrassPersp, uGrassUpright;
+  uGrassWindLift, uGrassWindAngle, uGrassSway, uGrassSwayFreq, uGrassPersp, uGrassUpright,
+  uGrassPushAngle;
+uniform vec4 uGrassPushers[GRASS_MAX_PUSHERS];   // xyz world pos · w radius wu (0 = inert)
 uniform vec2 uGrassWindDir;
-varying float vGrassWind, vGrassPersp;
+uniform sampler2D uGrassWear;   // the host's 0..1 bare-ground field (setWearMap); R channel
+uniform vec4 uGrassWearRect;    // xy = region origin wu · zw = 1/region size (world → uv)
+uniform float uGrassWearOn, uGrassDebug;    // uGrassDebug also declared in the fragment stage
+varying float vGrassWind, vGrassPersp, vGrassPush, vGrassWear;
 varying vec3 vGrassUv;
 float gHash21(vec2 p){ p = fract(p * vec2(127.31, 311.71)); p += dot(p, p + 19.19); return fract(p.x * p.y); }
 float gNoise(vec2 p){
@@ -485,7 +524,7 @@ float gNoise(vec2 p){
 // Replaces `#include <begin_vertex>` outright — see the header's light-mods coupling note.
 const VERT_BODY = /* glsl */`
 vec3 transformed = vec3( position );
-vGrassWind = 0.0; vGrassPersp = 0.0;
+vGrassWind = 0.0; vGrassPersp = 0.0; vGrassPush = 0.0; vGrassWear = 0.0;
 {
   float gp = iData.z;
   float gt = uGrassTime;
@@ -510,10 +549,18 @@ vGrassWind = 0.0; vGrassPersp = 0.0;
   }else{
     bbUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
   }
+  // Wear: blades SHRINK toward zero with the host's bare-ground field (buildings, resource
+  // clearings, trample). A zero-size quad emits no fragments, so wear 1 is a free discard; the
+  // texture's linear filtering supplies the drop-off rim between texels. The wear debug view (6)
+  // keeps blades FULL SIZE so the field's alignment can be judged against the ground meshes.
+  float wear = uGrassWearOn > 0.5
+    ? texture2D(uGrassWear, (iOffset.xz - uGrassWearRect.xy) * uGrassWearRect.zw).r : 0.0;
+  vGrassWear = wear;
+  if(uGrassDebug == 6.0) wear = 0.0;
   // Idle view-space sway: tiny rotation about the quad base, in the billboard plane.
   float ia = uGrassSway * sin(gt * uGrassSwayFreq * 6.2831853 + gp * 6.2831853);
   float ic = cos(ia), isn = sin(ia);
-  vec2 lp = vec2(position.x * iData.x, position.y * iData.y);
+  vec2 lp = vec2(position.x * iData.x, position.y * iData.y) * (1.0 - wear);
   lp = vec2(lp.x * ic - lp.y * isn, lp.x * isn + lp.y * ic);
   vec3 offset = bbRight * lp.x + bbUp * lp.y;
   // Wind lean: Rodrigues about the horizontal axis ⟂ wind, so the tip moves DOWNWIND.
@@ -521,6 +568,29 @@ vGrassWind = 0.0; vGrassPersp = 0.0;
   vec3 ax = vec3(uGrassWindDir.y, 0.0, -uGrassWindDir.x);
   float wc = cos(wa), wsn = sin(wa);
   offset = offset * wc + cross(ax, offset) * wsn + ax * dot(ax, offset) * (1.0 - wc);
+  // Pushers (the video's character displacement, vectorised): every active pusher adds a
+  // radially-outward push scaled by (1-d/r)² — quadratic falloff so the wake has a soft rim.
+  // The SUM is direction-weighted, so a blade between two movers leans by their resultant, then
+  // one Rodrigues bend applies it (same axis rule as the wind: tip moves along the push).
+  vec2 push = vec2(0.0);
+  for(int i = 0; i < GRASS_MAX_PUSHERS; i++){
+    vec4 p = uGrassPushers[i];
+    if(p.w < 0.001) continue;
+    vec2 d = iOffset.xz - p.xz;
+    float dist = length(d);
+    if(dist >= p.w) continue;
+    float m = 1.0 - dist / p.w;
+    push += (d / max(dist, 0.001)) * (m * m);
+  }
+  float pushLen = length(push);
+  if(pushLen > 0.001){
+    vGrassPush = min(pushLen, 1.0);
+    vec2 pd = push / pushLen;
+    float pa = uGrassPushAngle * min(pushLen, 1.0);
+    vec3 pax = vec3(pd.y, 0.0, -pd.x);
+    float pc = cos(pa), psn = sin(pa);
+    offset = offset * pc + cross(pax, offset) * psn + pax * dot(pax, offset) * (1.0 - pc);
+  }
   transformed = iOffset + offset;
   // Fake perspective: only meaningful when the view direction runs along the wind.
   vec3 camFwd = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
@@ -532,7 +602,7 @@ vGrassWind = 0.0; vGrassPersp = 0.0;
 `;
 
 const FRAG_DECL = /* glsl */`
-varying float vGrassWind, vGrassPersp;
+varying float vGrassWind, vGrassPersp, vGrassPush, vGrassWear;
 varying vec3 vGrassUv;
 uniform float uGrassDebug;
 `;
@@ -554,13 +624,17 @@ const FRAG_DEBUG = /* glsl */`
 if(uGrassDebug == 2.0) gl_FragColor = vec4(vec3(vGrassWind), 1.0);
 else if(uGrassDebug == 3.0) gl_FragColor = vec4(vColor, 1.0);
 else if(uGrassDebug == 4.0) gl_FragColor = vec4(normalize(vNormal) * 0.5 + 0.5, 1.0);
+else if(uGrassDebug == 5.0) gl_FragColor = vec4(vGrassPush, 0.08, 1.0 - vGrassPush, 1.0);
+else if(uGrassDebug == 6.0) gl_FragColor = vec4(vGrassWear, vGrassWear * 0.6, 0.08, 1.0);
 `;
 
 // ── instance building ────────────────────────────────────────────────────────────────────────
 /**
  * Sample the ground over a jittered grid and fill instanced attributes.
  * `sample(x,z)` -> {height, normal:[x,y,z], color:[r,g,b] linear, dirt:0..1} — the host's ground
- * authority (test scene: terrain.js makeGroundSampler). Deterministic for a fixed seed.
+ * authority (test scene: terrain.js makeGroundSampler; game: scene.js meadowSample). A sample may
+ * instead return {skip:true} for a HARD exclusion (water, fog, off-map) — unlike `dirt`, which
+ * culls probabilistically so patch borders stay ragged. Deterministic for a fixed seed.
  */
 function buildGeometry(THREE, {seed, region, sample, tune}){
   const geo = new THREE.InstancedBufferGeometry();
@@ -579,6 +653,7 @@ function buildGeometry(THREE, {seed, region, sample, tune}){
       const px = gx + hash2(ix, iz, seed + 11) * step;
       const pz = gz + hash2(ix, iz, seed + 23) * step;
       const g = sample(px, pz);
+      if(g.skip) continue;
       // Dirt clears grass probabilistically, so patch borders thin out instead of hard-cutting.
       if(hash2(ix, iz, seed + 31) < g.dirt * tune.dirtClear) continue;
       const accent = hash2(ix, iz, seed + 47) < tune.accentRatio;
@@ -622,6 +697,12 @@ export function createGrass(THREE, {seed, region, sample, lightMods = lightModsA
     uGrassWindLift: {value: 0}, uGrassWindAngle: {value: 0},
     uGrassSway: {value: 0}, uGrassSwayFreq: {value: 0},
     uGrassPersp: {value: 0}, uGrassUpright: {value: 0}, uGrassDebug: {value: 0},
+    uGrassPushAngle: {value: 0},
+    uGrassPushers: {value: Array.from({length: MAX_PUSHERS}, () => new THREE.Vector4(0, 0, 0, 0))},
+    uGrassWearOn: {value: 0},
+    uGrassWear: {value: null},
+    uGrassWearRect: {value: new THREE.Vector4(region.x0, region.z0,
+      1 / Math.max(1e-6, region.x1 - region.x0), 1 / Math.max(1e-6, region.z1 - region.z0))},
   };
 
   let spriteStyle = SPRITE_STYLES[tune.sprite] ? tune.sprite : "tufts";
@@ -659,6 +740,30 @@ export function createGrass(THREE, {seed, region, sample, lightMods = lightModsA
   let builtKey = REBUILD_KEYS.map(k => tune[k]).join(",");
   let pendingKey = builtKey, pendingSince = 0;
 
+  // Pushers: the caller hands a fresh list any time (game: movers each frame; gusts are phantom
+  // entries); sync copies it into the uniform array on the pushFps tick so fast movers stay on
+  // the same choppy clock as everything else. Extra entries beyond MAX_PUSHERS are dropped —
+  // callers with many movers should pass the ones that matter (e.g. nearest the camera).
+  let pushers = [], lastPushTick = null;
+  function setPushers(list){ pushers = list || []; }
+
+  /** Hand over the 0..1 bare-ground field: an R-channel texture covering exactly `region`
+   *  (LinearFilter recommended — the filtering IS the clearing's drop-off rim). The HOST owns
+   *  the texture, its stamping, and its updates; null turns wear off. */
+  function setWearMap(texture){
+    uniforms.uGrassWear.value = texture;
+    uniforms.uGrassWearOn.value = texture ? 1 : 0;
+  }
+  function applyPushers(){
+    const u = uniforms.uGrassPushers.value;
+    const n = Math.min(pushers.length, MAX_PUSHERS);
+    for(let i = 0; i < n; i++){
+      const p = pushers[i];
+      u[i].set(p.x, p.y || 0, p.z, p.r);
+    }
+    for(let i = n; i < MAX_PUSHERS; i++) u[i].w = 0;
+  }
+
   function sync(time){
     uniforms.uGrassTime.value = time;
     uniforms.uGrassFps.value = tune.fps;
@@ -673,8 +778,12 @@ export function createGrass(THREE, {seed, region, sample, lightMods = lightModsA
     uniforms.uGrassPersp.value = tune.fakePersp;
     uniforms.uGrassUpright.value = tune.billboard === "upright" ? 1 : 0;
     uniforms.uGrassDebug.value = +tune.debugMode || 0;
+    uniforms.uGrassPushAngle.value = tune.pushAngle * DEG;
     mat.wireframe = !!tune.wireframe;
     mesh.visible = tune.enabled !== false;
+
+    const tick = tune.pushFps > 0 ? Math.floor(time * tune.pushFps) : null;
+    if(tick === null || tick !== lastPushTick){ lastPushTick = tick; applyPushers(); }
 
     // Sprite style: texture-only swap, same USE_MAP program — no recompile, no rebuild.
     const style = SPRITE_STYLES[tune.sprite] ? tune.sprite : "tufts";
@@ -698,8 +807,16 @@ export function createGrass(THREE, {seed, region, sample, lightMods = lightModsA
   }
 
   return {
-    mesh, uniforms, sync,
+    mesh, uniforms, sync, setPushers, setWearMap,
     instanceCount: () => geo.instanceCount,
+    /** Re-sample the ground now (host's terrain/fog changed under the blades). Tune-driven
+     *  rebuilds stay on the debounced sync path; this is for external invalidation. */
+    rebuild(){
+      const next = buildGeometry(THREE, {seed, region, sample, tune});
+      mesh.geometry = next;
+      geo.dispose();
+      geo = next;
+    },
     dispose(){ geo.dispose(); mat.dispose(); map.dispose(); },
   };
 }
