@@ -764,13 +764,17 @@ export default {
         // Normals pass: whole scene under MeshNormalMaterial, shadows frozen, override restored
         // in the inner finally. The cloud plane must sit out — the override material replaces
         // its colorWrite:false placeholder, and a sky-filling plane of normals would swamp the
-        // edge detector.
+        // edge detector. Same for any mesh flagged userData.noNormalsPass (grass: the override
+        // ignores its alpha-scissor shader, so every blade would render as a full quad of
+        // normals and the edge pass would ink rectangles around the sprites).
         if(!normalMat) normalMat = new THREE.MeshNormalMaterial();
         ensureNormalTarget(THREE, w, h);
         const prevOverride = scene.overrideMaterial;
         const shadowAuto = renderer.shadowMap.autoUpdate;
         const planeWasVisible = cloudPlane ? cloudPlane.mesh.visible : false;
         if(cloudPlane) cloudPlane.mesh.visible = false;
+        const hidden = [];
+        scene.traverse(o => { if(o.visible && o.userData.noNormalsPass){ o.visible = false; hidden.push(o); } });
         renderer.shadowMap.autoUpdate = false;
         scene.overrideMaterial = normalMat;
         try{
@@ -780,6 +784,7 @@ export default {
           scene.overrideMaterial = prevOverride;
           renderer.shadowMap.autoUpdate = shadowAuto;
           if(cloudPlane) cloudPlane.mesh.visible = planeWasVisible;
+          for(const o of hidden) o.visible = true;
         }
       }else if(normalRt){
         releaseNormalTarget();

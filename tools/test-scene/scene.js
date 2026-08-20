@@ -17,11 +17,12 @@ import * as THREE from "three";
 import {configurePipelines, renderFrame, resizePipeline, setPipeline, getPipelineName}
   from "../../src/render/pipelines/index.js";
 import {pixelTune} from "../../src/render/pipelines/pixel.js";
-import {CAMERA, SUN, HEMI, TERRAIN, OBJECTS, PIXEL_PRESET, SEED_DEFAULT, TOON} from "./preset.js";
-import {buildTerrain} from "./terrain.js";
+import {CAMERA, SUN, HEMI, TERRAIN, OBJECTS, PIXEL_PRESET, SEED_DEFAULT, TOON, GRASS} from "./preset.js";
+import {buildTerrain, makeGroundSampler} from "./terrain.js";
 import {buildObjects} from "./objects.js";
 import {makeGradientMap} from "../../src/render/toon-ramp.js";
 import {initLightMods, applyLightingMods, syncLightMods} from "../../src/render/material-light-mods.js";
+import {createGrass, grassTune, GRASS_PANEL} from "../../src/render/grass.js";
 
 const DEG = Math.PI / 180;
 
@@ -87,8 +88,9 @@ function convexHull(pts){
   return lower.concat(upper);
 }
 
-export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {}, sunAz, sunEl,
-                                noProps = false, ortho = false, yawDeg = 0, toon = TOON.enabled}){
+export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {}, grassOverrides = {},
+                                sunAz, sunEl, noProps = false, noGrass = false, ortho = false,
+                                yawDeg = 0, toon = TOON.enabled}){
   const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
   renderer.setPixelRatio(1);              // 1 output pixel per CSS pixel: screenshots are exact
   renderer.shadowMap.enabled = true;
@@ -173,6 +175,19 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
                                      gradientMap: toon && TOON.props ? gradientMap : null});
   for(const mesh of props.meshes) scene.add(mesh);
 
+  // Grass blades — colour/normal fed by the terrain's own sampler so blades and meadow can never
+  // disagree (grass.js header has the full recipe). ?grass=0 removes it for A/B and yardstick
+  // shots. preset.GRASS.tune carries only diffs from grass.js's owner defaults, PIXEL_PRESET-style.
+  Object.assign(grassTune, GRASS.tune, grassOverrides);
+  const half = GRASS.span / 2;
+  const grass = noGrass ? null : createGrass(THREE, {
+    seed,
+    region: {x0: CAMERA.target[0] - half, z0: CAMERA.target[2] - half,
+             x1: CAMERA.target[0] + half, z1: CAMERA.target[2] + half},
+    sample: makeGroundSampler(THREE, {seed, terrain: TERRAIN}),
+  });
+  if(grass) scene.add(grass.mesh);
+
   // ── the pixelTune preset, applied before the first frame ──
   // pixel.js live-reads this object every frame, so the R panel keeps working on top of it.
   Object.assign(pixelTune, PIXEL_PRESET, tuneOverrides);
@@ -217,6 +232,8 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
         if(k === "iso"){ pose.pitch = 35.264; pose.yaw = 45; api.setOrtho(true); }
       },
     },
+    // Host-owned R-panel sections (debug-panel.js renders them pinned, above camera/sun).
+    panelSections: grass ? [{title: "grass", tune: grassTune, spec: GRASS_PANEL}] : [],
   });
   setPipeline("pixel");                  // no-op if the registry already picked it up
 
@@ -248,16 +265,18 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
     }
     placeCamera();
     applyLightingMods(THREE, scene);
+    const time = (performance.now() / 1000) % 100000;   // same clock pixel.js reads; ?t freezes all
     syncLightMods({
       cloudScale: pixelTune.cloudScale, cloudSpeed: pixelTune.cloudSpeed,
       cloudCover: pixelTune.cloudCover,
       cloudOffsetX: pixelTune.cloudOffsetX, cloudOffsetZ: pixelTune.cloudOffsetZ,
       cloudHeight: pixelTune.cloudHeight,
       sunDir: sunDirection(sunPose.az, sunPose.el),
-      time: (performance.now() / 1000) % 100000,   // same clock pixel.js reads; ?t freezes both
+      time,
       cloudShade: pixelTune.clouds !== false && pixelTune.cloudsMode === "material",
       toon: pixelTune.toonRamp !== false,
     });
+    grass?.sync(time);
     renderFrame();
     frames++;
     requestAnimationFrame(frame);
@@ -265,13 +284,13 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
   requestAnimationFrame(frame);
 
   const api = {
-    THREE, renderer, scene, get camera(){ return camera; }, sun, hemi, pixelTune,
+    THREE, renderer, scene, get camera(){ return camera; }, sun, hemi, pixelTune, grass, grassTune,
     // camera-controls.js's surface: mutate pose freely; setOrtho swaps the camera object
     // (pipelines re-read it through ctx.getCamera() every frame, per the registry contract).
     pose, placeCamera,
     setOrtho(on){ if(pose.ortho !== !!on){ pose.ortho = !!on; makeCamera(); placeCamera(); } },
     seed, toon, gradientMap, sunPose, setSun,
-    preset: {CAMERA, SUN, HEMI, TERRAIN, OBJECTS, PIXEL_PRESET, TOON},
+    preset: {CAMERA, SUN, HEMI, TERRAIN, OBJECTS, PIXEL_PRESET, TOON, GRASS},
     framesRendered: () => frames,
     pipeline: () => getPipelineName(),
     /** Per-prop screen silhouettes for the round-3 yardstick (see silhouettePoly). */
@@ -289,7 +308,7 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
                 rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]};
       });
     },
-    dispose(){ terrain.dispose(); props.dispose(); gradientMap?.dispose(); renderer.dispose(); },
+    dispose(){ terrain.dispose(); props.dispose(); grass?.dispose(); gradientMap?.dispose(); renderer.dispose(); },
   };
   return api;
 }

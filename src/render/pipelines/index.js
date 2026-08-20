@@ -141,8 +141,10 @@ async function togglePanel(){
   try{
     const mod = await import("./debug-panel.js");
     // ctx.poseControls is the host's optional camera/sun adapter — see debug-panel.js's
-    // "camera / sun" section for the contract.
-    panel = mod.createPanel({setPipeline, getPipelineName, poseControls: ctx.poseControls});
+    // "camera / sun" section for the contract. ctx.panelSections = host tune sections
+    // [{title, tune, spec}] rendered pinned (the test scene's grass knobs).
+    panel = mod.createPanel({setPipeline, getPipelineName, poseControls: ctx.poseControls,
+                             extraSections: ctx.panelSections});
     panel.toggle(true);
   }catch(err){ console.error("[pipeline] debug panel failed to load", err); }
   finally{ panelLoading = false; }

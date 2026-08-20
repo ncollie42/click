@@ -150,6 +150,17 @@ export const TERRAIN = {
                       // too much dirt under the left shade mass and dug a quarter-frame of blacks
 };
 
+// ── grass ─────────────────────────────────────────────────────────────────────────────────────
+// Structural spawn params live here; every LOOK knob is grassTune (src/render/grass.js owns the
+// defaults, same one-source-of-truth rule as PIXEL_PRESET/pixelTune — `tune` carries only diffs).
+// span 180 (not the full 320 plane): the default frame's ground footprint is ~74x77 wu around the
+// origin target; 180 covers every pose the camera panel can reach without paying 3x the instances
+// for meadow no camera sees. At density 1.6 that is ~40k quads (minus dirt culls) in ONE draw.
+export const GRASS = {
+  span: 180,
+  tune: {},
+};
+
 // ── the five objects ──────────────────────────────────────────────────────────────────────────
 // x/z are world positions solved from the reference's screen fractions through the CAMERA above
 // (invert the perspective divide at the ground plane; the terrain height then lifts them).

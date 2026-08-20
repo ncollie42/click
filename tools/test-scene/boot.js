@@ -23,23 +23,29 @@ const sunAz = params.has("sunaz") ? parseFloat(params.get("sunaz")) : undefined;
 const sunEl = params.has("sunel") ? parseFloat(params.get("sunel")) : undefined;
 
 const {pixelTune} = await import("../../src/render/pipelines/pixel.js");
+const {grassTune} = await import("../../src/render/grass.js");
 const {startTestScene} = await import("./scene.js");
 const {PIXEL_PRESET} = await import("./preset.js");
 
 // Any query param named after a pixelTune knob overrides the preset — this is how the proof shots
 // are taken (&clouds=0, &rays=0, &pixelScale=0). Typed against the preset/default so "0" becomes
-// false for a boolean knob and 0 for a numeric one.
+// false for a boolean knob and 0 for a numeric one. grassTune knobs ride the same rule, handed to
+// scene.js so they land AFTER preset.GRASS.tune and BEFORE the first geometry build (URL wins,
+// and a ?density= shot is deterministic, not a 250ms-later rebuild); a name in BOTH tunes would
+// go to pixelTune, so keep grass knob names distinct.
 // "toon" is RESERVED (round 5): it is a MATERIAL-stage switch, not a pixelTune knob, so it must
 // not fall through to the `key in pixelTune` test below. ?toon=0 -> stock Lambert everywhere.
-const RESERVED = new Set(["t", "seed", "sunaz", "sunel", "props", "ortho", "yaw", "pitch", "toon"]);
-const tuneOverrides = {};
+// "grass" is RESERVED the same way: ?grass=0 removes the grass mesh entirely (A/B + yardstick
+// shots), which no grassTune knob does.
+const RESERVED = new Set(["t", "seed", "sunaz", "sunel", "props", "grass", "ortho", "yaw", "pitch", "toon"]);
+const tuneOverrides = {}, grassOverrides = {};
 for(const [key, raw] of params){
   if(RESERVED.has(key)) continue;
-  if(!(key in pixelTune)){ console.warn(`[test-scene] ignoring unknown param "${key}"`); continue; }
-  const ref = key in PIXEL_PRESET ? PIXEL_PRESET[key] : pixelTune[key];
-  if(typeof ref === "boolean") tuneOverrides[key] = raw !== "0" && raw !== "false";
-  else if(typeof ref === "number") tuneOverrides[key] = parseFloat(raw);
-  else tuneOverrides[key] = raw;
+  const typed = (ref) => typeof ref === "boolean" ? (raw !== "0" && raw !== "false")
+                       : typeof ref === "number" ? parseFloat(raw) : raw;
+  if(key in pixelTune) tuneOverrides[key] = typed(key in PIXEL_PRESET ? PIXEL_PRESET[key] : pixelTune[key]);
+  else if(key in grassTune) grassOverrides[key] = typed(grassTune[key]);
+  else console.warn(`[test-scene] ignoring unknown param "${key}"`);
 }
 
 // Camera experiments: ?ortho=1 (true orthographic at the same framing), ?yaw=45 (orbit),
@@ -47,8 +53,9 @@ for(const [key, raw] of params){
 const {CAMERA} = await import("./preset.js");
 if(params.has("pitch")) CAMERA.pitchDeg = parseFloat(params.get("pitch"));
 const testScene = startTestScene({
-  canvas: document.getElementById("c"), seed, tuneOverrides, sunAz, sunEl,
+  canvas: document.getElementById("c"), seed, tuneOverrides, grassOverrides, sunAz, sunEl,
   noProps: params.get("props") === "0",   // yardstick only — see scene.js
+  noGrass: params.get("grass") === "0",
   // ?toon=0 turns the material-stage ramp off (preset.TOON.enabled is the default). The A/B pair
   // full.png vs toon-off.png is the only thing that isolates the transfer function.
   ...(params.get("toon") !== null ? {toon: params.get("toon") !== "0"} : {}),

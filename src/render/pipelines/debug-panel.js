@@ -55,11 +55,15 @@ const CSS = `
 
 function fmt(v){ return Math.abs(v) >= 100 ? String(Math.round(v)) : String(+v.toFixed(4)); }
 
-/** Built once by createPanel(); everything else is closure state inside it. */
-export function createPanel({setPipeline, getPipelineName, poseControls}){
+/** Built once by createPanel(); everything else is closure state inside it.
+ *  extraSections: host-owned tune sections [{title, tune, spec}] (spec in PANEL_SPEC shape),
+ *  rendered with the same machinery as the pipeline sections but PINNED — always visible,
+ *  regardless of which pipeline is active. Today: the test scene's grass section. */
+export function createPanel({setPipeline, getPipelineName, poseControls, extraSections = []}){
   // structuredClone, not spread: pixelTune.palette can be an ARRAY — a shallow copy would share it
   // and an in-place palette edit would silently corrupt the "default" that reset restores.
   const defaults = structuredClone({pixel: pixelTune});
+  for(const s of extraSections) defaults[s.title] = structuredClone(s.tune);
   // Shadow DOM, not a bare div: the game's stylesheet has GLOBAL tag rules (styles.css
   // `button{width:100%;padding:7px;...}`, dark input colors) that mangled the panel when it lived
   // in the light DOM — stretched buttons, invisible readout text. The shadow boundary keeps both
@@ -115,7 +119,8 @@ export function createPanel({setPipeline, getPipelineName, poseControls}){
 
   const sections = {};   // name -> its wrapper <div>; only the ACTIVE pipeline's section shows
 
-  function section(title, tune, sliders, checks, selects, tips = {}, dims = {}, swatches = null){
+  function section(title, tune, sliders, checks, selects, tips = {}, dims = {}, swatches = null,
+                   pinned = false){
     // tips: hover text per knob (the key name rides along for grep-ability). dims: knobs that are
     // inert under a condition — the row greys out, its controls disable, and the tooltip says WHY
     // (owner request: "target height does nothing" was pixelScale silently owning the resolution).
@@ -138,7 +143,8 @@ export function createPanel({setPipeline, getPipelineName, poseControls}){
     const box = document.createElement("div");
     box.className = "sect";
     root.appendChild(box);
-    sections[title] = box;
+    if(!pinned) sections[title] = box;   // sync() shows only the active pipeline's section;
+                                         // pinned (host) sections stay out of that switch
     const rootAppend = el => box.appendChild(el);
     const h = document.createElement("h4");
     h.innerHTML = `<span>${title} <span class="dot">●</span></span>`;
@@ -281,6 +287,14 @@ export function createPanel({setPipeline, getPipelineName, poseControls}){
   const pixelOuts = section("pixel", pixelTune, PIXEL_SPEC.sliders, PIXEL_SPEC.checks,
                             PIXEL_SPEC.selects, PIXEL_SPEC.tips, PIXEL_SPEC.dims, PIXEL_SPEC.swatches);
 
+  // Host sections (pinned): same knob machinery, live under the pipeline section.
+  const extraOuts = [];
+  for(const s of extraSections){
+    const spec = s.spec || {};
+    extraOuts.push(...section(s.title, s.tune, spec.sliders || [], spec.checks || [],
+                              spec.selects, spec.tips, spec.dims, spec.swatches, true));
+  }
+
   // ── camera / sun (host-supplied, owner request Aug 20) ──
   // The HOST describes its pose controls through ctx.poseControls {sliders, checks, buttons,
   // get(key), set(key,v), press(key)} and the panel renders them with the same row machinery as
@@ -351,6 +365,7 @@ export function createPanel({setPipeline, getPipelineName, poseControls}){
     }
     noKnobs.style.display = name === "current" ? "block" : "none";
     for(const refresh of pixelOuts) refresh();
+    for(const refresh of extraOuts) refresh();
     for(const refresh of poseOuts) refresh();
   }
 

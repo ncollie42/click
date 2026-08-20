@@ -30,6 +30,10 @@ import {makeGradientMap} from "./toon-ramp.js";
 let shared = null;         // the one uniforms object every patched material references
 let seen = new WeakSet();  // materials already patched (or deliberately skipped)
 
+/** True once initLightMods has run — i.e. applyLightingMods will actually patch materials.
+ *  Consumer: grass.js, whose shader must only reference vLmWorld when the patch will land. */
+export function lightModsActive(){ return shared !== null; }
+
 export function initLightMods(THREE, {rampSteps, rampLevels}){
   shared = {
     uCloudScale: {value: 0.038}, uCloudSpeed: {value: 0.01}, uCloudCover: {value: 0.38},
@@ -46,6 +50,10 @@ export function initLightMods(THREE, {rampSteps, rampLevels}){
 
 // Own world-position varying, computed with three's exact batching/instancing pattern —
 // worldpos_vertex is #ifdef-guarded on features we can't rely on, so we never borrow it.
+// COUPLING (grass.js): the grass material replaces the literal `#include <begin_vertex>`, so the
+// VERT_BODY insertion below deliberately no-ops there and grass assigns vLmWorld itself AFTER its
+// billboard/wind displacement (this capture point would read the pre-displacement vertex). The
+// declaration in VERT_DECL is still ours; grass guards its assignment behind its GRASS_LM define.
 const VERT_DECL = "varying vec3 vLmWorld;\n";
 const VERT_BODY = `
 {

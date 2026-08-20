@@ -12,8 +12,8 @@
 // that is a MEASURED choice, not a default-by-omission: see ROUND-LOG.md "Round 5 / terrain vs
 // props". The albedos above were solved through the Lambert transfer at flat-ground NdotL.
 //
-// DELIBERATE GAP: no grass blades. The reference's blade texture is Red Giraffe's grass system;
-// the owner excluded grass from this round. Everything here is macro colour only.
+// Grass blades live in src/render/grass.js, fed by makeGroundSampler below — this file stays the
+// ONE ground authority (height, normal, colour, dirt weight) for the mesh AND the blades.
 
 import {makeToonMaterial} from "../../src/render/toon-ramp.js";
 
@@ -69,6 +69,46 @@ function dirtWeightAt(x, z, seed, terrain, heightNorm, slope){
   return Math.max(0, Math.min(1, drive * 1.4 + 0.5));
 }
 
+/** The meadow's albedo at (x,z), written into `out` (a THREE.Color, LINEAR working space —
+ *  see the vertex-colour note in buildTerrain). ONE function so the terrain mesh and the grass
+ *  blades (src/render/grass.js via makeGroundSampler) can never disagree about ground colour.
+ *  `palette` = {grass, grassAlt, dirt} as THREE.Colors, built once by the caller. */
+function groundColorInto(out, x, z, seed, terrain, heightNorm, slope, palette){
+  const tone = fbm(x / 120 - 3.7, z / 120 + 5.2, seed + 4231, 2);
+  // grassAlt is a SPARSE bright patch, not a global tint: the gate opens at tone 0.55 (~15% of
+  // the field) and saturates at 0.80 (~2%). A wide gate lifts the whole meadow's red channel and
+  // the 75-85th-percentile "lit grass" sample drifts off (96,186,54) — measured, twice.
+  out.copy(palette.grass).lerp(palette.grassAlt, Math.max(0, Math.min(1, (tone - 0.55) * 4.0)));
+  out.lerp(palette.dirt, dirtWeightAt(x, z, seed, terrain, heightNorm, slope));
+}
+
+/**
+ * Point sampler for consumers that sit ON the ground but are not the ground mesh — today the
+ * grass system. Returns (x,z) -> {height, normal:[x,y,z], color:[r,g,b] linear, dirt:0..1}.
+ * The normal is finite-differenced at the mesh's own quad pitch (~1.25 wu at 320/256), so the
+ * slope-driven dirt weight tracks the vertex-normal version closely but not exactly — accepted;
+ * colour continuity at patch borders is what matters and the blend inputs are identical.
+ */
+export function makeGroundSampler(THREE, {seed, terrain}){
+  const palette = {grass: new THREE.Color(terrain.grass), grassAlt: new THREE.Color(terrain.grassAlt),
+                   dirt: new THREE.Color(terrain.dirt)};
+  const c = new THREE.Color();
+  const e = terrain.size / terrain.segments;
+  return (x, z) => {
+    const y = heightAt(x, z, seed, terrain);
+    const hx = heightAt(x + e, z, seed, terrain) - heightAt(x - e, z, seed, terrain);
+    const hz = heightAt(x, z + e, seed, terrain) - heightAt(x, z - e, seed, terrain);
+    let nx = -hx / (2 * e), ny = 1, nz = -hz / (2 * e);
+    const inv = 1 / Math.hypot(nx, ny, nz);
+    nx *= inv; ny *= inv; nz *= inv;
+    const heightNorm = Math.max(0, Math.min(1, y / (2 * terrain.amplitude) + 0.5));
+    const slope = Math.max(0, 1 - ny);
+    groundColorInto(c, x, z, seed, terrain, heightNorm, slope, palette);
+    return {height: y, normal: [nx, ny, nz], color: [c.r, c.g, c.b],
+            dirt: dirtWeightAt(x, z, seed, terrain, heightNorm, slope)};
+  };
+}
+
 /**
  * Build the meadow mesh. Returns {mesh, dispose}. `THREE` and `terrain` come from the caller so
  * this module imports nothing and stays trivially testable with node --check.
@@ -85,9 +125,8 @@ export function buildTerrain(THREE, {seed, terrain, gradientMap = null}){
   // Vertex colours are LINEAR: THREE.Color(hex) converts sRGB->working(linear) on construction
   // (ColorManagement is on by default in r160), and the shader multiplies the attribute in
   // verbatim. Authoring the three albedos as hexes keeps them readable next to the reference.
-  const grass = new THREE.Color(terrain.grass);
-  const grassAlt = new THREE.Color(terrain.grassAlt);
-  const dirt = new THREE.Color(terrain.dirt);
+  const palette = {grass: new THREE.Color(terrain.grass), grassAlt: new THREE.Color(terrain.grassAlt),
+                   dirt: new THREE.Color(terrain.dirt)};
   const nrm = geo.attributes.normal;
   const colors = new Float32Array(pos.count * 3);
   const c = new THREE.Color();
@@ -95,12 +134,7 @@ export function buildTerrain(THREE, {seed, terrain, gradientMap = null}){
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const heightNorm = Math.max(0, Math.min(1, y / (2 * terrain.amplitude) + 0.5));
     const slope = Math.max(0, 1 - nrm.getY(i));
-    const tone = fbm(x / 120 - 3.7, z / 120 + 5.2, seed + 4231, 2);
-    // grassAlt is a SPARSE bright patch, not a global tint: the gate opens at tone 0.55 (~15% of
-    // the field) and saturates at 0.80 (~2%). A wide gate lifts the whole meadow's red channel and
-    // the 75-85th-percentile "lit grass" sample drifts off (96,186,54) — measured, twice.
-    c.copy(grass).lerp(grassAlt, Math.max(0, Math.min(1, (tone - 0.55) * 4.0)));
-    c.lerp(dirt, dirtWeightAt(x, z, seed, terrain, heightNorm, slope));
+    groundColorInto(c, x, z, seed, terrain, heightNorm, slope, palette);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
   }
   geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
