@@ -39,6 +39,7 @@ import {
   RESOURCE_KINDS,
   WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_LEASH,
   BUILDING_TYPES,
+  SUMMONING_CIRCLE,
   ENEMY_TYPES,
   XP_TIERS,
   METEOR
@@ -590,7 +591,10 @@ function makeScatterLayer(buildTemplate, variantCount){
       const remnantSrc = template.userData.stump ?? template.userData.rubble;
       remnantSrc.updateMatrix();
       remnantGeo = remnantSrc.geometry.clone().applyMatrix4(remnantSrc.matrix);
-      remnantMat = flat(remnantSrc.material.color.getHex());
+      // The painted casts carry their colour in vertex attributes (one flat value per facet), so
+      // the remnant takes the same white vertex-colour Lambert the live variants share. A remnant
+      // with no colour attribute keeps the old single-colour material.
+      remnantMat = remnantGeo.getAttribute("color") ? liveMat : flat(remnantSrc.material.color.getHex());
     }
     disposeGroup(template);
   }
@@ -1038,6 +1042,23 @@ function syncBuildings(){
       for(const p of rec.g.userData.parts||[]) p.material.emissive.setHex(hurt?PAL.hurtGlow:0x000000);
     }
     if(rec.g.userData.tip) rec.g.userData.tip.rotation.y += .02;
+    // The summoning circle reads its whole state off the building: how much dust is in (five
+    // floor spokes and five crystals, one pair per dust), and how much of the 120s clock is gone
+    // (six add-only decay stages — soot climbing the menhirs, rubble on the rim). The two channels
+    // share nothing on purpose, so a guttering circle at 1 dust looks nothing like a fresh one at
+    // 4. The module's idle() runs off the same per-frame slot the old tip-spin used; it restores
+    // its own rest pose every call and never touches the two state-owned counts above.
+    // The summon climax anim is deliberately not wired: the sim consumes the building the frame
+    // the fifth dust lands, so there is no entity left to play it on.
+    if(b.type==="summoningCircle"&&rec.g.userData.slotMarkers){
+      const summoning=b.summoning;
+      const dust=summoning?summoning.dust:rec.g.userData.slotMarkers.length;
+      rec.g.userData.slotMarkers.forEach((slot,index)=>slot.visible=index<dust);
+      const stages=rec.g.userData.ashRings,spent=summoning?1-summoning.remaining/SUMMONING_CIRCLE.duration:0;
+      const lit=Math.ceil(spent*stages.length);
+      stages.forEach((stage,index)=>stage.visible=index<lit);
+      rec.g.userData.anims.idle(rec.g.userData.inner,0,performance.now()/1000);
+    }
     if(b.orbs&&rec.g.userData.orbit){rec.g.userData.orbit.rotation.y=b.orbs.angle;rec.g.userData.orbit.position.y=.75+Math.sin(b.orbs.angle*2)*.10;rec.g.userData.orbs.forEach((orb,index)=>orb.visible=index<b.orbs.count);}
     // Derived occupancy drives the sage bay caps directly: one visible cap per living linked ally,
     // so a capture or an ally death changes the model on the very next frame.
@@ -1059,6 +1080,7 @@ function syncBuildings(){
 // the thing). Its gulp is driven off the sim's basePulse RISING EDGE with a local clock, because
 // basePulse itself decays in a third of a second — too fast to phase a readable swallow.
 let baseRec = null, lastBasePulse = 0, gulpStart = -9;
+const BASE_FEED_WASH = .7;   // seconds the ground ring drawZones() draws off the same gulp edge runs
 function syncBase(t){
   const awake = state.xp >= XP_TIERS[0];
   if(!baseRec || baseRec.awake!==awake){

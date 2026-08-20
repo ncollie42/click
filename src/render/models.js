@@ -24,6 +24,8 @@ import {buildingFootprint} from "../game/grid.js";
 import {MODELS as PEG_MODELS, dressCarry} from "./models/worker-peg.js";
 import {MODELS as BASE_MODELS} from "./models/the-hole.js";
 import {MODELS as ENEMY_MODELS} from "./models/enemy-shard.js";
+import {MODELS as NODE_MODELS, withGameTarget} from "./models/resource-nodes.js";
+import {MODELS as CIRCLE_MODELS, withGameTarget as withCircleGameTarget} from "./models/summoning-circle.js";
 
 // ── the one unit conversion the whole render layer shares ───────────────────
 // The simulation thinks in 2D game pixels; three.js thinks in world units. game (x, y) maps to
@@ -189,9 +191,16 @@ export function bakeStatic(g, {extraKeep = [], requireShadow = true, shell = tru
 export function disposeGroup(g){
   g.traverse(o=>{
     if(!o.isMesh) return;
-    if(isOutline(o)){                        // shares its parent's geometry and
-      const i = outlineShells.indexOf(o);     // one global material — drop the
-      if(i >= 0) outlineShells.splice(i, 1);  // reference, dispose neither
+    if(isOutline(o)){                        // house shells share their parent's geometry and
+      const i = outlineShells.indexOf(o);     // one global material — drop the reference,
+      if(i >= 0) outlineShells.splice(i, 1);  // dispose neither.
+      // A module that draws its OWN ink (summoning-circle's screen-space hull) owns a private
+      // geometry and a private ShaderMaterial per shell. Those must be released, or every
+      // consumed summoning circle leaks one of each.
+      if(o.material !== outlineMat && o.material !== outlineMatPx){
+        o.geometry.dispose();
+        for(const m of Array.isArray(o.material) ? o.material : [o.material]) if(m && m.dispose) m.dispose();
+      }
       return;
     }
     o.geometry.dispose();
@@ -216,44 +225,204 @@ export function makeGrassTuftGeometry(){
   const geometry=new THREE.BufferGeometry();geometry.setAttribute("position",new THREE.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();geometry.computeBoundingSphere();return geometry;
 }
 
+// ── display-referred adoption: the game's own rig, inverted ─────────────────
+// The painted casts (resource-nodes.js, summoning-circle.js) are calibrated in DISPLAYED sRGB
+// against the model viewer, which renders them UNLIT through ACES @1.18. The game renders
+// NoToneMapping + sRGB out, through a LIT Lambert. Adopting them unchanged would hand a scene-
+// linear ACES value to a light rig and shade it a second time.
+//
+// So those two modules can bake for the game instead (withGameTarget): every colour comes out as
+// the albedo that displays its calibrated pixel on an UP-FACING facet. This is the other half —
+// rescale each facet by irr(up)/irr(that facet's WORLD normal), so the Lambert pass multiplies the
+// rig straight back out and the painted ramp renders exactly as authored, while the material still
+// answers to the sun, the shadow map and the day/night dim, which an unlit material never would.
+// (Same idea as enemy-shard's toneAlbedo(), which does it against the VIEWER's rig at build time;
+// this does it against the GAME's rig at adoption time, so one module serves both renderers.)
+//
+// THE RIG, mirrored from scene.js. If the lights there change, these change with them:
+//   sun    PAL.sunDay @1.1 (drawScene's `1.1 - night*.75`, i.e. the NOON value), aimed from
+//          (cam.x-26, 46, cam.y+20) at the camera focus — a constant world direction.
+//   hemi   PAL.skyLight over PAL.bounce @0.5, axis +Y.
+// Three's non-legacy lighting (renderer._useLegacyLights === false, r160) is
+//   displayed_linear = albedo * (sun*I*max(0,N·L) + mix(ground,sky,.5+.5*N.y)*I_hemi) / PI
+// which was verified against the shipped build to the byte: a fog block of authored 0x484253 on
+// its top face predicts (44,39,48) and the render measures (44,40,48).
+const GAME_SUN_DIR = new THREE.Vector3(-26,46,20).normalize();
+const GAME_SUN_I = 1.1, GAME_HEMI_I = .5;
+const _sunLin = new THREE.Color(PAL.sunDay), _skyLin = new THREE.Color(PAL.skyLight), _gndLin = new THREE.Color(PAL.bounce);
+// THE ONE EXPOSURE NUMBER, and the honest limit of this whole exercise.
+// The gauntlet calibrated its cast against a clearing that DISPLAYS at (173,187,127), luma 180.
+// The game's clearing displays (57,81,30), luma 72 — measured off tools/shots/terrain-before —
+// because scene.js tints the grass texture (PAL.grass) with a vertex colour that is PAL.grass
+// again, so the ground is that colour squared. In linear light the game's world is 6.7x darker
+// than the viewer's, and the sheet's absolute numbers are simply not reachable here: at albedo 1
+// the brightest pixel this rig can put on a sun-facing top facet is (169,166,157), and the
+// canopy's calibrated green alone wants G=200.
+// So the cast is transplanted rather than copied: ONE linear exposure applied to every target,
+// which preserves every ratio inside the cast AND its ratio against the world. 0.19 is the value
+// that reproduces the reference sheet's own figure/ground — its canopy sits 1.47x its grass in
+// linear luminance, and 0.19 puts the canopy 1.47x the GAME's grass (displayed luma ~91 against
+// the clearing's 72, against the sheet's 190-over-160).
+// MEASURED, on tools/shots/terrain/normal-base.png against tools/shots/terrain-before: canopy
+// median (87,99,68) luma 94 over a clearing at luma 73. The old primitive crowns sat at luma 112,
+// so the new trees separate LESS than the ones they replace (+21 against +39) while separating
+// exactly as much as the reference sheet's do. That is the one call in this file that is taste
+// rather than measurement, and it is a single number to turn:
+//     .19   the sheet's figure/ground, in linear ratio (canopy 1.47x the clearing)   <- shipped
+//     .226  the sheet's figure/ground, in DISPLAY luma (+30 over the clearing, canopy luma ~103)
+//     .275  the OLD game's contrast (canopy luma ~112, what the primitive crowns had)
+// Raising it costs ramp: the higher the exposure, the more shade-side facets hit the albedo
+// ceiling in relightGeometry() below and flatten toward the rig's own falloff.
+export const GAME_EXPOSURE = .19;
+function gameIrradiance(n, out){
+  const nl = Math.max(0, n.dot(GAME_SUN_DIR)), w = .5 + .5*n.y, iw = 1/Math.PI;
+  out.r = (_sunLin.r*GAME_SUN_I*nl + (_gndLin.r + (_skyLin.r-_gndLin.r)*w)*GAME_HEMI_I)*iw;
+  out.g = (_sunLin.g*GAME_SUN_I*nl + (_gndLin.g + (_skyLin.g-_gndLin.g)*w)*GAME_HEMI_I)*iw;
+  out.b = (_sunLin.b*GAME_SUN_I*nl + (_gndLin.b + (_skyLin.b-_gndLin.b)*w)*GAME_HEMI_I)*iw;
+  return out;
+}
+const _rlNormalMatrix = new THREE.Matrix3(), _rlA = new THREE.Vector3(), _rlB = new THREE.Vector3(),
+      _rlC = new THREE.Vector3(), _rlN = new THREE.Vector3(), _rlIrr = new THREE.Color();
+const _rlUp = new THREE.Vector3(0,1,0);
+// The up-facing irradiance the painted modules solve their albedo against, and the numerator of
+// every per-facet rescale below. Handed to them through withGameTarget() so neither module has to
+// hold a copy of the game's light rig.
+const GAME_UP_IRR = (()=>{ const c = gameIrradiance(_rlUp, new THREE.Color()); return [c.r, c.g, c.b]; })();
+export const GAME_TARGET = {exposure: GAME_EXPOSURE, irr: GAME_UP_IRR};
+// Facet normals are recomputed from POSITIONS, not read from the normal attribute: the attribute
+// is smooth on the primitives these modules borrow (the chest lid is a CylinderGeometry), while
+// the material is flatShaded, so the shader's normal is the geometric one. Solving against
+// anything else puts the compensation on a different normal than the shading pass uses.
+function relightGeometry(geo, normalMatrix){
+  const pos = geo.getAttribute("position"), col = geo.getAttribute("color");
+  if(!col) return;
+  for(let i = 0; i < pos.count; i += 3){
+    _rlA.fromBufferAttribute(pos, i); _rlB.fromBufferAttribute(pos, i+1); _rlC.fromBufferAttribute(pos, i+2);
+    _rlN.copy(_rlB).sub(_rlA).cross(_rlC.sub(_rlA)).applyMatrix3(normalMatrix);
+    if(_rlN.lengthSq() < 1e-20) continue;                 // degenerate facet (SDF pole fans)
+    gameIrradiance(_rlN.normalize(), _rlIrr);
+    // The ceiling is where this stops being exact, and it is worth naming: a facet the sun never
+    // reaches gets ~1/4.4 of an up-facing facet's light, so a bright fill (the canopy's shade
+    // band, a trunk's shaded side) would need albedo past 1 to hold its painted value there.
+    // Tops and uppers — which is what a 40-degree camera mostly sees — land exactly on target.
+    // WHEN IT DOES CLIP, IT CLIPS TOWARD BLACK, NOT TOWARD THE RIG'S HUE. Clamping per channel
+    // was measured doing the second thing: a pale trunk's side facets pinned all three channels
+    // at 1, so the pixel became the rig itself — sky-lit, and the bone trunk rendered cool grey
+    // (72,76,77) where its family is warm (88,85,76). Scaling the whole triple by its own worst
+    // channel keeps the authored hue and spends only value, which is the trade the cast can
+    // afford (its ramp is already a value ramp).
+    const kr = GAME_UP_IRR[0]/_rlIrr.r, kg = GAME_UP_IRR[1]/_rlIrr.g, kb = GAME_UP_IRR[2]/_rlIrr.b;
+    for(let k = 0; k < 3; k++){
+      const r = col.getX(i+k)*kr, g = col.getY(i+k)*kg, b = col.getZ(i+k)*kb;
+      const over = Math.max(1, r, g, b);
+      col.setXYZ(i+k, r/over, g/over, b/over);
+    }
+  }
+  col.needsUpdate = true;
+}
+/** Re-solve every painted facet for its own world normal. Run once, on the built sim-px group,
+ *  BEFORE bakeStatic() fuses it (the fuse copies whatever colours it finds, and it flattens the
+ *  transforms these normals are read through). */
+export function relightForGame(root){
+  root.updateMatrixWorld(true);
+  const done = new Set();
+  root.traverse(o=>{
+    if(!o.isMesh || isOutline(o)) return;
+    const geo = o.geometry;
+    if(!geo.userData.gameTarget || done.has(geo)) return;
+    done.add(geo);
+    relightGeometry(geo, _rlNormalMatrix.getNormalMatrix(o.matrixWorld));
+    geo.userData.gameTarget = false;
+  });
+  return root;
+}
+
+// ── the resource nodes ──────────────────────────────────────────────────────
+// Trees, rock, diamond and chest are the reviewed sim-px cast in src/render/models/
+// resource-nodes.js (SDF shells, painted vertex-colour ramps). The old stacked primitives are
+// gone; what survives untouched is every CONTRACT scene.js drives them through —
+// userData.live / stump / rubble / spent / gem / body / lid / latch / wearMats — so the scatter
+// layers, the collapse tweens and the chest wobble did not have to learn anything new.
+//
+// Adoption, in the order it has to happen:
+//   1 build inside withGameTarget() -> the module bakes DISPLAY TARGETS, on lit Lambert, no ink
+//   2 relightForGame()              -> targets become albedo against the game rig's world normals
+//   3 bakeStatic()                  -> the ~10 meshes fuse to one (the scatter layer wants ONE
+//                                      geometry per variant; the per-entity casts want the draw
+//                                      calls). Fusing before the relight would be wrong: it
+//                                      copies colours, and the colours are not albedo yet.
+//   4 scale by S                    -> sim px -> world units, on the MESH, because
+//                                      makeScatterLayer() clones geometry through liveSrc.matrix
+//                                      and never sees a wrapper group.
+// Sizes are the module's, not restated here. Measured against the old models' footprints (world
+// units, ink excluded): tree crown 2.7w x 3.4h -> 2.63/2.96 x 3.56/2.97 (variants a/b), rock
+// 1.9 x 1.44 -> 1.88 x 1.25, diamond 1.6 -> 1.79 x 1.92, chest 1.3w x 1.11h -> 1.36 x 1.30.
+// tree.variant 0..2. Slot 2 is the BLOSSOM, because PAL.leaf[2] has always been pink (0xd9a0bc):
+// a third of this world's trees are already in flower and the cast has the tree for it. The
+// module also exports "tree-green-c" — swap it in here if the owner wants three greens instead.
+export const TREE_MODELS = ["tree-green-a", "tree-green-b", "tree-blossom"];
+/** Build one node model on the game's path: relit, fused to a single mesh, scaled to world units. */
+function nodeMesh(name){
+  const inner = withGameTarget(GAME_TARGET, () => NODE_MODELS[name].build());
+  relightForGame(inner);
+  bakeStatic(inner, {requireShadow:false, shell:false});
+  inner.updateMatrixWorld(true);
+  const meshes = [];
+  inner.traverse(o=>{ if(o.isMesh && !isOutline(o)) meshes.push(o); });
+  // bakeStatic leaves exactly one mesh for these casts (nothing is hung on userData but `parts`,
+  // which it exempts). There is deliberately NO fallback: a module change that leaves a second
+  // mesh un-fused (transparent/emissive/DoubleSide parts resist the fuse) throws AT BOOT, loudly,
+  // instead of shipping a silently broken scatter model — the scatter layers are module-scope, so
+  // this line runs before the first frame and the failure is unmissable.
+  const mesh = meshes[0];
+  if(meshes.length !== 1) throw new Error(`resource node ${name} fused to ${meshes.length} meshes`);
+  mesh.geometry.applyMatrix4(mesh.matrixWorld);
+  mesh.position.set(0,0,0); mesh.rotation.set(0,0,0);
+  mesh.removeFromParent();
+  mesh.scale.setScalar(S);
+  mesh.castShadow = mesh.receiveShadow = true;
+  return mesh;
+}
 export function makeTree(t){
   const g = new THREE.Group();
-  const leaf = PAL.leaf[t.variant] ?? PAL.leaf[0];
-  const trunk = meshOf(new THREE.CylinderGeometry(.16,.24,2.2,6), flat(PAL.trunk));
-  trunk.position.y = 1.1;
-  const crown = meshOf(new THREE.IcosahedronGeometry(1.35,0), flat(leaf));
-  crown.position.y = 3.0; crown.scale.set(1,.85,1);
-  const stump = meshOf(new THREE.CylinderGeometry(.26,.3,.42,6), flat(PAL.stump));
-  stump.position.y = .21; stump.visible = false;
-  g.add(trunk, crown, stump);
-  g.userData = {stump};
-  g.userData.live = bakeStatic(g) ?? trunk;   // trunk+crown fuse into one live mesh
+  const live = nodeMesh(TREE_MODELS[t.variant] ?? TREE_MODELS[0]);
+  const stump = nodeMesh("tree-stump");
+  stump.visible = false;
+  g.add(live, stump);
+  g.userData = {live, stump};
   return g;
 }
 export function makeRock(){
   const g = new THREE.Group();
-  const body = meshOf(new THREE.DodecahedronGeometry(.95,0), flat(PAL.rock));
-  body.position.y = .55; body.scale.set(1,.72,1);
-  const chip = meshOf(new THREE.DodecahedronGeometry(.42,0), flat(PAL.rockDark));
-  chip.position.set(.8,.28,.35);
-  const rubble = meshOf(new THREE.DodecahedronGeometry(.55,0), flat(PAL.rubble));
-  rubble.position.y = .14; rubble.scale.set(1,.3,1); rubble.visible = false;
-  g.add(body, chip, rubble);
-  g.userData = {rubble};
-  const fused = bakeStatic(g);                // body+chip fuse into one live mesh
-  g.userData.live = fused ? [fused] : [body, chip];
+  const live = nodeMesh("rock");
+  const rubble = nodeMesh("rock-rubble");
+  rubble.visible = false;
+  g.add(live, rubble);
+  g.userData = {live, rubble};
   return g;
 }
+// Per-entity cast (makeLayer builds one group per node), so it keeps its parts: `crystals` is the
+// spinner scene.js drives through userData.gem, and the live cluster and the spent crater swap
+// visibility on `depleted`. Two fused meshes plus the crystal cluster, each with the house's
+// sim-px ink shell — the module's own screen-space ink is off (see resource-nodes' inkable()).
 export function makeDiamond(){
   const g = new THREE.Group();
-  const base = meshOf(new THREE.DodecahedronGeometry(.7,0), flat(PAL.gemDark));
-  base.position.y = .35; base.scale.set(1,.5,1);
-  const gem = meshOf(new THREE.OctahedronGeometry(.55,0), flat(PAL.gem));
-  gem.position.y = 1.05;
-  const spent = meshOf(new THREE.DodecahedronGeometry(.45,0), flat(PAL.gemSpent));
-  spent.position.y = .12; spent.scale.set(1,.28,1); spent.visible = false;
-  g.add(base, gem, spent);
-  g.userData = {live:[base,gem], spent, gem};
+  const inner = withGameTarget(GAME_TARGET, () => NODE_MODELS["diamond"].build());
+  relightForGame(inner);
+  const crystals = inner.getObjectByName("crystals");
+  delete inner.userData.gemMats;              // the module's glint hook: no game caller, and it
+                                              // would keep the crystals out of the fuse below
+  bakeStatic(inner, {extraKeep:[crystals], requireShadow:false, shell:false});
+  bakeStatic(crystals, {requireShadow:false, shell:false});
+  adoptModel(inner);
+  inner.scale.setScalar(S);
+  const spent = nodeMesh("diamond-spent");
+  addPxOutline(spent);
+  spent.visible = false;
+  g.add(inner, spent);
+  // `live` is what syncDiamonds() shows/hides: the mound group and the crystal cluster ride
+  // together, so one entry (the whole sim-px group) says it once.
+  g.userData = {live:[inner], spent, gem:crystals};
   return g;
 }
 export function makeDrop(kind){
@@ -280,24 +449,29 @@ export function makeDamageDummy(){
   g.add(post,target,bull,base);g.userData={target,bull};bakeStatic(g);return g;
 }
 
+// The chest is the one node the player picks up and smashes, never opens: the module's loot pile
+// and its `open` pose are dropped at build (the sim has no open state to drive them from), and
+// what survives is the named lid — still a real hinge group, so syncChests' shake wobble tips it
+// exactly as it always did. Two fused meshes: body-and-hardware, and the lid assembly.
 export function makeChest(){
-  const g=new THREE.Group(),timber=flat(PAL.chestTimber),frame=flat(PAL.chestFrame),metal=flat(PAL.chestLatch);
-  const body=meshOf(new THREE.BoxGeometry(1.28,.62,.82),timber);body.position.y=.34;
-  // A broad faceted half-cylinder lid reads as a chest at gameplay zoom, unlike the square crate.
-  const lid=meshOf(new THREE.CylinderGeometry(.43,.43,1.3,8,1,false,0,Math.PI),timber);
-  lid.name="chest-lid";lid.rotation.z=Math.PI/2;lid.position.y=.68;
-  const lidRail=meshOf(new THREE.BoxGeometry(1.36,.12,.9),frame);lidRail.position.y=.64;
-  const baseRail=meshOf(new THREE.BoxGeometry(1.36,.12,.9),frame);baseRail.position.y=.1;
-  for(const x of [-.45,.45]){
-    const strap=meshOf(new THREE.BoxGeometry(.1,.78,.88),frame);strap.position.set(x,.43,0);g.add(strap);
-  }
-  const latch=meshOf(new THREE.BoxGeometry(.23,.34,.11),metal);latch.name="chest-latch";latch.position.set(0,.55,.47);
-  const keyhole=meshOf(new THREE.CylinderGeometry(.035,.035,.025,8),frame);keyhole.rotation.x=Math.PI/2;keyhole.position.set(0,.54,.535);
-  g.add(body,lid,lidRail,baseRail,latch,keyhole);
-  g.userData={body,lid,latch};
-  bakeStatic(g);                              // rails, straps, keyhole fuse
-  const wear=new Set();g.traverse(o=>{if(o.isMesh&&!isOutline(o))wear.add(o.material);});
-  g.userData.wearMats=[...wear];
+  const g=new THREE.Group();
+  const inner = withGameTarget(GAME_TARGET, () => NODE_MODELS["chest"].build());
+  relightForGame(inner);
+  const loot = inner.getObjectByName("loot");
+  if(loot){ disposeGroup(loot); loot.removeFromParent(); }
+  const lid = inner.getObjectByName("lid"), latch = inner.getObjectByName("latch");
+  // The brass latch stays out of the fuse so userData.latch keeps meaning what it always meant —
+  // one part, one draw. Everything else on the body (chamfered timber, feet, rails, straps,
+  // liner) is rigid and becomes one mesh.
+  const body = bakeStatic(inner, {extraKeep:[lid, latch], requireShadow:false, shell:false});
+  bakeStatic(lid, {requireShadow:false, shell:false});
+  adoptModel(inner);
+  inner.scale.setScalar(S);
+  g.add(inner);
+  // wearMats is the hurt tint: every BODY material, which here is every material there is (this
+  // cast has no emissive or unlit part to keep out of it).
+  const wear=new Set();inner.traverse(o=>{if(o.isMesh&&!isOutline(o))wear.add(o.material);});
+  g.userData={body:body??inner, lid, latch, wearMats:[...wear]};
   return g;
 }
 
@@ -333,6 +507,21 @@ function addPxOutline(mesh){
   shell.visible = OUTLINE_ON;
   mesh.add(shell);
   outlineShells.push(shell);
+}
+// A module that draws its OWN ink keeps it: summoning-circle's screen-space hull is built around a
+// silhouette DONOR (its kerb is a carved slab whose own edges must not be inked) and has a device-
+// pixel floor the world-space house shell has no way to reproduce. So this adoption sets the
+// shadow flags and hands the module's shells to the outline registry — the view panel's toggle
+// reaches them — and deliberately runs no addPxOutline pass, which would double every line.
+// disposeGroup() knows to free these (they own a private geometry and ShaderMaterial each).
+function adoptInkedModel(group){
+  group.traverse(o=>{
+    if(!o.isMesh) return;
+    if(isOutline(o)){ adoptOutlineShell(o); return; }
+    o.castShadow = true;                 // silently refused by the module's noShadow locks
+    o.receiveShadow = true;
+  });
+  return group;
 }
 function adoptModel(group){
   group.traverse(o=>{
@@ -799,8 +988,26 @@ export function makeBuilding(type){
     const orbit=new THREE.Group();orbit.position.y=.75;g.add(orbit);g.userData.orbit=orbit;g.userData.orbs=[];
     for(let i=0;i<3;i++){const orb=meshOf(new THREE.OctahedronGeometry(.25,0),flat(PAL.arcane,{emissive:PAL.arcaneGlow}));const a=i*Math.PI*2/3;orb.position.set(Math.cos(a)*1.65,0,Math.sin(a)*1.65);orbit.add(orb);g.userData.orbs.push(orb);}
   } else if(type==="summoningCircle"){
-    const disc=add(meshOf(new THREE.CylinderGeometry(2.45,2.45,.12,24),flat(PAL.arcane,{emissive:PAL.arcaneGlow})));disc.position.y=.06;
-    const inner=add(meshOf(new THREE.TorusGeometry(1.45,.12,6,24),flat(PAL.charge)));inner.rotation.x=Math.PI/2;inner.position.y=.14;g.userData.tip=inner;
+    // The reviewed sim-px working (src/render/models/summoning-circle.js) replaces the emissive
+    // disc + torus. It rides the 3x3 pad like the main base does — its own holder, scaled by S,
+    // lifted to the pad top — and nothing here joins `parts`: the hurt flash and the ghost tint
+    // must never reach the violet glyph, which is the dust gauge and means one thing only.
+    // userData.inner is what protects the whole subtree from bakeStatic() at the bottom of this
+    // function (its keep-set walks userData), which matters more here than anywhere else: the
+    // fuse would weld the five dust slots and the six decay stages into one un-switchable mesh.
+    const model = CIRCLE_MODELS["summoning-circle"];
+    const circle = withCircleGameTarget(GAME_TARGET, () => model.build());
+    relightForGame(circle);
+    adoptInkedModel(circle);
+    const holder = new THREE.Group();
+    holder.add(circle);
+    holder.scale.setScalar(S);
+    holder.position.y = FLOOR_TOP;
+    g.add(holder);
+    g.userData.inner = circle;
+    g.userData.anims = model.anims;
+    g.userData.slotMarkers = circle.userData.slotMarkers;   // one per dust in the circle (0..4)
+    g.userData.ashRings = circle.userData.ashRings;         // six decay stages, driven by lifetime
   } else if(type==="meteorTarget"){
     const rock=add(meshOf(new THREE.DodecahedronGeometry(2.2,1),flat(PAL.stone)));rock.scale.y=.65;rock.position.y=1.1;
   } else if(type==="captureYard"){
