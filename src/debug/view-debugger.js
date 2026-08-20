@@ -218,6 +218,18 @@ function bindV(id, apply, fmt, report=true){
 /** Buttons, the shape bindV() does not cover (no value, no readout span). */
 function bindBtn(id, fn){ $v(id).addEventListener("click", fn); }
 
+/**
+ * Move one bound control from code: write the widget, then fire the event bindV() listens for, so
+ * that binding's own apply() runs and its o_<id> readout repaints. Presets use this instead of
+ * calling the apply bodies directly — those bodies exist once, in bindControls(), and a second
+ * caller writing view/scene fields itself would fork them and leave the widget stale.
+ */
+function setBoundControl(id, value){
+  const el = $v(id);
+  if(el.type==="checkbox") el.checked = value; else el.value = value;
+  el.dispatchEvent(new Event(el.type==="checkbox" ? "change" : "input"));
+}
+
 function changedValuesReport(){
   const lines = [];
   for(const [id,{el,value:authored}] of boundDefaults){
@@ -353,16 +365,92 @@ function buildFogControls(){
   }
 }
 
+// ── generated pose preset (camera > pose) ───────────────────────────────────
+// Built here rather than in the markup for the same reason the fog sliders are: the numbers are a
+// constant this module owns, and the button's label, tooltip, and behaviour would otherwise state
+// them in two places. Shape is the gameplay pane's action row exactly (.btnrow > button), so it
+// inherits that button language with no new styling.
+//
+// Classic isometric: pitch atan(1/√2) = 35.264°, yaw 45°, orthographic. Only all three together
+// project the world's grid squares as the 2:1 diamonds isometric art is drawn against; leave the
+// ortho camera off and the perspective divide breaks the projection no matter the angles.
+const ISO_POSE = {pitch:35.26, yaw:45, ortho:true};
+function buildPosePreset(){
+  const pane = document.querySelector('#vPanes .pane[data-tab="camera"]');
+  const row = document.createElement("div"), button = document.createElement("button");
+  row.className = "btnrow";
+  button.type = "button"; button.id = "vIsometric"; button.textContent = "isometric";
+  button.title = "pitch "+ISO_POSE.pitch+"° · yaw "+ISO_POSE.yaw+"° · orthographic";
+  row.appendChild(button);
+  // Last thing in the pose block, ahead of the readout: it acts on the controls above it, and
+  // #vReadout stays the pane's final element.
+  pane.insertBefore(row, $v("vReadout"));
+}
+/**
+ * Apply the whole pose in one click, through the three controls' own bindings — so the sliders and
+ * the checkbox show what the camera is doing, placeCamera()/setOrthoCamera()/the host resize all run
+ * exactly once each, and the changed-values report sees the same widget values a hand-drag leaves.
+ * Idempotent by construction: it writes absolute values and never reads the current pose, so a
+ * second click re-applies the same thing. Nothing is persisted, because no control value in this
+ * panel is (see the localStorage note in the file header).
+ *
+ * The pitch slider's authored step is 1°, so the widget snaps to 35° and the binding applies that.
+ * The trailing line puts the true angle back on `view` and re-runs what the vPitch binding runs;
+ * slider position and both readouts round to 35° either way, so nothing on screen disagrees.
+ */
+function applyIsometricPose(){
+  setBoundControl("vPitch", ISO_POSE.pitch);
+  setBoundControl("vYaw",   ISO_POSE.yaw);
+  setBoundControl("vOrtho", ISO_POSE.ortho);
+  view.pitch = ISO_POSE.pitch; placeCamera(); drawScan(); updateReadout();
+}
+
+// ── yaw detents (owner request, Aug 20) ─────────────────────────────────────
+// The yaw slider LOCKS to 8 compass spots — every 45° around the circle — but the camera GLIDES:
+// a detent change tweens view.yaw along the shortest arc (~220ms, cubic ease-out) instead of
+// teleporting the view. The thumb and its ° readout jump straight to the detent (that is the
+// lock feel); only the camera animates. Auto-orbit owns view.yaw per frame, so while it is on
+// the detent applies instantly and the tween stays out of its way. -180 and 180 are the same
+// world yaw, so the slider's 9 stops are 8 distinct spots.
+const YAW_DETENT = 45, YAW_TWEEN_MS = 220;
+const snapYaw = v => Math.max(-180, Math.min(180, Math.round(v / YAW_DETENT) * YAW_DETENT));
+let yawTweenId = 0;   // rAF id; 0 = idle. New detents cancel the running glide and re-aim.
+function tweenYawTo(target){
+  cancelAnimationFrame(yawTweenId); yawTweenId = 0;
+  const from = view.yaw;
+  const delta = ((target - from + 540) % 360) - 180;   // shortest arc, wrap-aware
+  if(Math.abs(delta) < 0.5 || view.orbit){
+    view.yaw = target; placeCamera(); scheduleScan(); updateReadout(); return;
+  }
+  const t0 = performance.now();
+  const step = now => {
+    const k = Math.min((now - t0) / YAW_TWEEN_MS, 1);
+    const e = 1 - Math.pow(1 - k, 3);
+    view.yaw = from + delta * e;
+    placeCamera(); updateReadout();
+    if(k < 1){ yawTweenId = requestAnimationFrame(step); return; }
+    yawTweenId = 0;
+    view.yaw = target; placeCamera(); scheduleScan(); updateReadout();   // land exactly, scan once
+  };
+  yawTweenId = requestAnimationFrame(step);
+}
+
 // ── the bindings ────────────────────────────────────────────────────────────
 // One call per control, in pane order. Each bindV() applies its markup default the moment it is
 // bound, so this list is also the boot sequence for every tunable the panel owns.
 function bindControls(){
   bindV("vPitch", v=>{ view.pitch=v; placeCamera(); drawScan(); updateReadout(); }, v=>v+"°");
-  bindV("vYaw",   v=>{ view.yaw=v; placeCamera(); scheduleScan(); updateReadout(); }, v=>v+"°");
+  bindV("vYaw",   v=>{
+    const snapped = snapYaw(v);
+    const el = $v("vYaw");
+    if(+el.value !== snapped) el.value = snapped;   // thumb locks to the detent immediately
+    tweenYawTo(snapped);
+  }, v=>snapYaw(v)+"°");
   bindV("vZoom",  v=>{ setCameraZoom(v); placeCamera(); updateReadout(); }, v=>v.toFixed(2));
   bindV("vFov",   v=>{ view.fov=v; placeCamera(); updateReadout(); }, v=>v+"°");
   bindV("vOrtho", v=>{ setOrthoCamera(v); HOOKS.resizeView(); scheduleScan(); updateReadout(); });
   bindV("vOrbit", v=>{ view.orbit=v; });
+  bindBtn("vIsometric", applyIsometricPose);
   bindV("vHeight",v=>{ view.heightScale=v; scheduleScan(); updateReadout(); }, v=>v+"%");
   bindV("vShadow",v=>{ setShadows(v); });
   bindV("vPins",  v=>{ view.ghostPins=v; if(!v)setPins([]); });
@@ -655,6 +743,7 @@ export function initViewDebugger(hooks={}){
   buildSubtabs();
   // Generated controls must exist before bindControls(), which binds them by id like any other.
   buildFogControls();
+  buildPosePreset();
   $v("vToggle").addEventListener("click", ()=>{
     const on = $v("viewPanel").classList.toggle("collapsed");
     $v("vToggle").textContent = on ? "view ▸" : "view ▾";

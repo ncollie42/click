@@ -48,7 +48,10 @@ const CSS = `
 #rpDebug button{background:#1a2028;color:#9ab;border:1px solid #2a3542;border-radius:3px;
   font:10px monospace;cursor:pointer;padding:1px 7px}
 #rpDebug button:hover{color:#fff}
-#rpDebug .hint{color:#5a6a7a;margin-top:6px}`;
+#rpDebug .hint{color:#5a6a7a;margin-top:6px}
+#rpDebug .swatches{grid-column:1/-1;display:flex;height:16px;border:1px solid #2a3542;
+  border-radius:3px;overflow:hidden;margin:3px 0 5px}
+#rpDebug .swatches div{flex:1 1 0}`;
 
 function fmt(v){ return Math.abs(v) >= 100 ? String(Math.round(v)) : String(+v.toFixed(4)); }
 
@@ -112,7 +115,24 @@ export function createPanel({setPipeline, getPipelineName}){
 
   const sections = {};   // name -> its wrapper <div>; only the ACTIVE pipeline's section shows
 
-  function section(title, tune, sliders, checks, selects){
+  function section(title, tune, sliders, checks, selects, tips = {}, dims = {}, swatches = null){
+    // tips: hover text per knob (the key name rides along for grep-ability). dims: knobs that are
+    // inert under a condition — the row greys out, its controls disable, and the tooltip says WHY
+    // (owner request: "target height does nothing" was pixelScale silently owning the resolution).
+    const dimFns = [];
+    const runDims = () => { for(const f of dimFns) f(); };
+    const applyTip = (el, key) => { el.title = tips[key] ? `${tips[key]}\n· key: ${key}` : key; };
+    const watchDim = (row, key, controls) => {
+      const d = dims[key];
+      if(!d) return;
+      const base = row.title;
+      dimFns.push(() => {
+        const off = !!d.when(tune);
+        row.style.opacity = off ? ".45" : "";
+        for(const c of controls) c.disabled = off;
+        row.title = off ? `${base}\n⊘ ${d.why}` : base;
+      });
+    };
     // Everything for one pipeline lives in one wrapper so sync() can show exactly the active
     // pipeline's knobs and nothing else — the stacked all-three view was unusable noise.
     const box = document.createElement("div");
@@ -139,33 +159,38 @@ export function createPanel({setPipeline, getPipelineName}){
       }
       const [key, label, min, max, step] = entry;
       const row = document.createElement("div"); row.className = "row";
-      const l = document.createElement("label"); l.textContent = label; l.title = key;
+      applyTip(row, key);
+      const l = document.createElement("label"); l.textContent = label;
       const s = document.createElement("input");
       s.type = "range"; s.min = min; s.max = max; s.step = step; s.value = tune[key];
       // The readout is itself an input: type an exact value (sliders can't hit 0.000226) and the
       // slider follows. `change` not `input`, so half-typed numbers don't fight the tune.
       const o = document.createElement("input"); o.className = "val"; o.value = fmt(tune[key]);
-      s.addEventListener("input", ()=>{ tune[key] = +s.value; o.value = fmt(+s.value); });
-      o.addEventListener("change", ()=>{ const v = +o.value; if(isFinite(v)){ tune[key] = v; s.value = v; } });
+      s.addEventListener("input", ()=>{ tune[key] = +s.value; o.value = fmt(+s.value); runDims(); });
+      o.addEventListener("change", ()=>{ const v = +o.value; if(isFinite(v)){ tune[key] = v; s.value = v; runDims(); } });
       // shadow.activeElement, not document's — inside a shadow root the document only sees the host.
       outs.push(()=>{ s.value = tune[key]; if(shadow.activeElement !== o) o.value = fmt(tune[key]); });
+      watchDim(row, key, [s, o]);
       row.append(l, s, o);
       rootAppend(row);
     }
     const checksBox = document.createElement("div"); checksBox.className = "checks";
     for(const [key, label] of checks){
       const l = document.createElement("label");
+      applyTip(l, key);
       const c = document.createElement("input");
       c.type = "checkbox"; c.checked = !!tune[key];
-      c.addEventListener("change", ()=>{ tune[key] = c.checked; });
+      c.addEventListener("change", ()=>{ tune[key] = c.checked; runDims(); });
       outs.push(()=>{ c.checked = !!tune[key]; });
+      watchDim(l, key, [c]);
       l.append(c, label);
       checksBox.appendChild(l);
     }
     rootAppend(checksBox);
     for(const [key, label, options] of selects || []){
       const row = document.createElement("div"); row.className = "row";
-      const l = document.createElement("label"); l.textContent = label; l.title = key;
+      applyTip(row, key);
+      const l = document.createElement("label"); l.textContent = label;
       const sel = document.createElement("select");
       for(const opt of options){
         const [value, text] = Array.isArray(opt) ? opt : [opt, String(opt)];
@@ -174,11 +199,45 @@ export function createPanel({setPipeline, getPipelineName}){
         sel.appendChild(el);
       }
       sel.value = tune[key];
-      sel.addEventListener("change", ()=>{ tune[key] = +sel.value; });
+      // Some tunes are strings (cloudsMode); only coerce values that are actually numeric.
+      sel.addEventListener("change", ()=>{ tune[key] = isNaN(+sel.value) ? sel.value : +sel.value; runDims(); });
       outs.push(()=>{ sel.value = tune[key]; });
+      watchDim(row, key, [sel]);
       row.append(l, sel);
       rootAppend(row);
+      // Live colour strip (spec.swatches): the exact hexes the palette quantizer matches against,
+      // full panel width right under its select. Repainted via outs, so tier changes, preset
+      // loads and console-authored tune.palette edits all show up; dims with its select's rule.
+      if(swatches && swatches.after === key){
+        const strip = document.createElement("div");
+        strip.className = "swatches";
+        if(swatches.tip) strip.title = swatches.tip;
+        let painted = "";
+        const paint = ()=>{
+          const pal = swatches.get(tune);
+          const sig = pal.join(",");
+          if(sig === painted) return;
+          painted = sig;
+          strip.textContent = "";
+          for(const hex of pal){
+            const c = document.createElement("div");
+            const css = "#" + (hex & 0xffffff).toString(16).padStart(6, "0");
+            c.style.background = css;
+            c.title = css;
+            strip.appendChild(c);
+          }
+        };
+        outs.push(paint);
+        paint();
+        sel.addEventListener("change", paint);   // same-click repaint; the poll covers the rest
+        watchDim(strip, key, []);
+        rootAppend(strip);
+      }
     }
+    // runDims rides the outs list, so reset / preset load / the sync poll all re-evaluate the
+    // dim predicates; direct input paths call it explicitly for same-frame feedback.
+    outs.push(runDims);
+    runDims();
     reset.addEventListener("click", ()=>{
       Object.assign(tune, defaults[title]);
       for(const refresh of outs) refresh();
@@ -219,7 +278,8 @@ export function createPanel({setPipeline, getPipelineName}){
   }
 
   // pixel ships its own panel description — consumed as-is.
-  const pixelOuts = section("pixel", pixelTune, PIXEL_SPEC.sliders, PIXEL_SPEC.checks, PIXEL_SPEC.selects);
+  const pixelOuts = section("pixel", pixelTune, PIXEL_SPEC.sliders, PIXEL_SPEC.checks,
+                            PIXEL_SPEC.selects, PIXEL_SPEC.tips, PIXEL_SPEC.dims, PIXEL_SPEC.swatches);
 
   // Shown instead of a section when the untuned "current" pipeline is active.
   const noKnobs = document.createElement("div");
