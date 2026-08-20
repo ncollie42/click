@@ -81,46 +81,63 @@ export const PALETTES = {
   ],
 };
 
-/** Live-read every frame. Exported and mirrored on window for console tuning. */
+/** Live-read every frame. Exported and mirrored on window for console tuning.
+ *  Values are the OWNER DEFAULTS, Aug 20: ported wholesale from the test scene's solved
+ *  reference-match preset (tools/test-scene/preset.js PIXEL_PRESET) after the round-5 audition —
+ *  the Aug 19 game numbers were tuned against the pre-fix OKLab/sharpen math anyway. */
 export const pixelTune = {
-  targetHeight: 540,
-  pixelScale: 0.4,       // owner defaults, Aug 19 (panel session): scale wins over targetHeight
+  targetHeight: 157,     // the match's texel grid; inert while pixelScale > 0
+  pixelScale: 0.4,       // scale wins over targetHeight
   snap: true,
   subpixel: true,        // sub-pixel reconstruction at the upscale (needs snap)
   // toon half
-  sharpen: 0.6,
+  sharpen: 0.25,         // 0.6 overshot the match's midtone frame; also halos shadow edges less
   clouds: true,
-  cloudsMode: "scene",   // "scene" = shadow-casting plane (object sides get shade) · "image" = old composite fold
-  cloudScale: 0.02,
+  cloudsMode: "material", // "material" (default) = analytic shade in the materials (smooth
+                          // penumbra, object sides, no dither; material-light-mods.js) ·
+                          // "scene" = shadow-casting plane (dithered) · "image" = composite fold
+  toonRamp: true,         // material-stage banded lighting (material-light-mods.js; terrain/fog
+                          // opt out scene-side). Lives here so ONE panel owns the look knobs.
+  cloudScale: 0.038,     // ~26 wu features
   cloudSpeed: 0.01,
-  cloudCover: 0.46,      // field mean is ~0.45 (unnormalised fBm) — 0.52 left the sky near-clear
-  cloudDarken: 0.72,
+  cloudCover: 0.38,      // THRESHOLD (lower = more cloud); field mean ~0.45
+  cloudDarken: 0.1,      // image mode only (inert in scene mode)
   cloudHeight: 60,
-  cloudBands: 3,
-  cloudOffsetX: 0,       // pans the field in FIELD units (≈1/cloudScale wu each) — composition
-  cloudOffsetZ: 0,       // authoring; drift (time) only moves along one fixed diagonal
+  cloudBands: 1,         // smooth coverage measured better than posterized
+  cloudOffsetX: 2,       // pans the field in FIELD units (≈1/cloudScale wu each) — composition
+  cloudOffsetZ: -2,      // authoring; drift (time) only moves along one fixed diagonal
   // god rays (needs clouds on — the beams ARE the gaps in that same field)
   rays: true,
-  rayStrength: 0.2,      // max fraction lerped toward the sun-cream tint (bounded, never additive)
+  rayStrength: 0.08,
   raySteps: 12,
   rayBands: 4,
-  rayDist: 30,           // wu of air marched above the surface. Bigger windows exit the cloud
-                         // above shaded ground and report "lit air", washing deep shade warm
-                         // (round-1 builder measured it) — keep the window well under cloudHeight
+  rayDist: 18,           // wu of air marched above the surface. Short ON PURPOSE, twice proven:
+                         // at this game's near-ortho low-pitch camera a long view-ray window is
+                         // mostly HORIZONTAL, so it smears the cloud-gap mask across the screen
+                         // (grey wash + rayBands contouring into 1px streaks — measured Aug 20)
+                         // instead of making shafts. True sun-axis shafts are geometrically
+                         // unavailable at this camera; beams here are grounded edge-light.
   // retro half
   outlines: true,
-  outlineStrength: 4,    // owner default, Aug 19
-  depthEdge: 0.0025,
+  inkMode: "selout",     // "selout" = ink is the pixel's own colour banded darker (house style)
+                         // · "uniform" = one authored ink for every silhouette (the reference's
+                         // dark-olive read); colour in inkColor (console/tooltip, no slider)
+  inkColor: 0x3f3a20,
+  outlineStrength: 3,
+  depthEdge: 0.002,      // 0.001 inked terrain ridge contours into 1px horizontal streaks at the
+                         // near-ortho camera (swept + crop-verified Aug 20); prop silhouettes'
+                         // depth steps are orders larger, unaffected
   creases: true,
   creaseThreshold: 0.86,
   creaseStrength: 1,
-  normalEdges: true,     // owner default, Aug 19 — costs the +1 normals scene draw
-  edgeHighlight: 1,
-  normalThreshold: 0.1,
+  normalEdges: true,     // costs the +1 normals scene draw
+  edgeHighlight: 0.75,
+  normalThreshold: 0.35, // 0.1 inked every facet seam on curved meshes
   // quantize
   quantizeMode: 0,       // 0 oklab bands (default) · 1 palette match
-  bands: 32,             // mode 0
-  spread: 0.1,           // Bayer amplitude (mode 1's L jitter)
+  bands: 37,             // mode 0 — solved: the quantizer's own floor over the reference samples
+                         // is lowest at 37 (round 2)
+  spread: 0.16,          // dither amplitude at band borders (both modes)
   paletteSize: 16,       // mode 1: which authored PALETTES tier to match against (8/16/32)
   palette: null,         // set an array of hexes (≤32) to override the authored tiers
 };
@@ -161,12 +178,15 @@ export const PANEL_SPEC = {
     ["outlines", "outlines"], ["creases", "creases"],
     ["normalEdges", "normal edges (hello-threejs)"],
     ["clouds", "cloud shadows"], ["rays", "god rays"],
+    ["toonRamp", "toon ramp (materials)"],
     ["snap", "camera snap"], ["subpixel", "sub-pixel pan"],
   ],
   selects: [
     ["quantizeMode", "quantize", [[0, "oklab bands"], [1, "palette match"]]],
     ["paletteSize", "palette (m1)", [[8, "8 colors"], [16, "16 colors"], [32, "32 colors"]]],
-    ["cloudsMode", "cloud shade via", [["scene", "shadow plane"], ["image", "image fold"]]],
+    ["cloudsMode", "cloud shade via",
+     [["material", "material (smooth)"], ["scene", "shadow plane"], ["image", "image fold"]]],
+    ["inkMode", "outline ink", [["selout", "selout (own colour)"], ["uniform", "uniform olive"]]],
   ],
 
   // Hover text per knob (debug-panel puts these on the whole row; falls back to the key name).
@@ -203,7 +223,9 @@ export const PANEL_SPEC = {
     subpixel: "Shows the snapped render from the true camera position — pans glide while texels stay locked (needs snap).",
     quantizeMode: "oklab bands = posterize lightness, hue untouched. palette match = snap every pixel to the nearest authored colour.",
     paletteSize: "Which authored palette tier palette-match snaps to.",
-    cloudsMode: "shadow plane = clouds cast REAL shadows (object sides get shade; darkness from the light rig). image fold = flat screen-space multiply (cloud darken applies).",
+    cloudsMode: "material (smooth) = analytic shade computed IN the materials: smooth penumbra, object sides, no dither — the default. shadow plane = real shadow-map clouds (dithered penumbra). image fold = flat screen-space multiply (cloud darken applies).",
+    toonRamp: "Material-stage banded lighting (the round-5 audition, game-wide): the sun term steps through an authored ramp before the quantizer. Terrain and fog stay smooth by design.",
+    inkMode: "selout = silhouette ink is each pixel's own colour banded darker (house style). uniform = one authored dark-olive ink on every silhouette, like the reference. Colour: pixelTune.inkColor (console).",
   },
 
   // A live colour strip the panel renders after the named select: the exact hexes the palette
@@ -256,6 +278,8 @@ uniform float uCloudHeight, uCloudBands;
 uniform float uRays, uRayStrength, uRaySteps, uRayBands, uRayDist;
 uniform vec3 uSunDir;
 uniform float uOutlines, uOutlineStrength, uDepthEdge;
+uniform float uInkUniform;
+uniform vec3 uInkColor;     // linear (CPU-converted); applied pre-quantize like everything else
 uniform float uCrease, uCreaseThresh, uCreaseStrength;
 uniform float uNormalEdges, uEdgeHighlight, uNormalThresh;
 uniform float uQuantMode;       // 0 oklab bands · 1 palette match
@@ -403,18 +427,26 @@ void main(){
       vec3 nearPos = (uCamWorld * vec4(viewPosOf(uv, uNear), 1.0)).xyz;  // this pixel's near-plane point
       vec3 rayStart = mix(world, nearPos, clamp(uRayDist / max(zC - uNear, 1e-3), 0.0, 1.0));
       float jitter = bayer4(uv / uTexel) + 0.5;   // [0,1): offsets each pixel's step phase
-      float lit = 0.0;
+      // Height falloff: air near the deck weighs most, fading to nothing at the cloud plane.
+      // With the tall default window this integrates lit COLUMNS — beams smear along the
+      // view/sun axis and read as shafts (round-2 critic's ask) instead of edge glow, while the
+      // falloff keeps their energy grounded.
+      float lit = 0.0, wSum = 0.0;
       for(int i = 0; i < 16; i++){
         if(float(i) >= uRaySteps) break;
         vec3 pos = mix(rayStart, world, (float(i) + jitter) / uRaySteps);
-        lit += 1.0 - cloudShadowAt(pos);
+        float w = clamp(1.0 - pos.y / uCloudHeight, 0.05, 1.0);
+        lit += (1.0 - cloudShadowAt(pos)) * w;
+        wSum += w;
       }
-      lit /= uRaySteps;
+      lit /= max(wSum, 1e-4);
       // A shaft is air MORE lit than the ground it hangs over — subtracting the ground's own
       // litness kills the DC term: clear sky over lit ground adds zero (no wash), and the beam
       // maxes out exactly on the money shot, lit air over cloud-shaded ground.
       float beam = max(lit - (1.0 - shadowSmooth), 0.0);
-      if(uRayBands > 1.5) beam = floor(beam * uRayBands + 0.5) / uRayBands;
+      // Dithered banding, same law as every quantizer here: un-dithered, the beam's wide flat
+      // gradients contour into dead-straight 1px band lines (measured Aug 20, az-0 sun).
+      if(uRayBands > 1.5) beam = floor(beam * uRayBands + jitter) / uRayBands;
       // Bounded warm (sun-cream family) fold: LERP toward the tint, not raw addition — a raw add
       // is ~10× the base value on dark pixels (fog blocks) and saturates beams to opaque white
       // blobs (owner report #2, Aug 19). Lerping caps the haze at rayStrength fraction whatever
@@ -467,12 +499,18 @@ void main(){
     }
 
     if(bandShift != 0.0){
-      // Step size: mode 0 has real bands; palette mode borrows uBands as "ink depth" so one
-      // outlineStrength knob reads the same across modes.
-      vec3 lab = toOKLab(col);
-      lab.x = clamp(lab.x + bandShift / uBands, 0.0, 1.0);
-      // The ink keeps its direction and loses only the part of the step that left sRGB.
-      col = gamutWalk(col, fromOKLab(lab));
+      if(uInkUniform > 0.5 && bandShift < 0.0){
+        // Uniform ink (the reference's read): every dark silhouette takes the ONE authored ink.
+        // Interior highlights (positive shifts) stay selout either way.
+        col = mix(col, uInkColor, 0.85);
+      }else{
+        // Selout (house style): step size — mode 0 has real bands; palette mode borrows uBands
+        // as "ink depth" so one outlineStrength knob reads the same across modes.
+        vec3 lab = toOKLab(col);
+        lab.x = clamp(lab.x + bandShift / uBands, 0.0, 1.0);
+        // The ink keeps its direction and loses only the part of the step that left sRGB.
+        col = gamutWalk(col, fromOKLab(lab));
+      }
     }
   }
 
@@ -556,6 +594,7 @@ function makeUniforms(THREE){
     uRaySteps: {value: 12}, uRayBands: {value: 4}, uRayDist: {value: 60},
     uSunDir: {value: new THREE.Vector3(0, 1, 0)},
     uOutlines: {value: 1}, uOutlineStrength: {value: 4}, uDepthEdge: {value: 0.0025},
+    uInkUniform: {value: 0}, uInkColor: {value: new THREE.Color(0x3f3a20)},
     uCrease: {value: 1}, uCreaseThresh: {value: 0.86}, uCreaseStrength: {value: 1},
     uNormalEdges: {value: 0}, uEdgeHighlight: {value: 1}, uNormalThresh: {value: 0.1},
     uQuantMode: {value: 0}, uBands: {value: 32}, uSpread: {value: 0.1},
@@ -637,6 +676,8 @@ function syncUniforms(THREE, renderer, cam, sun){
   }
 
   uniforms.uOutlines.value = pixelTune.outlines === false ? 0 : 1;
+  uniforms.uInkUniform.value = pixelTune.inkMode === "uniform" ? 1 : 0;
+  uniforms.uInkColor.value.setHex(pixelTune.inkColor ?? 0x3f3a20);   // setHex = sRGB→linear
   uniforms.uOutlineStrength.value = +pixelTune.outlineStrength || 0;
   uniforms.uDepthEdge.value = Math.max(1e-5, +pixelTune.depthEdge || 0.0025);
   uniforms.uCrease.value = pixelTune.creases === false ? 0 : 1;
@@ -701,7 +742,7 @@ export default {
     // the frame that gets drawn): the shadow plane's field uniforms must be current when the
     // shadow map renders, and identical to the composite's copies within the frame.
     syncUniforms(THREE, renderer, cam, ctx.getSun?.());
-    const sceneClouds = pixelTune.clouds !== false && pixelTune.cloudsMode !== "image";
+    const sceneClouds = pixelTune.clouds !== false && pixelTune.cloudsMode === "scene";
     if(sceneClouds) ensureCloudPlane(ctx);
     if(cloudPlane){
       cloudPlane.mesh.visible = sceneClouds;   // invisible = skipped by the shadow pass too

@@ -7,8 +7,15 @@
 // vertex-colour attribute is used verbatim, so THREE.Color's already-linear channels go straight
 // in). Consumer: scene.js, which drops the mesh into the scene with receiveShadow.
 //
+// ROUND 5: the meadow can be banded at the material stage too (preset.TOON.terrain) — scene.js
+// passes the shared gradient map in, or null for the stock Lambert. It is null by default, and
+// that is a MEASURED choice, not a default-by-omission: see ROUND-LOG.md "Round 5 / terrain vs
+// props". The albedos above were solved through the Lambert transfer at flat-ground NdotL.
+//
 // DELIBERATE GAP: no grass blades. The reference's blade texture is Red Giraffe's grass system;
 // the owner excluded grass from this round. Everything here is macro colour only.
+
+import {makeToonMaterial} from "../../src/render/toon-ramp.js";
 
 const HASH_A = 0x27d4eb2d, HASH_B = 0x165667b1, HASH_C = 0x9e3779b1;
 
@@ -66,7 +73,7 @@ function dirtWeightAt(x, z, seed, terrain, heightNorm, slope){
  * Build the meadow mesh. Returns {mesh, dispose}. `THREE` and `terrain` come from the caller so
  * this module imports nothing and stays trivially testable with node --check.
  */
-export function buildTerrain(THREE, {seed, terrain}){
+export function buildTerrain(THREE, {seed, terrain, gradientMap = null}){
   const geo = new THREE.PlaneGeometry(terrain.size, terrain.size, terrain.segments, terrain.segments);
   geo.rotateX(-Math.PI / 2);            // plane XY -> world XZ, +y up
   const pos = geo.attributes.position;
@@ -98,7 +105,12 @@ export function buildTerrain(THREE, {seed, terrain}){
   }
   geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
-  const mat = new THREE.MeshLambertMaterial({color: 0xffffff, vertexColors: true});
+  const mat = gradientMap
+    ? makeToonMaterial(THREE, {color: 0xffffff, vertexColors: true, gradientMap})
+    : new THREE.MeshLambertMaterial({color: 0xffffff, vertexColors: true});
+  // The meadow never takes the light-mods toon ramp (measured: banding the ground caps its only
+  // highlights); analytic cloud shade still applies through the same patcher.
+  mat.userData.noToonRamp = true;
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = "test-scene:terrain";
   mesh.receiveShadow = true;

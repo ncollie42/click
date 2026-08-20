@@ -56,7 +56,7 @@ const CSS = `
 function fmt(v){ return Math.abs(v) >= 100 ? String(Math.round(v)) : String(+v.toFixed(4)); }
 
 /** Built once by createPanel(); everything else is closure state inside it. */
-export function createPanel({setPipeline, getPipelineName}){
+export function createPanel({setPipeline, getPipelineName, poseControls}){
   // structuredClone, not spread: pixelTune.palette can be an ARRAY — a shallow copy would share it
   // and an in-place palette edit would silently corrupt the "default" that reset restores.
   const defaults = structuredClone({pixel: pixelTune});
@@ -281,6 +281,51 @@ export function createPanel({setPipeline, getPipelineName}){
   const pixelOuts = section("pixel", pixelTune, PIXEL_SPEC.sliders, PIXEL_SPEC.checks,
                             PIXEL_SPEC.selects, PIXEL_SPEC.tips, PIXEL_SPEC.dims, PIXEL_SPEC.swatches);
 
+  // ── camera / sun (host-supplied, owner request Aug 20) ──
+  // The HOST describes its pose controls through ctx.poseControls {sliders, checks, buttons,
+  // get(key), set(key,v), press(key)} and the panel renders them with the same row machinery as
+  // the tune knobs — game and test scene share ONE camera/sun UI (the test scene's floating
+  // panel kept only its toon-ramp editor). No adapter (map editor) = no section. Values refresh
+  // on the same 500ms sync poll, so mouse-driven camera moves show up with no extra plumbing.
+  const poseOuts = [];
+  if(poseControls){
+    const box = document.createElement("div");
+    box.className = "sect";
+    const h = document.createElement("h4");
+    h.innerHTML = "<span>camera / sun</span>";
+    box.appendChild(h);
+    for(const [key, label, min, max, step] of poseControls.sliders || []){
+      const row = document.createElement("div"); row.className = "row";
+      const l = document.createElement("label"); l.textContent = label; l.title = key;
+      const s = document.createElement("input");
+      s.type = "range"; s.min = min; s.max = max; s.step = step; s.value = poseControls.get(key);
+      const o = document.createElement("input"); o.className = "val"; o.value = fmt(+poseControls.get(key));
+      s.addEventListener("input", ()=>{ poseControls.set(key, +s.value); o.value = fmt(+s.value); });
+      o.addEventListener("change", ()=>{ const v = +o.value; if(isFinite(v)){ poseControls.set(key, v); s.value = v; } });
+      poseOuts.push(()=>{ const v = +poseControls.get(key); s.value = v; if(shadow.activeElement !== o) o.value = fmt(v); });
+      row.append(l, s, o);
+      box.appendChild(row);
+    }
+    const checksBox = document.createElement("div"); checksBox.className = "checks";
+    for(const [key, label] of poseControls.checks || []){
+      const l = document.createElement("label");
+      const c = document.createElement("input");
+      c.type = "checkbox"; c.checked = !!poseControls.get(key);
+      c.addEventListener("change", ()=>{ poseControls.set(key, c.checked); });
+      poseOuts.push(()=>{ c.checked = !!poseControls.get(key); });
+      l.append(c, label);
+      checksBox.appendChild(l);
+    }
+    for(const [key, label] of poseControls.buttons || []){
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", ()=>{ poseControls.press(key); for(const r of poseOuts) r(); });
+      checksBox.appendChild(b);
+    }
+    box.appendChild(checksBox);
+    root.appendChild(box);
+  }
+
   // Shown instead of a section when the untuned "current" pipeline is active.
   const noKnobs = document.createElement("div");
   noKnobs.className = "hint";
@@ -306,6 +351,7 @@ export function createPanel({setPipeline, getPipelineName}){
     }
     noKnobs.style.display = name === "current" ? "block" : "none";
     for(const refresh of pixelOuts) refresh();
+    for(const refresh of poseOuts) refresh();
   }
 
   function toggle(force){

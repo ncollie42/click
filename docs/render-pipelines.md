@@ -39,7 +39,13 @@ palette's new slot 1, same look.)
 
 ### Cloud shade routes (`pixelTune.cloudsMode`)
 
-- `"scene"` (default, Aug 20) — a shadow-casting cloud plane (`src/render/cloud-field.js`) at
+- `"material"` (default, Aug 20) — analytic shade computed IN the materials
+  (`src/render/material-light-mods.js`, injected via onBeforeCompile into every Lambert/Toon
+  material): the direct sun term is multiplied by the cloud field, sun-projected to the cloud
+  plane like every other consumer. Smooth penumbra (no shadow-map dither), object sides shaded,
+  and both hosts (game + test scene) wire it identically. The same module carries the game-wide
+  TOON RAMP (`pixelTune.toonRamp`; terrain/fog opt out via `material.userData.noToonRamp`).
+- `"scene"` — a shadow-casting cloud plane (`src/render/cloud-field.js`) at
   `cloudHeight`: pixel.js adds it to the scene and enables layer 2 on the sun's shadow camera,
   so cloud shade arrives through the REAL shadow system — object sides included, in sun-space
   automatically (Red Giraffe vid6's "feed the mask into the shadow system"). Banded partial
@@ -80,7 +86,15 @@ system), rays are its volumetric brighten term, shadows its projected darken ter
 - `src/render/pipelines/pixel.js` — the pipeline; passes, tunables and quantize modes are
   documented in its header.
 - `src/render/cloud-field.js` — the ONE cloud density field (GLSL) + the shadow-casting cloud
-  plane factory; consumed by pixel.js's composite and its scene-mode plane.
+  plane factory; consumed by pixel.js's composite, its scene-mode plane, and the material mods.
+- `src/render/material-light-mods.js` — material-stage injections (analytic cloud shade + toon
+  ramp) patched into existing Lambert/Toon materials without replacing them; both hosts call
+  `applyLightingMods`/`syncLightMods` per frame.
+- `src/render/toon-ramp.js` — gradient-map builder + MeshToonMaterial factory (band levels are
+  effective NdotL; the band holding `sin(sunElevation)` must carry that value so flat ground
+  matches Lambert).
+- Outline ink: `pixelTune.inkMode` — `"selout"` (house style, per-pixel colour banded darker) or
+  `"uniform"` (one authored dark-olive ink, `pixelTune.inkColor`).
 - `src/render/pipelines/debug-panel.js` — the R panel. Lives in a shadow root because the
   game's global tag CSS (`button{width:100%}` etc.) mangles light-DOM panels.
 - `scene.js` seams: `renderScene()` delegates to `renderFrame()`, `resizeRenderer()` forwards

@@ -29,7 +29,9 @@ const {PIXEL_PRESET} = await import("./preset.js");
 // Any query param named after a pixelTune knob overrides the preset — this is how the proof shots
 // are taken (&clouds=0, &rays=0, &pixelScale=0). Typed against the preset/default so "0" becomes
 // false for a boolean knob and 0 for a numeric one.
-const RESERVED = new Set(["t", "seed", "sunaz", "sunel", "props", "ortho", "yaw", "pitch"]);
+// "toon" is RESERVED (round 5): it is a MATERIAL-stage switch, not a pixelTune knob, so it must
+// not fall through to the `key in pixelTune` test below. ?toon=0 -> stock Lambert everywhere.
+const RESERVED = new Set(["t", "seed", "sunaz", "sunel", "props", "ortho", "yaw", "pitch", "toon"]);
 const tuneOverrides = {};
 for(const [key, raw] of params){
   if(RESERVED.has(key)) continue;
@@ -47,6 +49,9 @@ if(params.has("pitch")) CAMERA.pitchDeg = parseFloat(params.get("pitch"));
 const testScene = startTestScene({
   canvas: document.getElementById("c"), seed, tuneOverrides, sunAz, sunEl,
   noProps: params.get("props") === "0",   // yardstick only — see scene.js
+  // ?toon=0 turns the material-stage ramp off (preset.TOON.enabled is the default). The A/B pair
+  // full.png vs toon-off.png is the only thing that isolates the transfer function.
+  ...(params.get("toon") !== null ? {toon: params.get("toon") !== "0"} : {}),
   ortho: params.get("ortho") === "1",
   yawDeg: params.has("yaw") ? parseFloat(params.get("yaw")) : 0,
 });

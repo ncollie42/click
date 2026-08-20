@@ -17,9 +17,11 @@ import * as THREE from "three";
 import {configurePipelines, renderFrame, resizePipeline, setPipeline, getPipelineName}
   from "../../src/render/pipelines/index.js";
 import {pixelTune} from "../../src/render/pipelines/pixel.js";
-import {CAMERA, SUN, HEMI, TERRAIN, OBJECTS, PIXEL_PRESET, SEED_DEFAULT} from "./preset.js";
+import {CAMERA, SUN, HEMI, TERRAIN, OBJECTS, PIXEL_PRESET, SEED_DEFAULT, TOON} from "./preset.js";
 import {buildTerrain} from "./terrain.js";
 import {buildObjects} from "./objects.js";
+import {makeGradientMap} from "../../src/render/toon-ramp.js";
+import {initLightMods, applyLightingMods, syncLightMods} from "../../src/render/material-light-mods.js";
 
 const DEG = Math.PI / 180;
 
@@ -86,7 +88,7 @@ function convexHull(pts){
 }
 
 export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {}, sunAz, sunEl,
-                                noProps = false, ortho = false, yawDeg = 0}){
+                                noProps = false, ortho = false, yawDeg = 0, toon = TOON.enabled}){
   const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
   renderer.setPixelRatio(1);              // 1 output pixel per CSS pixel: screenshots are exact
   renderer.shadowMap.enabled = true;
@@ -98,6 +100,12 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1d2a16);   // never visible: the frame is all ground
+
+  // Material light mods (same wiring as the game): analytic cloud shade in cloudsMode
+  // "material" reaches the Lambert terrain AND the MeshToon props (the patcher adds the cloud
+  // term to both). The ramp handed over is only for Lambert materials that opt IN — this
+  // scene's terrain opts out and its props carry their own gradient map, so it is inert here.
+  initLightMods(THREE, {rampSteps: TOON.steps, rampLevels: TOON.levels});
 
   // Live camera POSE — preset/URL seed it, camera-controls.js (interactive sessions only)
   // mutates it, placeCamera() reads it every frame. Frame half-height is the fov/dist product,
@@ -132,17 +140,37 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
   if(s.radius !== undefined) sun.shadow.radius = s.radius;
   sun.shadow.camera.updateProjectionMatrix();
   sun.target.position.set(CAMERA.target[0], 0, CAMERA.target[2]);
-  const dir = sunDirection(sunAz ?? SUN.azimuthDeg, sunEl ?? SUN.elevationDeg);
-  sun.position.copy(sun.target.position).addScaledVector(dir, SUN.distance);
+  // One writer for the sun's pose. Elevation moves EXPOSURE too (the rig solves
+  // intensity = S*pi/sin(el)), so setSun holds S constant by re-deriving intensity — the panel's
+  // sun sliders move the light, not the brightness of the world. S is recovered from the preset
+  // pair rather than hardcoded, so a preset re-solve can't desync it.
+  const SUN_S = SUN.intensity * Math.sin(SUN.elevationDeg * DEG) / Math.PI;
+  const sunPose = {az: sunAz ?? SUN.azimuthDeg, el: sunEl ?? SUN.elevationDeg};
+  function setSun(azDeg, elDeg){
+    sunPose.az = azDeg;
+    sunPose.el = Math.max(5, Math.min(85, elDeg));
+    const dir = sunDirection(sunPose.az, sunPose.el);
+    sun.position.copy(sun.target.position).addScaledVector(dir, SUN.distance);
+    sun.intensity = SUN_S * Math.PI / Math.sin(sunPose.el * DEG);
+  }
+  setSun(sunPose.az, sunPose.el);
   scene.add(sun, sun.target);
 
-  const terrain = buildTerrain(THREE, {seed, terrain: TERRAIN});
+  // ROUND 5 toon ramp. ONE gradient map, built here and shared by every banded material, disposed
+  // with the scene. `toon` is the ?toon=0 A/B switch; TOON.props / TOON.terrain then decide which
+  // half of the scene actually takes the ramp (the terrain answer is measured — see preset.js).
+  // src/render/toon-ramp.js owns the format/filter contract; nothing about it is repeated here.
+  const gradientMap = toon ? makeGradientMap(THREE, {steps: TOON.steps, levels: TOON.levels}) : null;
+
+  const terrain = buildTerrain(THREE, {seed, terrain: TERRAIN,
+                                       gradientMap: toon && TOON.terrain ? gradientMap : null});
   scene.add(terrain.mesh);
   // ?props=0 removes the five props. Its ONLY job is the yardstick: probe.py diffs a props-off
   // shot against the matching props-on one to get an exact per-prop pixel mask (the diff also
   // lights up each prop's cast shadow, which is why the mask is intersected with the silhouette
   // polygon below). Never used for a judged frame.
-  const props = buildObjects(THREE, {seed, terrain: TERRAIN, objects: noProps ? [] : OBJECTS});
+  const props = buildObjects(THREE, {seed, terrain: TERRAIN, objects: noProps ? [] : OBJECTS,
+                                     gradientMap: toon && TOON.props ? gradientMap : null});
   for(const mesh of props.meshes) scene.add(mesh);
 
   // ── the pixelTune preset, applied before the first frame ──
@@ -157,6 +185,38 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
     getSun: () => sun,
     waterPrePass: () => {},              // no water in this scene
     view,
+    // The R panel's shared "camera / sun" section (same contract the game supplies). The frame
+    // loop re-places the camera from `pose` every frame, so set() just mutates. setSun holds the
+    // exposure solve; see its comment above.
+    poseControls: {
+      sliders: [
+        ["pitch", "pitch", 15, 89, 1], ["yaw", "yaw", -180, 180, 1],
+        ["dist", "dist wu", 80, 420, 5], ["fov", "fov", 5, 70, 0.25],
+        ["sunAz", "sun azimuth", -180, 180, 1], ["sunEl", "sun elevation", 5, 85, 1],
+      ],
+      checks: [["ortho", "orthographic"]],
+      buttons: [["iso", "isometric"]],
+      get(k){
+        switch(k){
+          case "pitch": return pose.pitch;  case "yaw": return pose.yaw;
+          case "dist": return pose.dist;    case "fov": return pose.fov;
+          case "ortho": return pose.ortho;
+          case "sunAz": return sunPose.az;  case "sunEl": return sunPose.el;
+        }
+      },
+      set(k, v){
+        switch(k){
+          case "pitch": pose.pitch = v; break;  case "yaw": pose.yaw = v; break;
+          case "dist": pose.dist = v; break;    case "fov": pose.fov = v; break;
+          case "ortho": api.setOrtho(v); break;
+          case "sunAz": setSun(v, sunPose.el); break;
+          case "sunEl": setSun(sunPose.az, v); break;
+        }
+      },
+      press(k){
+        if(k === "iso"){ pose.pitch = 35.264; pose.yaw = 45; api.setOrtho(true); }
+      },
+    },
   });
   setPipeline("pixel");                  // no-op if the registry already picked it up
 
@@ -187,6 +247,17 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
       resizePipeline(w, h);      // projection itself is refreshed in placeCamera below
     }
     placeCamera();
+    applyLightingMods(THREE, scene);
+    syncLightMods({
+      cloudScale: pixelTune.cloudScale, cloudSpeed: pixelTune.cloudSpeed,
+      cloudCover: pixelTune.cloudCover,
+      cloudOffsetX: pixelTune.cloudOffsetX, cloudOffsetZ: pixelTune.cloudOffsetZ,
+      cloudHeight: pixelTune.cloudHeight,
+      sunDir: sunDirection(sunPose.az, sunPose.el),
+      time: (performance.now() / 1000) % 100000,   // same clock pixel.js reads; ?t freezes both
+      cloudShade: pixelTune.clouds !== false && pixelTune.cloudsMode === "material",
+      toon: pixelTune.toonRamp !== false,
+    });
     renderFrame();
     frames++;
     requestAnimationFrame(frame);
@@ -199,7 +270,8 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
     // (pipelines re-read it through ctx.getCamera() every frame, per the registry contract).
     pose, placeCamera,
     setOrtho(on){ if(pose.ortho !== !!on){ pose.ortho = !!on; makeCamera(); placeCamera(); } },
-    seed, preset: {CAMERA, SUN, HEMI, TERRAIN, OBJECTS, PIXEL_PRESET},
+    seed, toon, gradientMap, sunPose, setSun,
+    preset: {CAMERA, SUN, HEMI, TERRAIN, OBJECTS, PIXEL_PRESET, TOON},
     framesRendered: () => frames,
     pipeline: () => getPipelineName(),
     /** Per-prop screen silhouettes for the round-3 yardstick (see silhouettePoly). */
@@ -217,7 +289,7 @@ export function startTestScene({canvas, seed = SEED_DEFAULT, tuneOverrides = {},
                 rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]};
       });
     },
-    dispose(){ terrain.dispose(); props.dispose(); renderer.dispose(); },
+    dispose(){ terrain.dispose(); props.dispose(); gradientMap?.dispose(); renderer.dispose(); },
   };
   return api;
 }

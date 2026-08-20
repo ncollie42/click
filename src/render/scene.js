@@ -25,6 +25,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
 import {configurePipelines, renderFrame, resizePipeline} from "./pipelines/index.js";
+import {initLightMods, applyLightingMods, syncLightMods} from "./material-light-mods.js";
 import {PAL, css, TOWER_TOP} from "./palette.js";
 import {
   S,WU,HU,gx,gz, flat, meshOf, isOutline, disposeGroup, FLOOR_TOP,
@@ -57,7 +58,7 @@ import {
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
   heldWorker, heldEnemy, heldBuilding, heldChest, heldProp, workerLoad,
   vacuumRadius,terrainAtRasterCell,terrainMetadata,terrainRaisedAtCell,vegetationMetadata,
-  clamp, distance
+  clamp, distance, setCameraZoom
 } from "../game/simulation.js";
 import {LAND} from "../game/authored-map.js";
 import {buildModuleCatalog,SHAPE_GEOMETRY,rotateShapePoint} from "../game/terrain-modules.js";
@@ -227,8 +228,30 @@ export function combatTargetOnScreen(target){
 const sky = new THREE.HemisphereLight(PAL.skyLight, PAL.bounce, 0.5);
 scene.add(sky);
 const sun = new THREE.DirectionalLight(PAL.sunDay, 1.5);
+// The key light's direction as az/el (az 0 = +X/screen-right, positive toward +Z; el up).
+// Defaults DERIVED from the historical hardcoded offset (-26, 46, +20) so the stock look is
+// byte-identical; the R panel's "camera / sun" section mutates this. Day/night still owns
+// intensity/colour — this is direction only.
+const SUN_OFFSET_DIST = Math.hypot(26, 46, 20);
+const _sunDirScratch = new THREE.Vector3();
+const sunPose = {
+  az: THREE.MathUtils.radToDeg(Math.atan2(20, -26)),
+  el: THREE.MathUtils.radToDeg(Math.asin(46 / Math.hypot(26, 46, 20))),
+};
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048,2048);
+// Material-stage light mods (material-light-mods.js): analytic cloud shade + the toon ramp,
+// injected into every Lambert/Toon material each frame in drawScene. The ramp is the round-5
+// audition's shape re-anchored to THIS rig's sun elevation (sin 54.5° = 0.814) — the band
+// holding flat-ground NdotL carries exactly that value, so un-ramped and ramped flat ground
+// match and the palette work survives. Terrain and fog opt out via userData.noToonRamp.
+initLightMods(THREE, {rampSteps: 32, rampLevels: [
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   // dotNL < 0
+  0.22, 0.22, 0.22, 0.22, 0.22,                     // terminator (dotNL 0–0.3125)
+  0.55, 0.55, 0.55, 0.55, 0.55,                     // low-mid   (0.3125–0.625)
+  0.814, 0.814, 0.814, 0.814,                       // anchor = sin(54.5°) (0.625–0.875)
+  1.0, 1.0,                                         // crown (0.875–1)
+]});
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 400;
 sun.shadow.bias = -0.0006;
@@ -253,6 +276,9 @@ const grassTex=new THREE.CanvasTexture(grassLayer);
 grassTex.wrapS=grassTex.wrapT=THREE.RepeatWrapping;grassTex.repeat.set(W/GRASS_TILE_PX,H/GRASS_TILE_PX);
 grassTex.magFilter=grassTex.minFilter=THREE.NearestFilter;grassTex.generateMipmaps=false;grassTex.colorSpace=THREE.SRGBColorSpace;
 const landMat=flat(0xffffff,{map:grassTex,vertexColors:true});
+// Terrain stays SMOOTH under the toon ramp (measured in the test-scene audition: banding the
+// ground caps its only highlights and draws contour rings). Cloud shade still applies to it.
+landMat.userData.noToonRamp=true;
 const REGION_COLORS={forest:new THREE.Color(0x6f965c),rocky:new THREE.Color(0xa8a387),open:new THREE.Color(0xb3c98c),coast:new THREE.Color(PAL.cliff)};
 const shoreMat=flat(PAL.cliff,{side:THREE.DoubleSide});
 
@@ -765,6 +791,9 @@ const FOG_SHADES=[new THREE.Color(0x524c5e),new THREE.Color(0x5a5468),new THREE.
 const FOG_WATER_SHADES=[new THREE.Color(0x49485e),new THREE.Color(0x504f68),new THREE.Color(0x414053)];
 const fogGeo=new THREE.BoxGeometry(CELL*S,1,CELL*S);fogGeo.translate(0,.5,0);
 const fogMat=new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true});
+// Fog is a gameplay surface a third of the screen wide — banding it is a look decision the owner
+// has not made; opt out of the toon ramp (cloud shade still applies).
+fogMat.userData.noToonRamp=true;
 let fogMesh=null,fogShell=null,fogBuiltRevision=-1,fogHadShake=false,fogBuiltHeight=-1;
 const _fq0=new THREE.Quaternion(),_fv=new THREE.Vector3(),_fs=new THREE.Vector3(),_fm=new THREE.Matrix4();
 function rebuildFogField(count){
@@ -2145,7 +2174,13 @@ export function drawScene(){
   placeCamera();
 
   const cam = state.camera;
-  sun.position.set(gx(cam.x)-26, 46, gz(cam.y)+20);
+  {
+    // Sun offset from the camera target, az/el-parameterised (R panel "camera / sun" drives
+    // sunPose). Defaults reproduce the historical fixed offset (-26, 46, +20) exactly.
+    const saz = THREE.MathUtils.degToRad(sunPose.az), sel = THREE.MathUtils.degToRad(sunPose.el);
+    const h = Math.cos(sel) * SUN_OFFSET_DIST;
+    sun.position.set(gx(cam.x) + Math.cos(saz)*h, Math.sin(sel)*SUN_OFFSET_DIST, gz(cam.y) + Math.sin(saz)*h);
+  }
   sun.target.position.set(gx(cam.x), 0, gz(cam.y));
   sun.target.updateMatrixWorld();
   // Night dims and cools the key light; day/night already lives in state.clock.
@@ -2154,6 +2189,26 @@ export function drawScene(){
   sun.color.setHex(night>.25 ? PAL.sunNight : PAL.sunDay);
   // The water shader ignores scene lights, so it tracks the night dim explicitly.
   waterUniforms.uLight.value = 1 - night*.6;
+
+  // Material light mods: patch any materials born this frame (before the coming render compiles
+  // them) and sync the shared uniforms. Knob values come from pixel.js's WINDOW MIRROR rather
+  // than a static import, so the pipeline module stays lazily loaded — when it has never loaded
+  // ("current"-only session), the zeros mean stock lighting, which is exactly what "current" is.
+  applyLightingMods(THREE, scene);
+  {
+    const tune = window.pixelTune;
+    const materialMode = tune && tune.clouds !== false && tune.cloudsMode === "material";
+    syncLightMods({
+      cloudScale: tune?.cloudScale ?? 0.038, cloudSpeed: tune?.cloudSpeed ?? 0.01,
+      cloudCover: tune?.cloudCover ?? 0.38,
+      cloudOffsetX: tune?.cloudOffsetX ?? 0, cloudOffsetZ: tune?.cloudOffsetZ ?? 0,
+      cloudHeight: tune?.cloudHeight ?? 60,
+      sunDir: _sunDirScratch.subVectors(sun.position, sun.target.position),
+      time: (performance.now() / 1000) % 100000,
+      cloudShade: !!materialMode,
+      toon: tune ? tune.toonRamp !== false : false,
+    });
+  }
   // The grid is unlit, so without this it would stay bright while the map darkens and end up the
   // loudest thing on screen at night. Fading it keeps it under the terrain and the combat marks.
   // Overview zoom suppresses the 32px lattice; normal/build zoom retains full precision.
@@ -2217,6 +2272,45 @@ configurePipelines({
   getSun: () => sun,
   waterPrePass,
   view,
+  // The R panel's "camera / sun" section (debug-panel.js) — shared UI with the test scene.
+  // Writes go through the SAME paths the view-debugger uses (view fields + placeCamera /
+  // setOrthoCamera / setCameraZoom), so the two panels can never disagree about ownership.
+  // Yaw is stored 0..360 (orbit wraps it); the slider speaks -180..180.
+  poseControls: {
+    sliders: [
+      ["pitch", "pitch", 15, 89, 1], ["yaw", "yaw", -180, 180, 1],
+      ["zoom", "zoom", 0.1, 5, 0.05], ["fov", "fov", 12, 70, 1],
+      ["sunAz", "sun azimuth", -180, 180, 1], ["sunEl", "sun elevation", 10, 85, 1],
+    ],
+    checks: [["ortho", "orthographic"]],
+    buttons: [["iso", "isometric"]],
+    get(k){
+      switch(k){
+        case "pitch": return view.pitch;
+        case "yaw": return ((view.yaw + 540) % 360) - 180;
+        case "zoom": return state.camera.zoom;
+        case "fov": return view.fov;
+        case "ortho": return view.ortho;
+        case "sunAz": return sunPose.az;
+        case "sunEl": return sunPose.el;
+      }
+    },
+    set(k, v){
+      switch(k){
+        case "pitch": view.pitch = v; break;
+        case "yaw": view.yaw = (v + 360) % 360; break;
+        case "zoom": setCameraZoom(v); break;
+        case "fov": view.fov = v; break;
+        case "ortho": setOrthoCamera(v); break;
+        case "sunAz": sunPose.az = v; return;   // sun is placed per frame in drawScene
+        case "sunEl": sunPose.el = v; return;
+      }
+      placeCamera();
+    },
+    press(k){
+      if(k === "iso"){ view.pitch = 35.264; view.yaw = 45; setOrthoCamera(true); placeCamera(); }
+    },
+  },
 });
 
 // ─────────────────────────────────────────────── visibility measurement (scene half)

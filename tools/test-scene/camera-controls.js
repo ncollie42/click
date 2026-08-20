@@ -1,14 +1,17 @@
-// Owns: the test scene's interactive camera — the same control set as the game's view panel
-// (pitch / detent yaw / zoom / fov / orthographic / isometric preset) plus direct mouse control
-// on the canvas. Interactive sessions only: boot.js skips this module entirely when ?t= freezes
-// time, so screenshots stay byte-stable and panel-free.
+// Owns: the test scene's DIRECT camera input (drag orbit, shift/middle-drag pan, wheel zoom) and
+// the floating TOON RAMP editor. Interactive sessions only: boot.js skips this module when ?t=
+// freezes time, so screenshots stay byte-stable and panel-free.
 //
-// Consumes scene.js's api surface: {pose, placeCamera, setOrtho} — this module mutates the pose,
+// The camera/sun SLIDERS used to live here too; they moved into the shared R panel (owner call,
+// Aug 20) — debug-panel.js renders them from the poseControls adapter this scene hands to
+// configurePipelines, so the game and the test scene share one camera UI. The panel's 500ms
+// refresh poll picks up mouse-driven pose changes on its own; nothing here talks to it.
+//
+// Consumes scene.js's api surface: {pose, gradientMap, toon} — this module mutates the pose,
 // scene.js's frame loop re-places the camera from it every frame.
 //
-// Yaw behaves like the game's slider (view-debugger.js "yaw detents"): the slider LOCKS to the
-// 8 compass spots (every 45°) and the camera GLIDES there (~220ms cubic ease-out, shortest arc).
-// Mouse orbit is free while dragging; releasing snaps-and-glides to the nearest detent.
+// Yaw matches the game's slider law (view-debugger.js "yaw detents"): free while dragging,
+// releasing snaps-and-glides to the nearest of the 8 compass spots (~220ms cubic ease-out).
 
 const YAW_DETENT = 45, YAW_TWEEN_MS = 220;
 const snapYaw = v => {
@@ -25,62 +28,16 @@ export function attachCameraControls({api, canvas}){
     cancelAnimationFrame(yawTweenId); yawTweenId = 0;
     const from = pose.yaw;
     const delta = ((target - from + 540) % 360) - 180;
-    if(Math.abs(delta) < 0.5){ pose.yaw = target; sync(); return; }
+    if(Math.abs(delta) < 0.5){ pose.yaw = target; return; }
     const t0 = performance.now();
     const step = now => {
       const k = Math.min((now - t0) / YAW_TWEEN_MS, 1);
       pose.yaw = from + delta * (1 - Math.pow(1 - k, 3));
-      sync();
       if(k < 1) yawTweenId = requestAnimationFrame(step);
-      else { yawTweenId = 0; pose.yaw = target; sync(); }
+      else { yawTweenId = 0; pose.yaw = target; }
     };
     yawTweenId = requestAnimationFrame(step);
   }
-
-  // ── panel ──
-  const box = document.createElement("div");
-  box.style.cssText = "position:fixed;top:10px;left:10px;z-index:20;background:#141712e6;" +
-    "color:#cfd6c4;font:11px/1.5 monospace;padding:10px 12px;border:1px solid #343b30;" +
-    "border-radius:6px;user-select:none;width:200px";
-  box.innerHTML = `
-    <b style="color:#e8e3b6">camera</b> <span style="float:right;cursor:pointer" data-x>×</span>
-    ${["pitch", "yaw", "dist", "fov"].map(k => `
-      <label style="display:block;margin-top:6px">${k} <span data-o="${k}" style="float:right"></span>
-        <input data-k="${k}" type="range" style="width:100%" autocomplete="off"></label>`).join("")}
-    <label style="display:block;margin-top:6px"><input data-k="ortho" type="checkbox" autocomplete="off"> orthographic</label>
-    <button data-iso type="button" style="margin-top:8px;width:100%;font:inherit;cursor:pointer">isometric</button>
-    <div style="margin-top:6px;color:#7b8471">drag orbit · shift-drag pan · wheel zoom</div>`;
-  document.body.appendChild(box);
-  const RANGES = {pitch: [15, 89, 1], yaw: [-180, 180, YAW_DETENT], dist: [80, 420, 5], fov: [5, 70, 0.25]};
-  const inputs = {};
-  for(const el of box.querySelectorAll("input[data-k]")){
-    const k = el.dataset.k;
-    inputs[k] = el;
-    if(el.type === "range"){ const [lo, hi, st] = RANGES[k]; el.min = lo; el.max = hi; el.step = st; }
-  }
-  box.querySelector("[data-x]").onclick = () => box.remove();
-  box.querySelector("[data-iso]").onclick = () => {
-    pose.pitch = 35.264; api.setOrtho(true); tweenYawTo(45); sync();
-  };
-  inputs.pitch.oninput = () => { pose.pitch = +inputs.pitch.value; sync(); };
-  inputs.yaw.oninput = () => tweenYawTo(snapYaw(+inputs.yaw.value));
-  inputs.dist.oninput = () => { pose.dist = +inputs.dist.value; sync(); };
-  inputs.fov.oninput = () => { pose.fov = +inputs.fov.value; sync(); };
-  inputs.ortho.onchange = () => { api.setOrtho(inputs.ortho.checked); sync(); };
-
-  /** One writer for widget/readout state; pose is the only truth. */
-  function sync(){
-    if(!box.isConnected) return;
-    inputs.pitch.value = pose.pitch; inputs.yaw.value = snapYaw(pose.yaw);
-    inputs.dist.value = pose.dist; inputs.fov.value = pose.fov;
-    inputs.ortho.checked = pose.ortho;
-    const o = k => box.querySelector(`[data-o="${k}"]`);
-    o("pitch").textContent = Math.round(pose.pitch) + "°";
-    o("yaw").textContent = Math.round(pose.yaw) + "°";
-    o("dist").textContent = Math.round(pose.dist) + " wu";
-    o("fov").textContent = pose.fov.toFixed(1) + "°";
-  }
-  sync();
 
   // ── mouse on the canvas ──
   // Left-drag orbits (free while held; release glides to the nearest yaw detent). Shift- or
@@ -109,7 +66,6 @@ export function attachCameraControls({api, canvas}){
       pose.target[0] -= (dx * rx - dy * fx) * s;
       pose.target[2] -= (dx * rz - dy * fz) * s;
     }
-    sync();
   });
   const endDrag = () => {
     if(drag?.mode === "orbit") tweenYawTo(snapYaw(pose.yaw));
@@ -120,6 +76,93 @@ export function attachCameraControls({api, canvas}){
   canvas.addEventListener("wheel", e => {
     e.preventDefault();
     pose.dist = Math.max(80, Math.min(420, pose.dist * Math.exp(e.deltaY * 0.001)));
-    sync();
   }, {passive: false});
+
+  // ── toon ramp editor (round 5) ──
+  // Live gradient-map editing. The authored 32-texel map decodes into RUNS (band levels) and the
+  // edges between them; sliders rewrite the texture's Uint8Array IN PLACE (+ needsUpdate), so a
+  // drag lands on the next frame without touching any material. Only the LIT half (dotNL >= 0)
+  // is editable — the lower half stays authored zeros. Hidden when the ramp is off (?toon=0).
+  // Stays a floating box (not the R panel): it is test-scene-only until the game adopts the ramp.
+  if(!(api.toon && api.gradientMap)) return;
+  const tex = api.gradientMap;
+  const steps = tex.image.width, half = steps / 2;
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;top:10px;left:10px;z-index:20;background:#141712e6;" +
+    "color:#cfd6c4;font:11px/1.5 monospace;padding:10px 12px;border:1px solid #343b30;" +
+    "border-radius:6px;user-select:none;width:200px";
+  box.innerHTML = `<b style="color:#e8e3b6">toon ramp</b> <span style="float:right;cursor:pointer" data-x>×</span>
+    <div data-ramp style="display:flex;height:12px;border:1px solid #343b30;border-radius:3px;overflow:hidden;margin:5px 0"></div>
+    <div data-rows></div>
+    <div style="margin-top:6px;color:#7b8471">drag orbit · shift-drag pan · wheel zoom · camera in R panel</div>`;
+  document.body.appendChild(box);
+  box.querySelector("[data-x]").onclick = () => box.remove();
+  const rampStrip = box.querySelector("[data-ramp]");
+  const rows = box.querySelector("[data-rows]");
+
+  // Decode runs from the authored lit half: [{level, start}] where start is a lit-texel index.
+  const runs = [];
+  for(let i = 0; i < half; i++){
+    const v = tex.image.data[half + i] / 255;
+    if(!runs.length || Math.abs(v - runs[runs.length - 1].level) > 1e-3) runs.push({level: v, start: i});
+  }
+  function paintRamp(){
+    rampStrip.textContent = "";
+    for(let i = 0; i < half; i++){
+      const c = document.createElement("div");
+      const v = tex.image.data[half + i];
+      c.style.cssText = `flex:1;background:rgb(${v},${v},${v})`;
+      c.title = `dotNL ${(i / half).toFixed(2)}–${((i + 1) / half).toFixed(2)} → ${(v / 255).toFixed(3)}`;
+      rampStrip.appendChild(c);
+    }
+  }
+  const applyRamp = () => {
+    for(let i = 0; i < half; i++){
+      let band = runs[0];
+      for(const r of runs) if(i >= r.start) band = r;
+      tex.image.data[half + i] = Math.round(Math.max(0, Math.min(1, band.level)) * 255);
+    }
+    tex.needsUpdate = true;
+    paintRamp();
+  };
+  const NAMES = ["terminator", "anchor", "mid", "crown"];
+  runs.forEach((run, i) => {
+    const lab = document.createElement("label");
+    lab.style.cssText = "display:block;margin-top:4px";
+    lab.innerHTML = `${NAMES[i] || "band " + i} <span style="float:right" data-o></span>
+      <input type="range" min="0" max="1" step="0.005" style="width:100%" autocomplete="off">`;
+    const inp = lab.querySelector("input"), out = lab.querySelector("[data-o]");
+    inp.value = run.level; out.textContent = run.level.toFixed(3);
+    inp.oninput = () => { run.level = +inp.value; out.textContent = run.level.toFixed(3); applyRamp(); };
+    rows.appendChild(lab);
+    if(i > 0){
+      // Edge slider between band i-1 and i, in dotNL, snapped to the texel grid.
+      const el = document.createElement("label");
+      el.style.cssText = "display:block;margin-top:2px;color:#7b8471";
+      el.innerHTML = `└ edge (dotNL) <span style="float:right" data-o></span>
+        <input type="range" min="${1 / half}" max="${1 - 1 / half}" step="${1 / half}" style="width:100%" autocomplete="off">`;
+      const einp = el.querySelector("input"), eout = el.querySelector("[data-o]");
+      einp.value = run.start / half; eout.textContent = (run.start / half).toFixed(3);
+      einp.oninput = () => {
+        // Keep edges ordered: this band must start after the previous and before the next.
+        const lo = (runs[i - 1].start + 1), hi = (runs[i + 1] ? runs[i + 1].start - 1 : half - 1);
+        run.start = Math.max(lo, Math.min(hi, Math.round(+einp.value * half)));
+        einp.value = run.start / half; eout.textContent = (run.start / half).toFixed(3);
+        applyRamp();
+      };
+      rows.appendChild(el);
+    }
+  });
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.textContent = "copy TOON levels";
+  copyBtn.style.cssText = "margin-top:6px;width:100%;font:inherit;cursor:pointer";
+  copyBtn.onclick = () => {
+    const levels = [...tex.image.data].map(v => +(v / 255).toFixed(4));
+    navigator.clipboard?.writeText(JSON.stringify({steps, levels}));
+    copyBtn.textContent = "copied — paste into preset.js TOON";
+    setTimeout(() => { copyBtn.textContent = "copy TOON levels"; }, 1400);
+  };
+  rows.appendChild(copyBtn);
+  paintRamp();
 }

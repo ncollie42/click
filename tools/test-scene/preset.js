@@ -98,11 +98,16 @@ export const CAMERA = {
 // 19.5 halves the growth of the cast skirts, and the reference's crescents are modest. The skirts
 // still lengthen vs round 3 (cot 22 = 2.5), so shadow.radius softens their edge — the reference's
 // skirts are grass-eaten soft, and a hard ellipse at this length reads fake (owner round-3 look).
+// OWNER DEFAULT (Aug 20, post-round-5): az 0 / el 60 — high sun from screen-right, short skirts.
+// This departs from the REFERENCE match (its derived sun was az 40 / el 22; use
+// ?sunaz=40&sunel=22 to reproduce the judged round-5 frames). S = 0.885 held as always, so
+// intensity re-derives and the flat-ground albedo solves stay valid; TOON.levels was re-anchored
+// to sin(60 deg) for the same reason.
 export const SUN = {
-  azimuthDeg: 40,     // 0 = straight along +X (screen right); positive rotates toward the camera
-  elevationDeg: 22,   // = asin(cos(45 deg)·sin(32 deg)); az = asin(tan(22)/tan(32))
+  azimuthDeg: 0,      // 0 = straight along +X (screen right); positive rotates toward the camera
+  elevationDeg: 60,
   color: 0xfff2d0,    // PAL.sunDay — held FIXED so the exposure solve has one unknown, not four
-  intensity: 7.42,    // = S*PI/sin(22 deg), S = 0.885 held from round 2. Paired with HEMI, not free
+  intensity: 3.21,    // = S*PI/sin(60 deg), S = 0.885. Paired with HEMI, not free
   distance: 240,      // must clear cloudHeight 60: sin(22)*240 = 90 wu up, above the plane
   shadow: {mapSize: 2048, halfSpan: 95, near: 1, far: 520, bias: -0.0006, normalBias: 0.035,
            radius: 8},   // PCF blur (needs PCFShadowMap — PCFSoft ignores radius): the el-22
@@ -168,7 +173,22 @@ export const OBJECTS = [
   // red desaturated to land on the reference's (195,51,48) — the pure 0xe03a49 quantized its
   // highlight to (252,0,31), which is what CRITIC-R2's "magenta rim" gate was actually catching.
   {kind: "sphere", name: "yellow", x: -31.2, z: -10.9, r: 4.65, sink: 0.54, color: 0x8cb91c},
-  {kind: "sphere", name: "red",    x: -15.7, z:  -3.0, r: 4.30, sink: 0.46, color: 0xc1363f},
+  // ROUND 5, and the ONLY albedo the toon ramp forced: 0xc1363f -> 0xc84d3f.
+  // Round 4 solved red against its family MEDIAN, which put its red channel at 194-235 — the flat
+  // top of the sRGB curve, where a 3x change in the light term is worth ~20 luma. Consequence:
+  // the dome's whole ambient-to-full-sun range spans ~50 L, so probe.py resolved only three of the
+  // ramp's four bands (>=3% of core per 8L bucket) and red reported span 32 / 1 group against the
+  // reference's 72 / 2. THREE ramp variants left that number at exactly 32 — it is albedo-bound,
+  // not ramp-bound, which is why this one is allowed. Re-solved so the CROWN band (level 0.60)
+  // lands on the reference's own lit sample (240,88,51): albedo_lin = target_lin / (1.516, 1.331,
+  // 0.916), then the blue channel finished by measurement (the linear solve lands b 15 short
+  // because the mode-0 quantizer's lab.z += (L-0.5)*0.05 pulls bright pixels yellow; 0x35 measured
+  // b 36, 0x4b measured 66, 0x3f measured 53 against the target's 51).
+  // Result: lit (248,92,53) vs reference (240,88,51), span 80 / 2 groups vs 72 / 2.
+  // COST, accepted and not hidden: measure.py's red FAMILY median goes Δ26.1 -> Δ47.6, because
+  // 52% of our dome's core sits in the crown band where the reference's sits lower. That yardstick
+  // cannot see shading structure (CRITIC-R2 §0) and probe.py is the round-3+ yardstick.
+  {kind: "sphere", name: "red",    x: -15.7, z:  -3.0, r: 4.30, sink: 0.46, color: 0xc84d3f},
   // ROUND 4 (owner): SQUARE footprint — the reference box reads square, ours read as an oblong
   // slab. Shrunk toward the reference's 195x143 visible px while keeping the ~30 deg yaw.
   // Box albedo solved for a SUN-LIT top face (r4c proved the locked composition leaves the box
@@ -182,62 +202,88 @@ export const OBJECTS = [
   {kind: "sphere", name: "white",  x:  34.9, z: -11.6, r: 3.70, sink: 0.56, color: 0x8890aa},
 ];
 
+// ── toon ramp (ROUND 5) ───────────────────────────────────────────────────────────────────────
+// MATERIAL-STAGE banding, built through src/render/toon-ramp.js. Read that file's header for how
+// three r160 samples a gradient map; read ROUND-LOG.md "Round 5" for the measured before/after.
+//
+// WHY. Every band in rounds 1-4 was POST (pixel.js mode-0 OKLab posterize) laid over a smooth
+// Lambert gradient, which is a staircase, not a value structure. Worse, it could not close the
+// frame's peak-luma gate: a Lambert sphere crown sees NdotL up to ~1 where the flat ground sees
+// sin(22 deg) = 0.3746, i.e. 2.67x the sun term, so the crowns ran 232 L against the reference
+// frame's whole-frame max of 193. No albedo or posterizer setting reaches that; the transfer
+// function itself has to be capped. A ramp does exactly that.
+//
+// LEVELS — authored as EFFECTIVE NdotL, because that is what the texel replaces (toon-ramp.js
+// consequence 1). Translate to display with the same model as the albedo solve at the top of this
+// file: lit = albedo * (amb + sunIntensity*sun_lin*level/PI). That model was checked against the
+// render before any of these numbers were trusted: predicted vs measured on the white dome's four
+// bands is 94/136/151/165 vs 97/136/153/165 (quantize-off), i.e. within 3 L.
+//
+// FOUR levels, but 32 STEPS — and the step count is about BAND EDGES, not band count.
+// three maps coord = dotNL*0.5+0.5, so a `steps`-wide map puts edges on the fixed lattice
+// dotNL = 2i/steps - 1 and spends its whole lower half on dotNL < 0. steps 8 was the first
+// attempt; it forced the terminator edge to dotNL 0.25, and MEASURED, that band covered only
+// 2.0% of the red dome's core — under probe.py's 3%-of-core threshold, so the span metric could
+// not see it and red reported span 32 (1 group) against the reference's 72 (2). Band AREA is set
+// by where the edge sits, and no choice of LEVEL can fix it. steps 32 puts the lattice at 0.0625
+// so the terminator edge can move out to 0.3125 (5.7% of core at the domes' gamma ~41 deg)
+// WITHOUT dragging the 0.3746 anchor into it.
+//
+//   texels   dotNL           level    why
+//   0-15     < 0             0        facing away from the sun: ambient only, by definition
+//   16-20    0.0000-0.3125   0.14     TERMINATOR. Not 0 — a hard cut to ambient reads as a pasted
+//                                     -on shadow, and the reference's domes keep a visible mid
+//                                     step (shade/lit medians 0.58-0.87, not 0.13). Swept against
+//                                     the domes' p5 (reference 54.8/47.8/69.4/114.7):
+//                                     0.10 -> 38.4/46.7/49.3/58.9, 0.14 -> 38.6/51.5/55.6/73.1,
+//                                     0.16 (the steps-8 first pass) -> 38.6/74.5/62.6/80.2.
+//                                     0.10 nails red alone; 0.14 is the value that lands three of
+//                                     the four domes closest at once.
+//   21-23    0.3125-0.5000   0.3746   THE ANCHOR = sin(SUN.elevationDeg). Flat ground and the
+//                                     box's top face sit here, so this level renders them exactly
+//                                     as the Lambert rig did and every albedo above survives
+//                                     untouched. It sits mid-band (0.062 from the low edge), not
+//                                     on an edge — do not narrow this band around it.
+//   24-26    0.5000-0.6875   0.50     1.33x the flat sun term
+//   27-31    0.6875-1.0000   0.60     1.60x the flat sun term, replacing Lambert's 2.67x. THIS
+//                                     ONE NUMBER IS THE PEAK-LUMA GATE: it took frame max from
+//                                     232 to 194 against the reference frame's 193. Raising it to
+//                                     0.70 measures ~+9 L on the white crown, which is most of
+//                                     the remaining headroom under 205.
+//
+// One band-EDGE experiment is worth not repeating: widening the 0.50 band to dotNL 0.5625-0.8125
+// (so the domes' area sits in the mid band rather than 52% in the crown) fixes the red dome's
+// family median but costs the white dome 16 L of crown (lit 167 -> 151, reference 164) and the
+// frame 4 L of p75. Rejected on the numbers; see ROUND-LOG.md "Round 5".
+//
+// terrain: FALSE — measured, not assumed. See ROUND-LOG.md "Round 5 / terrain vs props".
+// Ramp re-authored for the el-60 owner sun (the el-22 ramp's 0.60 crown cap sat BELOW the new
+// sin(el) anchor and would have inverted). Law unchanged: the band containing dotNL = sin(el)
+// carries level sin(el), so flat ground renders exactly as Lambert and the albedo solves hold.
+// At high sun the Lambert crown factor is only 1/sin(60) = 1.15x, so crowns no longer need a
+// cap below 1 — the el-22 judged ramp lives in ROUND-LOG.md "Round 5" if the match is re-run.
+export const TOON = {
+  enabled: true,
+  props: true,
+  terrain: false,
+  steps: 32,
+  levels: [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   // dotNL < 0
+    0.25, 0.25, 0.25, 0.25, 0.25,                     // terminator (dotNL 0–0.3125)
+    0.55, 0.55, 0.55, 0.55, 0.55,                     // low-mid   (0.3125–0.625)
+    0.866, 0.866, 0.866, 0.866,                       // anchor = sin(60°) (0.625–0.875)
+    1.0, 1.0,                                         // crown highlight (0.875–1)
+  ],
+};
+
 // ── pixelTune preset ──────────────────────────────────────────────────────────────────────────
 // Only the keys that differ from src/render/pipelines/pixel.js defaults carry a comment.
-export const PIXEL_PRESET = {
-  // The reference's texels measure ~5.5 output px across a 1571-wide frame => a ~283x157 render.
-  // pixelScale (fraction of drawing-buffer height) is the knob that survives a resize.
-  pixelScale: 0.18,
-  targetHeight: 157,
-  snap: true,
-  subpixel: true,
-  sharpen: 0.25,        // 0.6 overshoots: the reference's max luma is 193, nothing near white
-  clouds: true,
-  cloudsMode: "scene",  // see the CLOUD SHADE note at the bottom of this file
-  cloudScale: 0.038,    // ~26 wu features: 3-4 shadow bands across the ~100 wu visible ground
-  cloudSpeed: 0.01,
-  cloudCover: 0.38,    // THRESHOLD, not amount: shade lives where the fBm EXCEEDS it, so LOWER =
-                       // more shade (got that backwards once — 0.47 measured p25 124, clearer
-                       // sky). 0.38 measures p25 103 vs the reference's 89 at the locked offset;
-                       // lower still starts merging the big masses into one murk
-  cloudDarken: 0.10,   // "image" mode only (inert in "scene", where the rig's ambient IS the
-                       // shade). LINEAR multiply, so it is directly the shade/lit ratio. Swept
-                       // against the final albedos: 0.09 -> grass-shade Δ7.9, 0.10 -> Δ6.4,
-                       // 0.11 -> Δ7.9. One scalar cannot match a per-channel ratio; see below.
-  cloudHeight: 60,
-  cloudBands: 1,       // >1 posterizes coverage BEFORE the plane's dither. Measured at 3:
-                       // grass-shade Δ 4.6 -> 5.9 and p25 94 -> 88. Smooth coverage wins.
-  cloudOffsetX: 2,     // ROUND 4 composition solve: 3x3 coarse + 3x3 refined sweep, graded on
-  cloudOffsetZ: -2,    // block-luma correlation vs reference + red-sphere-lit + box-in-shade
-                       // (r4b series: corr 0.287, red 107 L, box 78 L). Red LIT like the
-                       // reference's; box fully cloud-shaded (its albedo solve assumes this).
-  rays: true,
-  rayStrength: 0.06,    // the reference has no visible shafts at all. 0.1 (let alone the 0.2
-                        // default) lifts every cloud-shaded pixel out of the deep band — measured:
-                        // darkest grass went from (31,56,24) to (63,106,50). A whisper, not a beam.
-  raySteps: 12,
-  rayBands: 4,
-  rayDist: 15,       // the marched air window. 30 (the current default; 60 when round 1 measured
-                     // it) marches so far above a cloud-shaded pixel that the sample column exits
-                     // the shadow, so `beam` is large EVERYWHERE in shade and the bounded warm
-                     // fold lifts the deepest grass out of its band. 15 wu keeps beams at edges.
-  outlines: true,
-  outlineStrength: 3,
-  depthEdge: 0.0010,    // 0.0025 inks the rolling hills themselves; the reference only inks objects
-  creases: true,
-  creaseThreshold: 0.86,
-  creaseStrength: 1,
-  normalEdges: true,
-  edgeHighlight: 0.75,
-  normalThreshold: 0.35, // 0.1 draws every sphere facet seam; the reference shows only strong ones
-  quantizeMode: 0,       // OKLab bands — the reference is many-banded, not a 16-colour palette
-  bands: 37,             // SOLVED, not eyed: with the fixed OKLab the quantizer's own floor over
-                         // the eight reference samples is lowest at 37 (mean Δ1.4, max Δ3.5);
-                         // 32 costs 4.7 and 48 costs 3.2. Wider bands also make the match robust —
-                         // a small render error still snaps to the band the solve aimed at.
-  spread: 0.16,        // 0.1 left 3-4 hard terraces on a smooth-hill scanline (CRITIC-R2 item 11);
-                       // dither them into the bands instead
-};
+// The game's pixelTune defaults ARE this scene's solved values — they were ported wholesale
+// after round 5 (owner call), so the preset carries only what still DIFFERS from the shipped
+// defaults. Empty today, and that is the point: one source of truth (pixel.js), no drift. The
+// reference-match numbers that differ from the owner look live in ROUND-LOG.md and are applied
+// per shot via URL params (?pixelScale=0.18&sunaz=40&sunel=22 ...).
+export const PIXEL_PRESET = {};
 
 // ── CLOUD SHADE: "scene" vs "image" ───────────────────────────────────────────────────────────
 // Round 1 had to run "image" because the shadow-casting plane was broken in two ways (view-camera

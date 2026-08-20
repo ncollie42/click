@@ -13,15 +13,22 @@
 // reference has it — in the quantizer — and the edge passes go quiet on the interior while
 // depthEdge still inks the silhouette.
 //
-// Data flow in: preset.OBJECTS + terrain.heightAt (ground contact). Out: meshes for scene.js.
+// ROUND 5 — the props' material is now BANDED AT THE MATERIAL STAGE when preset.TOON.enabled &&
+// preset.TOON.props. scene.js owns the shared gradient map (built once from preset.TOON) and hands
+// it in; this file only chooses toon-vs-Lambert per prop. Everything else — geometry, sink,
+// shadows — is identical either way, so ?toon=0 is a clean A/B of the transfer function alone.
+//
+// Data flow in: preset.OBJECTS + terrain.heightAt (ground contact) + the gradient map from
+// scene.js. Out: meshes for scene.js.
 
 import {heightAt} from "./terrain.js";
+import {makeToonMaterial} from "../../src/render/toon-ramp.js";
 
 // Enough segments that the silhouette is round at a 283x157 render buffer (one texel is ~5.5
 // output px, and a dome is ~40 texels across) and that the smooth normals never staircase.
 const SPHERE_SEGMENTS = [48, 32];
 
-export function buildObjects(THREE, {seed, terrain, objects}){
+export function buildObjects(THREE, {seed, terrain, objects, gradientMap = null}){
   const meshes = [], owned = [];
   for(const spec of objects){
     const ground = heightAt(spec.x, spec.z, seed, terrain);
@@ -37,7 +44,9 @@ export function buildObjects(THREE, {seed, terrain, objects}){
       geo = new THREE.BoxGeometry(spec.size[0], spec.size[1], spec.size[2]);
       centerY = ground + spec.size[1] * (0.5 - spec.sink);
     }
-    const mat = new THREE.MeshLambertMaterial({color: spec.color});
+    const mat = gradientMap
+      ? makeToonMaterial(THREE, {color: spec.color, gradientMap})
+      : new THREE.MeshLambertMaterial({color: spec.color});
     const mesh = new THREE.Mesh(geo, mat);
     mesh.name = `test-scene:${spec.name}`;
     mesh.position.set(spec.x, centerY, spec.z);
