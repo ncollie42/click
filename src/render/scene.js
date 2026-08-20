@@ -24,6 +24,7 @@
 // only reads its client rect to build a raycast ray.
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
+import {configurePipelines, renderFrame, resizePipeline} from "./pipelines/index.js";
 import {PAL, css, TOWER_TOP} from "./palette.js";
 import {
   S,WU,HU,gx,gz, flat, meshOf, isOutline, disposeGroup, FLOOR_TOP,
@@ -181,6 +182,7 @@ export function resizeRenderer(){
   viewAspect = r.width/r.height;
   persp.aspect = viewAspect;
   placeCamera();
+  {const s=renderer.getDrawingBufferSize(new THREE.Vector2());resizePipeline(s.x,s.y);}
   return {width:r.width, height:r.height};
 }
 
@@ -345,9 +347,12 @@ const waterDepthOverride=new THREE.MeshBasicMaterial();
 const _waterBufSize=new THREE.Vector2();
 /** Diagnostic isolation switch: disabled water keeps the last depth sample, intentionally. */
 export function setWaterPrepass(on){waterPrepassEnabled=!!on;}
-function waterPrePass(){
+/** Optional width/height: a pipeline rendering the scene into an offscreen target passes that
+ * target's size so the water shader's gl_FragCoord/uResolution UVs stay aligned. Defaults to the
+ * canvas drawing buffer (the direct-draw path). */
+function waterPrePass(width,height){
   if(!waterPrepassEnabled)return;
-  const size=renderer.getDrawingBufferSize(_waterBufSize);
+  const size=width?_waterBufSize.set(width,height):renderer.getDrawingBufferSize(_waterBufSize);
   if(!waterDepthTarget||waterDepthTarget.width!==size.x||waterDepthTarget.height!==size.y){
     waterDepthTarget?.depthTexture?.dispose();waterDepthTarget?.dispose();
     waterDepthTarget=new THREE.WebGLRenderTarget(size.x,size.y,{depthTexture:new THREE.DepthTexture(size.x,size.y)});
@@ -2188,8 +2193,18 @@ export function drawScene(){
   endRadiusRings();
   return orbited;
 }
-/** The draw call itself, split from drawScene() so pins land in the scene before it runs. */
-export function renderScene(){ waterPrePass(); renderer.render(scene, camera3); }
+/** The draw call itself, split from drawScene() so pins land in the scene before it runs.
+ * Routed through the pipeline registry: "current" reproduces the direct draw exactly, "retro" and
+ * "splat" are the experimental pixel-art pipelines (F9 cycles, see src/render/pipelines/). */
+export function renderScene(){ renderFrame(); }
+
+configurePipelines({
+  THREE, renderer, scene,
+  getCamera: () => camera3,
+  getSun: () => sun,
+  waterPrePass,
+  view,
+});
 
 // ─────────────────────────────────────────────── visibility measurement (scene half)
 // The debugger owns the readouts and the pitch sweep; these three are the parts that need the scene
