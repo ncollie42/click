@@ -506,9 +506,16 @@
   .pick.chosen .card{opacity:0}
   @keyframes pickDeal{from{opacity:0;transform:translateY(38px) rotate(-4deg) scale(.9)}}
   @keyframes pickReject{to{opacity:0;transform:translateY(20px) scale(.94)}}
-  #draftBar{flex:0 0 auto;display:flex;justify-content:center;padding:11px;font-size:10px;
-    color:#bda98a;background:#050308;border-top:2px solid var(--band)}
+  #draftBar{flex:0 0 auto;display:flex;justify-content:center;align-items:center;gap:20px;
+    padding:11px;font-size:10px;color:#bda98a;background:#050308;border-top:2px solid var(--band)}
   #draftBar kbd{padding:1px 5px;margin:0 1px;background:#efe2c6;color:#17120d}
+  /* The reroll row sits in the overlay's column flow directly under the fanned cards, so the
+     button reads as part of the offer rather than chrome lost in the bottom bar. */
+  #draftActions{flex:0 0 auto;display:flex;justify-content:center;padding:6px 0 18px}
+  #draftReroll{font:inherit;font-size:12px;padding:8px 22px;background:#0d0910;
+    border:2px solid #6b5a3a;color:#e8c96a;cursor:pointer;letter-spacing:.5px}
+  #draftReroll:disabled{opacity:.45;cursor:default}
+  #draftReroll:not(:disabled):hover{background:#241a12;border-color:#a3854e}
 
   @media (prefers-reduced-motion:reduce){
     /* Fades only. The row still assembles itself — its geometry is where a card IS, not an

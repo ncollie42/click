@@ -60,9 +60,6 @@ BASE.footprint=FOOTPRINT_3x3;
 // ── resources ───────────────────────────────────────────────────────────────
 // Standard node health is also total yield: every hit removes one HP and creates one resource.
 export const RESOURCE_NODE_HP=Object.freeze({wood:25,stone:18,diamond:13});
-// Lumber camps and quarries reserve a 3x3: the structure owns the center and this timer grows one
-// standard node in a random vacant perimeter cell. Eight live nodes cap production naturally.
-export const RESOURCE_SOURCE=Object.freeze({growthSeconds:30});
 // Mineable fog of war: every cell beyond clearRadius of the base — land, coast and open water —
 // starts under a destructible fog block.
 // Mining a block to death also pops its neighbourhood, staggered popDelay seconds per cell of
@@ -100,13 +97,14 @@ export const CHEST=Object.freeze({
   // scales with map size (3 on the default 1-tile map, 15 on the full map), editor untouched.
   scatterPerTile:3,
 });
-// Feeding values are read only by simulation.js; no runtime path may assign into this table.
-export const FEED_XP={wood:1,stone:1,dust:5,coin:5,diamond:12};
+// Per-unit XP value of each resource in a completed building's cost. Construction completion is
+// the ONLY XP source (grantXp in simulation.js): depositing at the base just stores resources.
+// Read only by simulation.js; no runtime path may assign into this table.
+export const RESOURCE_XP={wood:1,stone:1,dust:5,coin:5,diamond:12};
 // THE level curve: going from level n to n+1 costs base*growth**n xp. docs/progression-spec.js
 // re-exports this table, so the design docs and the game can never quote different numbers.
 export const LEVEL_CURVE={base:6,growth:1.19};
 export const SKILL_POINT_LEVELS=4;   // placeholder cadence: one skill point per this many levels
-export const XP_TIERS=[40,100,200,350];   // dead: superseded by LEVEL_CURVE, still imported by docs/progression.html
 
 // Closed target policy shared by every authored damage source. Callers choose one supported
 // combination rather than passing ad-hoc booleans that silently invent friendly-fire semantics.
@@ -143,6 +141,9 @@ export const FIREBALL={damage:6,radius:135,damageTargetType:DAMAGE_TARGET_TYPE.E
 export const METEOR=Object.freeze({damage:20,radius:180,rockHp:15,fallTime:.9,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
 export const DAMAGE_ORBS=Object.freeze({duration:30,minCount:1,maxCount:3,orbitRadius:52,aoeRadius:38,damage:1,cooldown:.6,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
 export const SUMMONING_CIRCLE=Object.freeze({duration:120,dustCost:5});
+// Rerolling the live draft offer costs gold coins — this is coin's primary sink now that feeding
+// is gone (the shock tower's 1-coin cost is the only other). Read by rerollDraft() in simulation.js.
+export const DRAFT_REROLL=Object.freeze({coinCost:1});
 export const FRIENDLY_BRUTE=Object.freeze({hp:36,damage:5,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,speed:34,range:34,rate:1.1,guardRadius:360});
 // Capture Yard conversion rules. Combat stats are NOT here on purpose: a controlled enemy keeps its
 // authored ENEMY_TYPES record, so this table only owns what the yard itself decides — how many
@@ -160,15 +161,21 @@ export const CAPTURE_YARD=Object.freeze({capacity:3,guardRadius:300,homeRadius:7
 export const GARRISON=Object.freeze({capacity:3,musterRadius:300,threatRadius:180,engagementRadius:400,guardRadius:180,safeSeconds:10,maxHp:10,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY});
 
 // ── houses and workers ──────────────────────────────────────────────────────
-// The first house is a cheap opening bootstrap. Later houses retain the regular progression below.
-export const HOUSE_SLOTS=4,STARTING_HOUSE_COST={wood:2,stone:0},HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
+// The first house prices the deliberate hand-played opening chapter: the player chops ~5 wood
+// personally before automation exists. Later houses retain the escalating progression below.
+export const HOUSE_SLOTS=2,STARTING_HOUSE_COST={wood:5,stone:0},HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
 // Resource-node capacity is global because nodes have no type table. Construction capacity belongs
 // to each BUILDING_TYPES row below and is modified only when read for the current run.
 export const RESOURCE_NODE_JOB_SLOTS=1;
-export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2.35,WORKER_CARRY=3;
+export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER_DAMAGE=1,WORKER_ATTACK_RATE=.9,WORKER_HIT_COOLDOWN=2,WORKER_CARRY=3;
+// The staffed-post advantage (owner rates, Aug 20): a free worker's ceiling is 1 resource per
+// 2s (WORKER_HIT_COOLDOWN, further slowed by reassignment overhead); a camp/quarry staffer
+// strikes at half the cooldown for a clean 1 per second. Both knobs are read only by
+// updateGatherer in simulation.js.
+export const STAFF_GATHER=Object.freeze({cooldownFactor:.5,yield:1});
 
 // ── buildings ───────────────────────────────────────────────────────────────
-// Every entry carries an explicit `footprint` (odd cells, anchor-centered). Resource sources, the
+// Every entry carries an explicit `footprint` (odd cells, anchor-centered). Work camps, the
 // houses, tower chassis, capture yards, and tar pits are persistent 3x3s; ordinary buildings/deployables
 // are 1x1 (the summoning circle and meteor target are temporary/instant 3x3s). Tower VARIANTS inherit the chassis footprint -
 // upgrading never resizes an already-placed tower, so variants deliberately declare no footprint.
@@ -176,13 +183,21 @@ export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER
 // row owns a number, including zero for instant/target-only records that never become blueprints.
 // `jobSlots` independently controls permanent staffing after completion; absence means zero.
 export const BUILDING_TYPES = {
-  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},buildSlots:2,serviceRadius:155,jobSlots:2,resourceSource:true,footprint:FOOTPRINT_3x3},
-  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},buildSlots:3,serviceRadius:155,jobSlots:2,resourceSource:true,footprint:FOOTPRINT_3x3},
+  // Work buildings, not sources: camps/quarries grow nothing (renewable growth deleted Aug 20).
+  // Their whole value is jobSlots working WILD nodes inside serviceRadius at the STAFF_GATHER
+  // rate, so placement beside a real forest/rockfield is the decision being made.
+  lumber:{name:"lumber camp",resource:"wood",cost:{wood:8,stone:2},buildSlots:2,serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_3x3},
+  quarry:{name:"quarry",resource:"stone",cost:{wood:4,stone:8},buildSlots:3,serviceRadius:155,jobSlots:2,footprint:FOOTPRINT_3x3},
   stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},buildSlots:2,serviceRadius:175,jobSlots:2,footprint:FOOTPRINT_1x1},
   // The house model remains centered in its anchor cell; its yard reserves the surrounding eight.
   house:{name:"house",resource:null,cost:HOUSE_COST,buildSlots:2,footprint:FOOTPRINT_3x3},
   rangeBeacon:{name:"range beacon",resource:null,cost:{wood:4,stone:6},buildSlots:2,effectRadius:128,rangeBonus:50,footprint:FOOTPRINT_1x1},
   warShrine:{name:"war shrine",resource:null,cost:{wood:5,stone:7},buildSlots:2,effectRadius:128,damageBonus:1,footprint:FOOTPRINT_1x1},
+  // The other two aura supports. wardTotem grants a real hp pool (granted/removed by
+  // syncTowerWard in simulation.js, never below 1 hp on removal); hasteTotem multiplies
+  // towerCooldown. Neither stacks with copies of itself, matching the shrine/beacon rule.
+  wardTotem:{name:"ward totem",resource:null,cost:{wood:3,stone:8},buildSlots:2,effectRadius:128,hpBonus:10,footprint:FOOTPRINT_1x1},
+  hasteTotem:{name:"haste totem",resource:null,cost:{wood:5,stone:6,dust:2},buildSlots:2,effectRadius:128,cooldownFactor:.8,footprint:FOOTPRINT_1x1},
   obelisk:{name:"obelisk",resource:null,cost:{wood:5,stone:12},buildSlots:3,footprint:FOOTPRINT_1x1},
   tower:{name:"basic tower",resource:null,cost:{wood:6,stone:10},buildSlots:3,footprint:FOOTPRINT_3x3},
   captureYard:{name:"capture yard",resource:null,cost:{wood:8,stone:8},buildSlots:3,footprint:FOOTPRINT_3x3},
@@ -232,7 +247,7 @@ export const TOWER_VARIANTS=Object.freeze(Object.fromEntries(Object.entries(towe
 // Variants are authored fixed-stat enemies, never runtime stat multipliers. Every archetype has the
 // same three visual/difficulty bands: base, blue veteran (wave 4+), red elite (wave 7+).
 const ENEMY_ARCHETYPES={
-  raider:{hp:5,speed:52,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:40,rate:1,size:1,weightTag:"light",threatCost:1,spawnWeight:10},
+  raider:{hp:3,speed:52,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:40,rate:1,size:1,weightTag:"light",threatCost:1,spawnWeight:10},
   archer:{hp:4,speed:42,damage:1,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:155,rate:1.8,size:1,weightTag:"light",threatCost:2,spawnWeight:6},
   healer:{hp:5,speed:38,damage:0,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:180,rate:0,healAmount:2,healRate:2.3,size:1,weightTag:"light",threatCost:3,spawnWeight:2},
   // Bomber: fast light kamikaze. `range` is the fuse-arm distance, not a swing reach: inside it the
@@ -259,8 +274,9 @@ for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of
 // stats. It is not a weighted variant; WAVE_BOSS_SPAWNS authors every scheduled appearance.
 enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantColor:null,minWave:5,
   // The 4× model's visible ground ring reaches about 200 simulation pixels. Every walking contact
-  // uses that same radius; attack contacts still use the ordinary 60-damage melee swing.
-  hp:500,damage:60,stompDamage:10,stompRadius:200,stompDamageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
+  // uses that same radius. Owner nerf Aug 20: hp halved 500→250, melee swing 60→10 — the boss is
+  // pressure and presence, not an instant base-delete.
+  hp:250,damage:10,stompDamage:10,stompRadius:200,stompDamageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
 export const ENEMY_TYPES=Object.freeze(enemyVariants);
 // Each wave owns an ordered forced-boss list. Wave 10 is the current finale: three bosses close it.
 export const WAVE_BOSS_SPAWNS=Object.freeze({

@@ -874,6 +874,28 @@ export function makeBuilding(type){
       const guard=add(meshOf(new THREE.BoxGeometry(.48,.10,.13),flat(PAL.timberDark)));guard.position.set(Math.sin(turn)*-.38,FLOOR_TOP+.94,0);guard.rotation.z=turn;
     }
     const crest=add(meshOf(new THREE.OctahedronGeometry(.28,0),flat(PAL.banner,{emissive:PAL.hurtGlow})));crest.position.y=FLOOR_TOP+1.82;g.userData.tip=crest;
+  } else if(type==="wardTotem"){
+    // Squat stone cairn behind a raised metal shield plate: reads "protection", staying low and
+    // heavy against the beacon's mast and the war shrine's blades.
+    const base=add(meshOf(new THREE.CylinderGeometry(.78,.90,.32,7),flat(PAL.masonryDark)));base.position.y=FLOOR_TOP+.16;
+    for(const [y,r] of [[.52,.62],[.86,.46],[1.14,.30]]){
+      const stone=add(meshOf(new THREE.CylinderGeometry(r*.86,r,.34,7),flat(PAL.masonry)));stone.position.y=FLOOR_TOP+y;
+    }
+    const shield=add(meshOf(new THREE.CylinderGeometry(.52,.52,.10,6),flat(PAL.metal)));
+    shield.rotation.x=Math.PI/2;shield.position.set(0,FLOOR_TOP+.92,.58);
+    const boss=add(meshOf(new THREE.OctahedronGeometry(.22,0),flat(PAL.towFreeze,{emissive:PAL.arcaneGlow})));
+    boss.position.set(0,FLOOR_TOP+.92,.72);g.userData.tip=boss;
+  } else if(type==="hasteTotem"){
+    // Slim timber pole stacked with upward chevrons — speed, not force; the coin-bright tip keeps
+    // it apart from the freeze-blue ward boss and the beacon's lightning rings.
+    const base=add(meshOf(new THREE.CylinderGeometry(.66,.80,.28,8),flat(PAL.masonryDark)));base.position.y=FLOOR_TOP+.14;
+    const pole=add(meshOf(new THREE.CylinderGeometry(.09,.12,1.85,8),flat(PAL.timberDark)));pole.position.y=FLOOR_TOP+1.20;
+    for(const y of [.85,1.25,1.65]){
+      const chevron=add(meshOf(new THREE.ConeGeometry(.34,.30,4),flat(PAL.timber)));
+      chevron.position.y=FLOOR_TOP+y;chevron.rotation.y=Math.PI/4;
+    }
+    const tip=add(meshOf(new THREE.ConeGeometry(.26,.44,6),flat(PAL.coin,{emissive:PAL.arcaneGlow})));
+    tip.position.y=FLOOR_TOP+2.28;g.userData.tip=tip;
   } else if(type==="garrison"){
     // Villager-built guard station on the ordinary 1x1 pad: a compact plaster-and-timber hut set
     // against the back (-Z) with an open drill yard in front (+Z), where the simulation posts its

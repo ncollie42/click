@@ -24,7 +24,7 @@
 // extra frames cost the run nothing.
 // ═══════════════════════════════════════════════════════════════════════════
 import {cardById} from "../game/cards.js";
-import {draftPending, draftKind, chooseDraft, levelState} from "../game/simulation.js";
+import {draftPending, draftKind, chooseDraft, levelState, rerollDraft, rerollState} from "../game/simulation.js";
 import {cardFace, cardBox, expectArrival, playArrival} from "./hand.js";
 import {syncModalUi} from "./hud.js";
 
@@ -32,7 +32,7 @@ const TITLE = {level:"choose a build",dawn:"choose a permanent upgrade",consumab
 const goesToHand = category => category!=="buff";
 
 let surface=null;      // <canvas id="overlay"> — the focus target of last resort
-let overlay=null,titleEl=null,subEl=null,picks=null;
+let overlay=null,titleEl=null,subEl=null,picks=null,rerollBtn=null;
 let cursor=0;
 let resolving=false;   // a pick is mid-flight; hold the overlay open under it
 let reduced=false;
@@ -107,6 +107,11 @@ export function render(){
     picks.appendChild(slot);
   });
   paintCursor();
+  // The reroll footer: pay coins, redraw the offer. rerollDraft()'s draftChanged lands back here,
+  // so a successful press repaints the picks (and this button) through the ordinary render.
+  const reroll=rerollState();
+  rerollBtn.textContent="r · reroll for "+reroll.cost+" ◉ — "+reroll.coins+" held";
+  rerollBtn.disabled=reroll.coins<reroll.cost;
   if(overlay.hidden){
     returnFocus=document.activeElement;setFrameInert(true);
     overlay.hidden=false;syncModalUi();
@@ -171,12 +176,15 @@ function onKeyDownCapture(event){
   if(!n)return;
   const digit=/^Digit([1-3])$/.exec(event.code);
   if(digit&&!event.shiftKey){const i=Number(digit[1])-1;if(i<n){cursor=i;paintCursor();choose(i);}return;}
+  if(event.code==="KeyR"){tryReroll();return;}
   if(event.code==="ArrowLeft"||event.code==="ArrowRight"){cursor=(cursor+(event.code==="ArrowLeft"?n-1:1))%n;paintCursor();return;}
   if(event.code==="Enter"||event.code==="Space")choose(cursor);
 }
 // The overlay is the only stop inside it, so tab simply comes back to it rather than walking the
 // document behind the scrim.
 function onOverlayKeydown(event){ if(event.key==="Tab"){event.preventDefault();overlay.focus();} }
+
+function tryReroll(){ if(!resolving)rerollDraft(); }
 
 // ── effect sinks ────────────────────────────────────────────────────────────
 // main.js merges these into the record it hands the simulation's connect(), beside the hand's own.
@@ -191,6 +199,8 @@ export function initDraft(pointerSurface){
   titleEl=document.getElementById("draftTitle");
   subEl=document.getElementById("draftSub");
   picks=document.getElementById("draftPicks");
+  rerollBtn=document.getElementById("draftReroll");
+  rerollBtn.addEventListener("click",tryReroll);
   const motion=window.matchMedia("(prefers-reduced-motion:reduce)");
   reduced=motion.matches;
   motion.addEventListener?.("change",event=>{reduced=event.matches;});

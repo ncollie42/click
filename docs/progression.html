@@ -204,7 +204,7 @@
 </main>
 
 <script type="module">
-import {FEED_XP,XP_TIERS,HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION,
+import {RESOURCE_XP,HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION,
         BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,RESOURCE_KINDS} from "../src/game/data.js";
 import {TUNE} from "../src/game/simulation.js";
 import {ARC,PHASES,BEATS,PLAYER_MODEL,LEVEL_CURVE,DRAFT_POLICY,phaseIndexAt} from "./progression-spec.js";
@@ -346,7 +346,7 @@ tile("price walls",tallWalls.length,tallWalls.length?"unlocks that make you save
   card("live","live gameplay + modeled pacing",
     `<b>${TUNE.chopYield}</b> drop per chop · worker carry <b>${WORKER_CARRY}</b> ·
      house = <b>${HOUSE_SLOTS}</b> workers · day <b>${DAY_DURATION}s</b> · modeled wave-clear <b>~${MODELED_WAVE_CLEAR_SECONDS}s</b> (estimate; actual dawn requires full scheduled-wave clearance) ·
-     feed XP <b>${RESOURCE_KINDS.map(k=>FEED_XP[k]).join("/")}</b> (${RESOURCE_KINDS.join("/")}) ·
+     build XP/unit <b>${RESOURCE_KINDS.map(k=>RESOURCE_XP[k]).join("/")}</b> (${RESOURCE_KINDS.join("/")}) ·
      buff effects from the <a href="cards.html" style="color:var(--accent)">card catalog</a>`);
   card("authored","authored · level curve + drafts",
     `next level costs <b>${LEVEL_CURVE.base} × ${LEVEL_CURVE.growth}^level</b> XP ·

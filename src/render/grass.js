@@ -41,12 +41,13 @@ import {lightModsActive} from "./material-light-mods.js";
 export const grassTune = {
   enabled: true,
   // geometry knobs (any change = debounced CPU rebuild)
-  // Sized against the GAME's models (owner pass, Aug 20): the first-cut 1.05x1.35 blades read
-  // near tree-scale in-game on the solid sprite. Smaller quads at higher density keep the same
-  // ground coverage (density x W x H ≈ const) with sub-unit bump size.
-  density: 3.0,        // blade quads per wu²
-  bladeH: 0.85,        // wu; ±25% per-instance jitter on top
-  bladeW: 0.7,         // wu; ±20% jitter
+  // Sized against the GAME's models (owner passes, Aug 20): the first-cut 1.05x1.35 blades read
+  // near tree-scale in-game, and the second cut (0.85x0.7 @ 3/wu²) was still too big next to game
+  // assets. Smaller quads at higher density keep the same ground coverage
+  // (density x W x H ≈ const) with sub-unit bump size.
+  density: 5.0,        // blade quads per wu²
+  bladeH: 0.4,         // wu; ±25% per-instance jitter on top
+  bladeW: 0.3,         // wu; ±20% jitter
   accentRatio: 0.06,   // fraction of quads promoted to accent blades
   accentScale: 1.45,   // accent height multiplier (sprite variant 2, brightened)
   dirtClear: 0.9,      // 1 = dirt patches fully clear of grass, 0 = grass everywhere
@@ -91,7 +92,7 @@ if(typeof window !== "undefined") window.grassTune = grassTune;
 
 export const GRASS_PANEL = {
   sliders: [
-    ["density",       "blades /wu²", 0.2, 5, 0.1],
+    ["density",       "blades /wu²", 0.2, 12, 0.1],
     ["bladeH",        "blade height wu", 0.4, 4, 0.05],
     ["bladeW",        "blade width wu", 0.3, 3, 0.05],
     ["accentRatio",   "accent ratio", 0, 0.3, 0.01],
@@ -146,10 +147,11 @@ export const GRASS_PANEL = {
 
 // Geometry-shaped knobs; a change to any of these re-samples the ground and rebuilds attributes.
 const REBUILD_KEYS = ["density", "bladeH", "bladeW", "accentRatio", "accentScale", "dirtClear"];
-// Covers the largest game map (?mapSize=5: ~153k wu² of land at the default density 3 ≈ 460k
-// blades). Hitting the cap truncates the spawn sweep mid-map — a visible bare band — so it must
-// stay above any real region; the warn below is the tripwire.
-const MAX_INSTANCES = 520000;
+// Covers the largest game map (?mapSize=5: ~153k wu² of land) at the default density 5 ≈ 765k
+// blades, and the slider max of 12 on ordinary-size maps. Sliding to max density ON the largest
+// map (~1.8M) exceeds this deliberately: the sweep truncates with a visible bare band and the
+// warn below fires — that is the audition tripwire, not a target to size for.
+const MAX_INSTANCES = 800000;
 const DEG = Math.PI / 180;
 
 // ── deterministic CPU hash (same family as tools/test-scene/terrain.js; Math.imul is exact) ──

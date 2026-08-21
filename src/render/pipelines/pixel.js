@@ -160,7 +160,7 @@ export const PANEL_SPEC = {
     ["edgeHighlight",  "edge highlight (nrm)", 0, 4, 0.25],
     ["normalThreshold","normal thresh", 0.01, 1, 0.01],
     "clouds",
-    ["cloudScale",     "cloud scale", 0.001, 0.03, 0.0005],
+    ["cloudScale",     "cloud scale", 0.001, 0.1, 0.0005],
     ["cloudSpeed",     "cloud drift", 0, 0.1, 0.001],
     ["cloudCover",     "cloud cover thresh", 0, 1, 0.01],
     ["cloudDarken",    "cloud darken floor", 0, 1, 0.01],

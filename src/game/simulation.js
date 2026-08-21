@@ -5,15 +5,15 @@ import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
   CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
   FOOTPRINT_1x1,FOOTPRINT_3x3,RESOURCE_FOOTPRINT,
-  RESOURCE_KINDS,RESOURCE_NODE_HP,RESOURCE_SOURCE,FOG,CHEST,FEED_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
+  RESOURCE_KINDS,RESOURCE_NODE_HP,FOG,CHEST,RESOURCE_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
   HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,
-  WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,
+  WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,STAFF_GATHER,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
   ENEMY_TYPES,ENEMY_SPAWN_RADIUS,
   ENEMY_POOL,
   NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,WAVE_THREAT_CURVE,WAVE_BOSS_SPAWNS,WIN_WAVE,
   DAY_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
-  KING,STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_TARGET_TYPE,DAMAGE_ORBS,SUMMONING_CIRCLE,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
+  KING,STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_TARGET_TYPE,DAMAGE_ORBS,SUMMONING_CIRCLE,DRAFT_REROLL,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
 } from "./data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -164,8 +164,8 @@ const state = {
   runMode:"normal",
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
-  // xp is the run TOTAL ever fed; levelXp is only the progress into the current level, so the two
-  // never have to be reconstructed from each other. Both are written by feedBase() alone.
+  // xp is the run TOTAL ever earned; levelXp is only the progress into the current level, so the
+  // two never have to be reconstructed from each other. Both are written by grantXp() alone.
   xp:0,levelXp:0,level:0,skillPoints:0,
   // The draft's whole run ledger: queued level/build, dawn/buff, and chest-or-wave consumable
   // rewards; the live 3-card offer and kind; buff stacks; and two banked consumable effects. Blueprints
@@ -181,7 +181,7 @@ const state = {
   // BUILDING_TYPES key whose ghost/footprint the placement flow draws; `cast` (fireball) replaces
   // "leave a building" with an instant effect at the anchor.
   cardTargeting:null,
-  baseHp:100,baseMax:100,gameOver:false,victory:false,continuedAfterVictory:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,screenShake:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
+  baseHp:100,baseMax:100,gameOver:false,victory:false,continuedAfterVictory:false,paused:false,draftPaused:false,coinTimer:45,basePulse:0,screenShake:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed is simulated run time. remaining is the authoritative DAY countdown only; night has
   // no deadline and ends from active-wave clearance after the frame's complete combat pipeline.
   clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
@@ -587,12 +587,6 @@ export function validateSimulationInvariants(){
     invariant(footprintInWorldBounds(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT),"resource footprint is out of bounds");
     invariant(terrainWorldRectEntirelyOnLand(footprintWorldRect(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT)),"resource is not on land");
     if(node.meteor)invariant(nodes===rocks&&node.max===METEOR.rockHp&&node.footprint===FOOTPRINT_3x3,"malformed meteor rock");
-    if(node.sourceBuilding){
-      const source=node.sourceBuilding;
-      invariant(buildings.includes(source)&&source.complete&&BUILDING_TYPES[source.type]?.resourceSource,"resource node lost its source building");
-      invariant(BUILDING_TYPES[source.type].resource===kind,"resource source grew the wrong node kind");
-      invariant(resourceSourcePerimeter(source).some(cell=>{const point=cellToWorld(cell.cx,cell.cy);return point.x===node.x&&point.y===node.y;}),"resource source node escaped its perimeter");
-    }
   }
   invariant(new Set(chests).size===chests.length,"duplicate chest ownership");
   for(const chest of chests){
@@ -620,12 +614,14 @@ export function validateSimulationInvariants(){
     // ordinary pool for everyone else, held workers included — so a stale bonus is a hard error.
     invariant(worker.hp>=0&&worker.hp<=workerMaxHp(worker),"illegal worker health");
     if(worker.taskTarget)invariant(resourceDrops.includes(worker.taskTarget)||trees.includes(worker.taskTarget)||rocks.includes(worker.taskTarget)||diamonds.includes(worker.taskTarget),"worker task target left owned collection");
-    // The closed job vocabulary and explicit assignment provenance. Staff exists only as a manual
-    // assignment; guard is manual OR an autonomous garrison muster; free is autonomous idle
-    // carrying no target and no claims.
+    // The closed job vocabulary and explicit assignment provenance. Staff is manual (drop/drag,
+    // sticky) OR an autonomous slot claim by the free-worker scheduler; guard is manual OR an
+    // autonomous garrison muster; free is autonomous idle carrying no target and no claims.
     invariant(WORKER_JOBS.has(worker.job),"unknown worker job "+worker.job);
     invariant(typeof worker.autonomous==="boolean","worker assignment provenance is not explicit");
-    if(worker.job==="staff")invariant(!worker.autonomous,"the scheduler may never assign staff");
+    // A production staffer is always posted to a live camp/quarry; showcase staff are inert
+    // display fixtures, exempt by design like showcase guards below.
+    if(worker.job==="staff"&&state.runMode==="normal")invariant(buildings.includes(worker.jobTarget)&&!!BUILDING_TYPES[worker.jobTarget.type]?.resource,"a staffer is not posted to a camp or quarry");
     // Every scheduler-posted guard carries the demobilization clock that will eventually stand it
     // down; a manual guard has no clock because it never stands itself down.
     if(worker.job==="guard"&&worker.autonomous)invariant(Number.isFinite(worker.guardSafeTime)&&worker.guardSafeTime>=0,"an autonomous guard has no demobilization timer");
@@ -654,7 +650,6 @@ export function validateSimulationInvariants(){
   for(const building of buildings)if(building.type==="captureYard"&&building.complete)invariant(captureYardOccupancy(building)<=CAPTURE_YARD.capacity,"capture yard exceeds its living-ally capacity");
   for(const building of buildings){
     if(building.tower)invariant(building.tower.hp>=0&&building.tower.hp<=building.tower.maxHp,"illegal tower health");
-    if(building.resourceSource!=null)invariant(building.complete&&BUILDING_TYPES[building.type].resourceSource&&Number.isFinite(building.resourceSource.remaining)&&building.resourceSource.remaining>0&&building.resourceSource.remaining<=RESOURCE_SOURCE.growthSeconds,"illegal resource source countdown");
     assertTemporaryBuildingState(building);
   }
   // A designated variant belongs only to its unfinished site. completeBuilding() installs that
@@ -1055,7 +1050,7 @@ function activateManualTower(building){
   if(tower.cooldown>0){toast(variant.name+" recharging: "+tower.cooldown.toFixed(1)+"s");return;}
   const radius=towerAttackRadius(building,variant);
   if(state.runMode==="showcase"&&!damageDummies.some(dummy=>dummy.defeatedTimer<=0&&distance(building.x,building.y,dummy.x,dummy.y)<=radius))return;
-  tower.cooldown=towerCooldown(variant);tower.flash=.35;
+  tower.cooldown=towerCooldown(building,variant);tower.flash=.35;
   const damage=towerDamage(building,variant);
   applyAreaDamage({centers:[building],radius,damage,targetType:variant.damageTargetType,color:variant.accent,source:building});
   burst(building.x,building.y,variant.accent,24);toast("shock pulse fired");sound(variant.sound,.28);
@@ -1071,7 +1066,7 @@ function createBuilding(type,x,y){
   const def=BUILDING_TYPES[type],cost=type==="house"?nextHouseCost():{...def.cost};
   // plannedVariant identifies the finished tower this one construction site will produce. Null on
   // ordinary builds and basic towers.
-  const building={type,x,y,cost,delivered:resourceCounts(),storage:resourceCounts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,resourceSource:null,complete:!!def.instant,pulse:1};
+  const building={type,x,y,cost,delivered:resourceCounts(),storage:resourceCounts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
   if(type==="damageOrbs")building.orbs={count:Math.floor(rand(DAMAGE_ORBS.minCount,DAMAGE_ORBS.maxCount+1)),angle:0,cooldown:0,remaining:DAMAGE_ORBS.duration};
   if(type==="summoningCircle")building.summoning={dust:0,remaining:SUMMONING_CIRCLE.duration};
   return building;
@@ -1326,12 +1321,12 @@ function clearGrassInFootprint(x,y,footprint){
 
 // Worker automation enters only the physical resource impact; player work always enters the unified
 // click pipeline above, where crit, chain, Free Hit, and later click effects compose once.
-function hitResource(target,kind,automatic,quiet=false){
-  if(automatic)return damageResourceTarget(target,kind,false,true);
+function hitResource(target,kind,automatic,quiet=false,autoDrops=1){
+  if(automatic)return damageResourceTarget(target,kind,false,true,autoDrops);
   return executePlayerHit({kind:"resource",target,resourceKind:kind},{quiet});
 }
-function damageResourceTarget(target,kind,critical,automatic=false){
-  const drops=automatic?1:TUNE.chopYield+(critical?1:0);
+function damageResourceTarget(target,kind,critical,automatic=false,autoDrops=1){
+  const drops=automatic?autoDrops:TUNE.chopYield+(critical?1:0);
   addDamageNumber(target,1,{critical});target.hp--;target.shake=1;
   for(let i=0;i<drops;i++)spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
   burst(target.x,target.y-12,kind==="wood"?"#9fb351":kind==="diamond"?"#78d7e5":"#bbb7ae",5);
@@ -1391,6 +1386,8 @@ function spawnCoin(){
   for(let attempt=0;attempt<300;attempt++){
     const x=clamp(camera.x+rand(-halfW,halfW),40,W-40),y=clamp(camera.y+rand(-halfH,halfH),40,H-40);
     if(distance(x,y,BASE.x,BASE.y)<80)continue;
+    // Never under fog: a coin the player cannot see or reach would silently burn its 8s timer.
+    if(fogAtPoint(x,y))continue;
     spawnResource("coin",x,y,8);toast("a gold coin appeared nearby");sound(1170,.1);return;
   }
 }
@@ -1494,7 +1491,9 @@ function upgradeNeedText(upgrade,delivered){return RESOURCE_KINDS.filter(kind=>(
 function applyFinishedUpgrade(building){
   const job=building.activeUpgrade;if(!job)return false;
   const upgrade=upgradeList(job.kind).find(item=>item.id===job.id);if(!upgrade)return false;
-  if(job.kind==="tower"){const tower=building.tower,healthRatio=tower.maxHp?clamp(tower.hp/tower.maxHp,0,1):1;tower.variant=job.id;tower.maxHp=upgrade.maxHp;tower.hp=upgrade.maxHp*healthRatio;}
+  // The rewrite below discards any ward-totem grant; clearing the flag lets syncTowerWard re-grant
+  // on the next update instead of silently eating the pool.
+  if(job.kind==="tower"){const tower=building.tower,healthRatio=tower.maxHp?clamp(tower.hp/tower.maxHp,0,1):1;tower.variant=job.id;tower.ward=false;tower.maxHp=upgrade.maxHp;tower.hp=upgrade.maxHp*healthRatio;}
   else building.upgrades[job.id]=true;
   building.activeUpgrade=null;burst(building.x,building.y-25,"#72d4cc",22);toast(upgrade.name+" complete");sound(820,.2);
   return true;
@@ -1515,22 +1514,33 @@ function dropToUpgrade(building){
 
 function upgradeButtonHit(building,x,y){const top=building.type==="obelisk"?building.y-66:building.y-48;return x>=building.x-30&&x<=building.x+30&&y>=top&&y<=building.y+38;}
 
-// The sole state.xp writer. It consumes one caller-owned resource-count record atomically.
-// XP enters the run HERE and nowhere else, so levels — and therefore drafts — can only come
-// from feeding the thing.
-function feedBase(counts,particleFromX,particleFromY){
-  let units=0,gained=0;
+// Base deposits are pure storage: the caller-owned resource-count record is consumed atomically
+// into state.stored, where builders withdraw from (nearestBuildStorage treats BASE as storage).
+// Depositing grants NOTHING — XP enters the run only through grantXp() below.
+function storeAtBase(counts,particleFromX,particleFromY){
+  let units=0;
   for(const kind of RESOURCE_KINDS){
-    const amount=counts[kind];units+=amount;gained+=FEED_XP[kind]*amount;counts[kind]=0;
+    const amount=counts[kind];units+=amount;state.stored[kind]+=amount;counts[kind]=0;
     handoffParticles(BASE.x,BASE.y,kind,amount,particleFromX,particleFromY);
   }
+  if(units<=0)return 0;
+  state.basePulse=1;toast("stored "+units);sound(520,.08);
+  return units;
+}
+// The sole state.xp writer. XP enters the run HERE and nowhere else, and the only production
+// caller is completeBuilding(): levels — and therefore drafts — can only come from finishing
+// construction, weighted by what it cost (RESOURCE_XP per delivered unit).
+function grantXp(gained){
   if(gained<=0)return 0;
-  state.xp+=gained;state.levelXp+=gained;state.basePulse=1;
-  toast("fed "+units+" — "+gained+" xp");sound(520,.08);
-  // One feed may cross several levels; each crossing queues its own offer.
+  state.xp+=gained;state.levelXp+=gained;
+  // One grant may cross several levels; each crossing queues its own offer.
   while(state.levelXp>=levelCost(state.level))gainLevel();
   effects.levelChanged();effects.phaseHudChanged();
   return gained;
+}
+function buildingXpValue(building){
+  const cost=buildingCost(building);
+  return RESOURCE_KINDS.reduce((sum,kind)=>sum+RESOURCE_XP[kind]*(cost[kind]||0),0);
 }
 function gainLevel(){
   state.levelXp-=levelCost(state.level);state.level++;
@@ -1561,8 +1571,8 @@ function buffStacks(id){return state.draft.buffs[id]||0;}
 // least once this run. Buff stacks never leave state.draft.buffs, so eligibility never regresses.
 function cardPrerequisitesMet(card){return (card.requires??[]).every(id=>buffStacks(id)>0);}
 function draftEligible(categories=null){return CARDS.filter(card=>card.inPool&&(!categories||categories.includes(card.category))&&buffStacks(card.id)<(card.stacks??Infinity)&&cardPrerequisitesMet(card));}
-function drawDraftOffer(categories=null){
-  const pool=draftEligible(categories),picks=[];
+function drawDraftOffer(categories=null,exclude=null){
+  const pool=draftEligible(categories).filter(card=>!exclude||!exclude.has(card.id)),picks=[];
   while(picks.length<3&&pool.length){
     let roll=Math.random()*pool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),index=0;
     while(index<pool.length-1&&(roll-=RARITY_WEIGHTS[pool[index].rarity])>=0)index++;
@@ -1785,13 +1795,27 @@ function towerDamageBuildingBonus(tower){
   return buildings.some(building=>building.complete&&building.type==="warShrine"&&distance(tower.x,tower.y,building.x,building.y)<=shrine.effectRadius)?shrine.damageBonus:0;
 }
 function towerDamage(tower,variant=towerVariant(tower)){return Math.ceil(variant.damage*CARD_BUFFS.towerDamage**buffStacks("towerDamage"))+towerDamageBuildingBonus(tower);}
-function towerCooldown(variant){return variant.cooldown/CARD_BUFFS.towerSpeed**buffStacks("towerSpeed");}
+function nearAuraBuilding(tower,type){
+  const aura=BUILDING_TYPES[type];
+  return buildings.some(building=>building.complete&&building.type===type&&distance(tower.x,tower.y,building.x,building.y)<=aura.effectRadius);
+}
+function towerHasteFactor(tower){return nearAuraBuilding(tower,"hasteTotem")?BUILDING_TYPES.hasteTotem.cooldownFactor:1;}
+function towerCooldown(building,variant){return variant.cooldown/CARD_BUFFS.towerSpeed**buffStacks("towerSpeed")*towerHasteFactor(building);}
+/** Ward totem reconciliation, same shape as syncWorkerGarrisonBonus: the aura grants its hp pool
+ * as REAL health on the transition in and takes it back on the way out, never dropping a live
+ * tower below 1 hp (moving a tower out of coverage must not kill it). Upgrade and debug paths
+ * that rewrite tower.maxHp clear tower.ward first so this re-grants on the next update. */
+function syncTowerWard(building){
+  const tower=building.tower,inAura=nearAuraBuilding(building,"wardTotem");
+  if(inAura&&!tower.ward){tower.ward=true;tower.maxHp+=BUILDING_TYPES.wardTotem.hpBonus;tower.hp+=BUILDING_TYPES.wardTotem.hpBonus;}
+  else if(!inAura&&tower.ward){tower.ward=false;tower.maxHp-=BUILDING_TYPES.wardTotem.hpBonus;tower.hp=clamp(tower.hp-BUILDING_TYPES.wardTotem.hpBonus,1,tower.maxHp);}
+}
 function towerRangeBeaconBonus(tower){
   const beacon=BUILDING_TYPES.rangeBeacon;
   return buildings.some(building=>building.complete&&building.type==="rangeBeacon"&&distance(tower.x,tower.y,building.x,building.y)<=beacon.effectRadius)?beacon.rangeBonus:0;
 }
 function towerAttackRadius(tower,variant=towerVariant(tower)){return (variant.range||variant.effectRadius)+CARD_BUFFS.towerRange*buffStacks("towerRange")+towerRangeBeaconBonus(tower);}
-function dropToBase(){feedBase(state.carried,state.mouse.x,state.mouse.y);}
+function dropToBase(){storeAtBase(state.carried,state.mouse.x,state.mouse.y);}
 
 function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
 function constructionComplete(building){const cost=buildingCost(building);return RESOURCE_KINDS.every(kind=>(building.delivered[kind]||0)>=(cost[kind]||0));}
@@ -1807,7 +1831,6 @@ function completeBuilding(building){
   }
   building.plannedVariant=null;
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
-  if(def.resourceSource)building.resourceSource={remaining:RESOURCE_SOURCE.growthSeconds};
   // Resolve the transition as one transaction. updateWorkerSpawns() runs before workers, so leaving
   // an earlier builder unresolved until the next tick would expose its durable vacancy to autofill.
   resolveBuildingCompletionWorkers(building);
@@ -1821,7 +1844,12 @@ function completeBuilding(building){
   fxDebris(building.x,building.y-14,"#ead28d",10,{spread:66,lift:135,size:.85});
   sound(300,.11);
   const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
-  toast(def.resourceSource?def.name+" complete — growing "+def.resource+" automatically":readyMessage);sound(760,.18);effects.buildHudChanged();
+  // Completion is the run's only XP moment. Showcase fixtures complete through this same path but
+  // must never pollute the sandbox economy (rebuildShowcase asserts xp stays 0 after its reset),
+  // and a free-cost debug placement spent nothing, so it earns nothing.
+  const gained=state.runMode==="normal"&&!DBG.freeCosts?grantXp(buildingXpValue(building)):0;
+  const xpSuffix=gained>0?" — +"+gained+" xp":"";
+  toast((def.resource?def.name+" complete — staffed workers gather "+def.resource+" faster nearby":readyMessage)+xpSuffix);sound(760,.18);effects.buildHudChanged();
 }
 function dropToBuilding(building){
   const cost=buildingCost(building);let total=0;
@@ -2019,7 +2047,25 @@ function freeWorkerFogCandidate(worker,radius){
   }
   return choice;
 }
-/** One tier of the search, strict priority: construction, then hauling, then gathering. */
+/** Camp/quarry staffing candidate: the nearest completed work building with an open job slot.
+ * Durable unlike the one-shot tiers below — a staffed worker keeps the post until the building
+ * dies, a muster pulls it away, or the player drags it off. */
+function freeWorkerStaffCandidate(worker,radius){
+  let choice=null,best=Infinity;
+  for(const building of buildings){
+    if(!building.complete||!BUILDING_TYPES[building.type].resource)continue;
+    const status=workerOccupancyStatus(building,worker);
+    if(!status||status.assigned>=status.capacity)continue;
+    const d=distance(worker.x,worker.y,building.x,building.y);
+    if(d>radius||d>=best)continue;
+    choice=building;best=d;
+  }
+  return choice;
+}
+/** One tier of the search, strict priority: construction, then hauling, then staffing an open
+ * camp/quarry slot, then loose gathering. Hauling outranks staffing so drop piles drain before a
+ * worker binds to a durable post; staffing outranks gathering because a staffed post out-produces
+ * one-strike harvesting (STAFF_GATHER). */
 function assignFreeWorkerWithin(worker,radius){
   const site=freeWorkerBuildCandidate(worker,radius);
   if(site){worker.job="build";worker.jobTarget=site;worker.autonomous=true;worker.postX=site.x;worker.postY=site.y+20;return true;}
@@ -2031,6 +2077,8 @@ function assignFreeWorkerWithin(worker,radius){
     worker.taskTarget=haul.drop;haul.drop.claimedBy=worker;
     return true;
   }
+  const post=freeWorkerStaffCandidate(worker,radius);
+  if(post){worker.job="staff";worker.jobTarget=post;worker.autonomous=true;worker.postX=post.x;worker.postY=post.y+16;return true;}
   const gather=freeWorkerGatherCandidate(worker,radius);
   if(gather){worker.job="harvest";worker.jobTarget=gather;worker.autonomous=true;worker.postX=worker.x;worker.postY=worker.y;return true;}
   // Fog is deliberately NOT autonomous work: the scheduler never mints clearfog, so the frontier
@@ -2163,7 +2211,7 @@ function workerAttack(worker,enemy){
 function depositWorkerLoad(worker){
   // Hauling moves already-physical drops; harvesting itself can only call hitResource() and never reaches storage.
   const storage=worker.jobTarget;
-  if(storage===BASE)feedBase(worker.carried,worker.x,worker.y);
+  if(storage===BASE)storeAtBase(worker.carried,worker.x,worker.y);
   else{for(const kind of RESOURCE_KINDS){const amount=worker.carried[kind];if(!amount)continue;storage.storage[kind]+=amount;worker.carried[kind]=0;}storage.pulse=1;}
   worker.returning=false;burst(worker.postX,worker.postY,"#e5ce91",5);
 }
@@ -2528,12 +2576,15 @@ function fireTowerAttack(building,variant,target){
 function updateTower(building,dt){
   if(!buildings.includes(building)&&heldBuilding()!==building)return;
   const tower=building.tower,variant=towerVariant(building);tower.cooldown=Math.max(0,tower.cooldown-dt);tower.flash=Math.max(0,tower.flash-dt);tower.hitFlash=Math.max(0,(tower.hitFlash||0)-dt);
+  // Reconcile the ward aura before anything reads health this frame (mirrors the worker garrison
+  // bonus): a tower placed, moved, or newly covered settles here, so no other path has to.
+  syncTowerWard(building);
   if(variant.manual||tower.cooldown>0)return;
   if(variant.attackMode==="periodic area"){
     const result=applyAreaDamage({centers:[building],radius:towerAttackRadius(building,variant),damage:towerDamage(building,variant),targetType:variant.damageTargetType,color:variant.accent,source:building});
-    if(result.hits){tower.cooldown=towerCooldown(variant);tower.flash=.4;sound(variant.sound,.22);}return;
+    if(result.hits){tower.cooldown=towerCooldown(building,variant);tower.flash=.4;sound(variant.sound,.22);}return;
   }
-  const target=nearestTowerTarget(building,towerAttackRadius(building,variant));if(!target)return;tower.cooldown=towerCooldown(variant);fireTowerAttack(building,variant,target);
+  const target=nearestTowerTarget(building,towerAttackRadius(building,variant));if(!target)return;tower.cooldown=towerCooldown(building,variant);fireTowerAttack(building,variant,target);
 }
 
 function updateGuard(worker,dt){
@@ -2604,7 +2655,11 @@ function updateGatherer(worker,dt){
   }
   if(!node){moveWorker(worker,worker.postX,worker.postY,dt);return;}
   if(moveWorker(worker,node.x,node.y,dt,20)&&worker.hitCooldown<=0){
-    worker.hitCooldown=WORKER_HIT_COOLDOWN;hitResource(node,kind,true);
+    // The staffed-post advantage: a camp/quarry staffer swings faster and each swing spawns more
+    // drops. This margin over one-strike free harvesting is the whole reason to staff the building.
+    const staffed=worker.job==="staff";
+    worker.hitCooldown=WORKER_HIT_COOLDOWN*(staffed?STAFF_GATHER.cooldownFactor:1);
+    hitResource(node,kind,true,false,staffed?STAFF_GATHER.yield:1);
     // Exactly one successful strike, then free: the physical drop it just made can now trigger hauling.
     if(worker.job==="harvest"&&worker.autonomous){releaseWorkerToFree(worker);return;}
     if(!resourceIsActive(node,kind)){if(worker.job==="harvest")worker.jobTarget={node:null,kind};else worker.taskTarget=null;}
@@ -2694,7 +2749,7 @@ function transitionPhase(){
     // every guard the scheduler mustered during the night. Manual guards keep their posts.
     releaseAutonomousGarrisonGuards();
     wave.activePlan=null;wave.threatBudget=0;wave.spawnedThreat=0;wave.remainingSpawns=0;wave.activeNightNumber=null;
-    // Roll the next forecast after the night ends, so feeding during that night can unlock its pool.
+    // Roll the next forecast after the night ends, so leveling during that night can unlock its pool.
     chooseUpcomingNight();
     // Surviving the night earns two back-to-back picks: permanent buff, then consumable. Existing
     // level rewards stay ahead of both rather than being replaced.
@@ -2803,9 +2858,9 @@ function updateLooseResources(dt,expire){
     drop.vy+=170*dt;drop.x+=drop.vx*dt;drop.y+=drop.vy*dt;
     if(drop.y>=drop.groundY){drop.y=drop.groundY;drop.vx*=.72;drop.vy*=-.22;if(Math.abs(drop.vy)<10){drop.vy=0;drop.vx=0;drop.ground=true;}}
   }
-  // All arrivals from this simulation step become one atomic feed: one XP/level/draft transaction,
-  // one toast, and no detour through storage.
-  if(recalled)feedBase(recalled,BASE.x,BASE.y);
+  // All arrivals from this simulation step become one atomic deposit: one stored-stock credit
+  // and one toast.
+  if(recalled)storeAtBase(recalled,BASE.x,BASE.y);
 }
 function updateTemporaryBuilding(building,dt,active=true){
   if(building.orbs){
@@ -2820,39 +2875,6 @@ function updateTemporaryBuilding(building,dt,active=true){
   }
   if(building.summoning){building.summoning.remaining-=dt;return building.summoning.remaining<=0;}
   return false;
-}
-// Renewable source ownership: a completed camp/quarry owns only its countdown. Nodes remain in the
-// canonical trees/rocks arrays so gathering, rendering, placement, and damage need no source-only path.
-function resourceSourcePerimeter(building){
-  const center=worldToCell(building.x,building.y);
-  return footprintCells(center.cx,center.cy,buildingFootprint(building.type)).filter(cell=>cell.cx!==center.cx||cell.cy!==center.cy);
-}
-function growResourceSourceNode(building){
-  const kind=BUILDING_TYPES[building.type].resource,nodes=kind==="wood"?trees:rocks,candidates=[];
-  for(const cell of resourceSourcePerimeter(building)){
-    const point=cellToWorld(cell.cx,cell.cy);
-    const blocked=[[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]].some(([items,itemKind])=>items.some(node=>node.x===point.x&&node.y===point.y&&resourceIsActive(node,itemKind)));
-    if(!blocked)candidates.push({point,node:nodes.find(node=>node.x===point.x&&node.y===point.y)});
-  }
-  if(!candidates.length)return false;
-  const {point,node:existing}=candidates[(Math.random()*candidates.length)|0],hp=RESOURCE_NODE_HP[kind];
-  // `collapse` clears with `shake`: a revived node must not be drawn mid-topple by the renderer.
-  if(existing){existing.hp=existing.max=hp;existing.shake=0;existing.collapse=0;existing.sourceBuilding=building;if(kind==="wood")existing.stump=0;else existing.depleted=0;}
-  else if(kind==="wood")trees.push({x:point.x,y:point.y,hp,max:hp,stump:0,shake:0,variant:(Math.random()*3)|0,footprint:RESOURCE_FOOTPRINT,sourceBuilding:building});
-  else rocks.push({x:point.x,y:point.y,hp,max:hp,depleted:0,shake:0,footprint:RESOURCE_FOOTPRINT,sourceBuilding:building});
-  building.pulse=1;
-  return true;
-}
-function updateResourceSources(dt){
-  for(const building of buildings){
-    const def=BUILDING_TYPES[building.type];if(!building.complete||!def.resourceSource)continue;
-    const source=building.resourceSource??={remaining:RESOURCE_SOURCE.growthSeconds};
-    source.remaining-=dt;
-    while(source.remaining<=0){
-      if(!growResourceSourceNode(building)){source.remaining=RESOURCE_SOURCE.growthSeconds;break;}
-      source.remaining+=RESOURCE_SOURCE.growthSeconds;
-    }
-  }
 }
 function updateBuildings(dt,includeHazards){
   for(const building of buildings){building.pulse=Math.max(0,building.pulse-dt*3);if(building.complete&&building.tower)updateTower(building,dt);if(includeHazards&&building.complete&&building.hazard)updateHazard(building,dt);if(includeHazards&&updateTemporaryBuilding(building,dt))building.remove=true;}
@@ -2889,7 +2911,9 @@ function updateNormal(dt){
   // A pending draft freezes the world on its own flag: the player's pause may be on or off under it.
   if(state.gameOver||state.paused||state.draftPaused){stopPrimaryClick();return;}
   updatePrimaryClick(dt);updateClock(dt);updateNightEnemyWave(dt);updateCamera(dt);
-  state.coinTimer-=dt;if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(14,22);}
+  // Coins fund draft rerolls (DRAFT_REROLL), so the wandering spawn is deliberately scarce:
+  // one every ~45s-2.7min keeps a reroll a treat, not an allowance.
+  state.coinTimer-=dt;if(state.coinTimer<=0){spawnCoin();state.coinTimer=rand(45,160);}
   for(const enemy of [...state.enemies]){
     if(!updateEnemyStatuses(enemy,dt))continue;
     const def=ENEMY_TYPES[enemy.type],fromWob=enemy.wob,fromX=enemy.x,fromY=enemy.y;
@@ -2934,7 +2958,7 @@ function updateNormal(dt){
   updateKing(dt);updateTransientTimers(dt);updateResourceNodes(dt);updateLooseResources(dt,true);
   // Ordering is the contract: garrison mustering resolves BEFORE the ordinary build/haul/gather
   // sweep, so a worker with a hostile at its back takes the post instead of picking up a job.
-  updateWorkerSpawns(dt);updateBuildings(dt,true);updateResourceSources(dt);updateGarrisonPostings(dt);scheduleFreeWorkers();
+  updateWorkerSpawns(dt);updateBuildings(dt,true);updateGarrisonPostings(dt);scheduleFreeWorkers();
   for(const worker of state.workers)updateWorker(worker,dt);
   for(const brute of [...friendlyBrutes])updateFriendlyBrute(brute,dt);
   for(const unit of [...controlledEnemies])updateControlledEnemy(unit,dt);
@@ -3124,13 +3148,13 @@ function hoveredBuilding(){
 
 const DEBUG_GRANT=25;
 function debugGrant(kinds){
-  // Storage grants remain the explicit builder/withdrawal fallback; feeding never writes this stock.
+  // Same stock every base deposit credits (storeAtBase); builders withdraw from it.
   for(const kind of kinds) state.stored[kind]+=DEBUG_GRANT;
   state.basePulse=1; toast("granted "+DEBUG_GRANT+" "+kinds.join(" + ")); sound(520,.08);
 }
 function debugGrantXp(amount){
   if(!Number.isSafeInteger(amount)||amount<=0||!Number.isSafeInteger(state.xp+amount))return false;
-  const counts=resourceCounts();counts.wood=amount/FEED_XP.wood;feedBase(counts,BASE.x,BASE.y);return true;
+  grantXp(amount);return true;
 }
 /** Deal one card straight into the hand, skipping the offer entirely. Run state only: the catalog,
  *  its pool flags and every authored table are untouched, and the dealt card behaves exactly like a
@@ -3192,7 +3216,7 @@ function debugClearEnemies(){
 }
 function debugHealAll(){
   state.baseHp=state.baseMax;
-  for(const building of [...buildings,heldBuilding()]) if(building?.tower){ const variant=towerVariant(building); building.tower.maxHp=variant.maxHp; building.tower.hp=variant.maxHp; }
+  for(const building of [...buildings,heldBuilding()]) if(building?.tower){ const variant=towerVariant(building); building.tower.ward=false; building.tower.maxHp=variant.maxHp; building.tower.hp=variant.maxHp; }
   for(const worker of state.workers) worker.hp=workerMaxHp(worker);
   const held=heldWorker(); if(held) held.hp=workerMaxHp(held);
   toast("healed base, towers and workers"); sound(780,.12);
@@ -3351,7 +3375,7 @@ export function showcaseLabels(){return state.runMode==="showcase"?{revision:sho
 // a mark on screen can never disagree with the rule that produced it.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** XP economy read-only peeks; state mutations remain inside feeding and skill commands. */
+/** XP economy read-only peeks; state mutations remain inside grantXp and the skill commands. */
 function xp(){return state.xp;}
 function skillPoints(){return state.skillPoints;}
 /** Perf/debug census of simulation-owned records. `total` includes short-lived particles and damage
@@ -3380,6 +3404,30 @@ export function chooseDraft(index){
   const offer=state.draft.offer;
   if(!offer||!Number.isInteger(index)||index<0||index>=offer.length)return false;
   const id=offer[index];state.draft.offer=null;state.draft.offerKind=null;takeCard(id);refillDraft();
+  return true;
+}
+/** What the reroll button reads: the flat coin price and every coin the run can reach (banked
+ * stock plus the cursor hand — the two pools spendCoins() draws from, stored first). */
+export function rerollState(){return {cost:DRAFT_REROLL.coinCost,coins:state.stored.coin+state.carried.coin};}
+function spendCoins(amount){
+  if(state.stored.coin+state.carried.coin<amount)return false;
+  const fromStored=Math.min(state.stored.coin,amount);
+  state.stored.coin-=fromStored;state.carried.coin-=amount-fromStored;
+  return true;
+}
+/**
+ * Replace the live offer with a fresh draw from the same pool for DRAFT_REROLL.coinCost gold.
+ * The three shown cards are excluded from the redraw, so a paid reroll always changes the offer;
+ * when the pool holds nothing else, the reroll is refused before any coin is spent.
+ */
+export function rerollDraft(){
+  const offer=state.draft.offer,kind=state.draft.offerKind;
+  if(!offer||!kind||state.runMode!=="normal")return false;
+  const redealt=drawDraftOffer(DRAFT_CATEGORIES[kind],new Set(offer));
+  if(!redealt){toast("nothing else to offer");return false;}
+  if(!spendCoins(DRAFT_REROLL.coinCost)){toast("reroll needs "+DRAFT_REROLL.coinCost+" gold coin");return false;}
+  state.draft.offer=redealt;
+  sound(880,.09);effects.draftChanged();
   return true;
 }
 /**

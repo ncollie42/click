@@ -7,6 +7,11 @@
 // imports them live from src/game/data.js + simulation.js, and card effects
 // live in src/game/cards.js. Edit the game, refresh, the charts move.
 //
+// STALE (2026-08-20): the game's XP source changed to construction completion only (cost-weighted
+// RESOURCE_XP; base deposits are pure storage). The PLAYER_MODEL below (feedFraction,
+// avgXpPerFedUnit) still models the deleted feed economy, so the charts' XP arc is wrong until the
+// model is rebuilt around build-spend. Structural beats/curve/draft policy remain valid.
+//
 // Direction (decided 2026-08-14): Vampire-Survivors-style leveling. XP from
 // feeding the thing fills an exponential level curve; every level-up deals a
 // pick-3 draft from src/game/cards.js. The draft IS the dopamine drip, so the

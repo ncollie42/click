@@ -42,6 +42,8 @@ const manifest = {
     {id:"garrison",section:"buildings",x:736,y:672,label:"garrison"},
     {id:"rangeBeacon",section:"buildings",x:864,y:672,label:"range beacon"},
     {id:"warShrine",section:"buildings",x:992,y:672,label:"war shrine"},
+    {id:"wardTotem",section:"buildings",x:1120,y:672,label:"ward totem"},
+    {id:"hasteTotem",section:"buildings",x:1248,y:672,label:"haste totem"},
     {id:"blast",section:"buildings",x:96,y:800,label:"blast charge"},
     {id:"spikes",section:"buildings",x:224,y:800,label:"spike trap"},
     {id:"landmine",section:"buildings",x:352,y:800,label:"land mine"},

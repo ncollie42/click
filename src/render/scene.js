@@ -43,7 +43,6 @@ import {
   BUILDING_TYPES,
   SUMMONING_CIRCLE,
   ENEMY_TYPES,
-  XP_TIERS,
   METEOR
 } from "../game/data.js";
 import {
@@ -1311,12 +1310,13 @@ function syncBuildings(){
   }
 }
 
-// The main base swaps between its asleep and awake models at the first XP tier (the orb wakes with
-// the thing). Its gulp is driven off the sim's basePulse RISING EDGE with a local clock, because
-// basePulse itself decays in a third of a second — too fast to phase a readable swallow.
+// The main base swaps between its asleep and awake models at the run's first level-up (the orb
+// wakes with the village's first real progress). Its gulp is driven off the sim's basePulse RISING
+// EDGE with a local clock, because basePulse itself decays in a third of a second — too fast to
+// phase a readable swallow.
 let baseRec = null, lastBasePulse = 0, gulpStart = -9;
 function syncBase(t){
-  const awake = state.xp >= XP_TIERS[0];
+  const awake = state.level > 0;
   if(!baseRec || baseRec.awake!==awake){
     if(baseRec){ scene.remove(baseRec.g); disposeGroup(baseRec.g); }
     baseRec = {awake, g: makeMainBase(awake)};
@@ -1691,6 +1691,47 @@ function syncHand(){
     it.mesh.position.set(it.home.x, it.home.y + Math.sin(t*3.2+it.phase)*.06, it.home.z);
     if(it.pop>0){ it.pop = Math.max(0, it.pop-.05); it.mesh.scale.setScalar(1 + it.pop*.9); }
   }
+}
+
+// ─────────────────────────────────────────────────────────── the base pile
+// state.stored is just counts (storeAtBase credits it, builders withdraw), and the design rule is
+// that resources stay PHYSICAL: the banked stock is shown as an actual pile at the base's south
+// edge, not a number. Same rebuild-on-signature trick as the cursor hand above. The display caps
+// at PILE_MAX items so a late-game bank cannot flood the scene with meshes.
+const basePile = new THREE.Group();
+basePile.position.set(gx(BASE.x), FLOOR_TOP, gz(BASE.y + BASE.r + 26));
+scene.add(basePile);
+const pileItems = [];
+let pileSig = "";
+const PILE_MAX = 80;
+
+function syncBasePile(){
+  const want = [];
+  for(const kind of RESOURCE_KINDS)
+    for(let i=0;i<state.stored[kind] && want.length<PILE_MAX;i++) want.push(kind);
+
+  const sig = want.join(",");
+  if(sig !== pileSig){
+    const grew = want.length > pileItems.length;
+    for(const it of pileItems){ basePile.remove(it.mesh); disposeGroup(it.mesh); }
+    pileItems.length = 0;
+    // Golden-angle spiral, kinds grouped by the ordered fill above so each resource clusters into
+    // its own wedge; a little seeded height/spin jitter keeps it a pile rather than a lattice.
+    want.forEach((kind,i)=>{
+      const mesh = makeDrop(kind);
+      basePile.add(mesh);
+      const a = i*2.399, r = .35 + .25*Math.sqrt(i);
+      mesh.position.set(Math.cos(a)*r, .1 + (i%3)*.12, Math.sin(a)*r);
+      mesh.rotation.y = a*1.7;
+      mesh.scale.setScalar(.8);
+      pileItems.push({mesh, pop:(grew && i===want.length-1) ? 1 : 0});
+    });
+    pileSig = sig;
+  }
+
+  basePile.visible = pileItems.length>0;
+  for(const it of pileItems)
+    if(it.pop>0){ it.pop = Math.max(0, it.pop-.05); it.mesh.scale.setScalar(.8*(1 + it.pop*.9)); }
 }
 
 // ─────────────────────────────────────────────────────────── previews (ghosts)
@@ -2377,7 +2418,7 @@ export function drawScene(){
   const visibleEnemies=state.enemies.filter(revealed);
   syncEnemies(heldEnemy()?[...visibleEnemies,heldEnemy()]:visibleEnemies);syncFriendlyBrutes(friendlyBrutes);syncControlledEnemies(controlledEnemies);syncWorkers();
   syncDummies(damageDummies);syncShowcaseProps(showcaseProps);
-  syncBuildings(); syncParticles(); syncHand();
+  syncBuildings(); syncParticles(); syncHand(); syncBasePile();
 
   // Sim-px outline shells track the view panel's weight slider through the world-unit material.
   outlineMatPx.uniforms.thickness.value = outlineMat.uniforms.thickness.value / S;
