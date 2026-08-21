@@ -46,7 +46,7 @@ try{
   assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.pool)&&recipe.pool.every(type=>data.ENEMY_TYPES[type])),true);
   assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});assert.equal(data.SKILL_POINT_LEVELS,4);
   assert.deepEqual(Object.values(data.DAMAGE_TARGET_TYPE),["enemies-only","resources-only","enemies-resources","player-resources","all"]);assert.equal(data.DAMAGE_ORBS.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);
-  assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
+  assert.equal(data.FIREBALL.damage,5);assert.equal(data.FIREBALL.fallTime,.65);assert.equal(Object.isFrozen(data.FIREBALL),true);assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
   assert.equal(Object.values(data.TOWER_VARIANTS).every(variant=>variant.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every tower must author its damage target type");
   assert.equal([data.BUILDING_TYPES.blast,data.BUILDING_TYPES.spikes,data.BUILDING_TYPES.landmine].every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every damaging deployable must author its target type");
   assert.equal(Object.values(data.ENEMY_TYPES).every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES),true,"every hostile attack must author its target type");assert.equal(data.ENEMY_TYPES.bruteBoss.stompDamageTargetType,data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES);
@@ -1533,23 +1533,29 @@ try{
         assert.equal(sim.buildings.every(item=>item.complete),true,"card-placed traps must be finished");
         assert.equal("buildStacks" in sim.state,false,"the dock's stack counters must be gone with the dock");
 
-        // 5 · the fireball burns inside its radius, spares what is outside it, and leaves nothing
+        // 5 · one card calls three delayed fireballs; each touchdown deals exactly 5 in radius
         clearGround();
-        sim.spawnEnemy("raider");sim.spawnEnemy("raider");
+        sim.spawnEnemy("brute");sim.spawnEnemy("brute");
         const near=sim.state.enemies[0],far=sim.state.enemies[1];
         assert.equal(sim.debugDealCard("fireball"),true);
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="fireball")),"targeting");
+        assert.equal(held("fireball").charges,3);
         const anchor=placementAnchor(600,300);
         near.x=anchor.x;near.y=anchor.y+100;far.x=anchor.x;far.y=anchor.y+200;
         const nearRange=sim.distance(anchor.x,anchor.y,near.x,near.y),farRange=sim.distance(anchor.x,anchor.y,far.x,far.y);
         assert.ok(nearRange<=data.FIREBALL.radius&&farRange>data.FIREBALL.radius,"the fireball test targets are not on both sides of the radius");
-        assert.ok(data.FIREBALL.damage>=data.ENEMY_TYPES.raider.hp,"the fireball must be lethal to a raider for this measurement");
-        const buildingsBefore=sim.buildings.length,farHp=far.hp;
+        const buildingsBefore=sim.buildings.length,nearHp=near.hp,farHp=far.hp;
         place(anchor.x,anchor.y);
         assert.equal(sim.buildings.length,buildingsBefore,"a fireball must leave no building behind");
-        assert.equal(sim.state.enemies.includes(near),false,"the fireball spared a raider inside its radius");
+        assert.equal(near.hp,nearHp,"fireball damage landed on the cast frame");
         assert.equal(far.hp,farHp,"the fireball reached past its radius");
-        assert.equal(held("fireball"),null);assert.equal(sim.state.buildMode,null);
+        assert.equal(sim.fallingFireballs.length,1);assert.equal(held("fireball").charges,2);
+        sim.update(data.FIREBALL.fallTime-.05);near.x=anchor.x;near.y=anchor.y+100;far.x=anchor.x;far.y=anchor.y+200;sim.update(.1);
+        assert.equal(near.hp,nearHp-5,"fireball touchdown did not deal exactly 5 damage");
+        assert.equal(far.hp,farHp,"the fireball reached past its radius");assert.equal(sim.fallingFireballs.length,0);
+        place(anchor.x,anchor.y);assert.equal(held("fireball").charges,1);
+        place(anchor.x,anchor.y);assert.equal(held("fireball"),null);assert.equal(sim.state.buildMode,null);assert.equal(sim.fallingFireballs.length,2);
+        sim.update(data.FIREBALL.fallTime+.01);assert.equal(sim.fallingFireballs.length,0);
 
         // 6 · a fancy-tower card lands one CONSTRUCTION SITE. Its one displayed cost is exactly the
         //     basic chassis plus variant materials, and completing it directly produces that variant.

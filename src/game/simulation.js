@@ -154,11 +154,10 @@ const damageNumbers = [];
 // Damage resolved the instant an arc is pushed; scene.js only draws {x1,y1,x2,y2,age,seed} and
 // `seed` keeps a bolt's jitter stable while it fades.
 const lightningArcs = [];
-// Meteors in flight. castMeteor() pushes one record and NOTHING else happens until t reaches dur in
-// updateFallingMeteors(), where the whole effect (damage, rock, dust, shake) resolves — so timing is
-// simulation-owned and headless runs land meteors identically. scene.js reads these records to draw
-// the descent and treats a record's disappearance as its impact cue.
+// Falling spell records own gameplay timing. Casts only push records. Their update functions apply
+// damage at touchdown, while scene.js reads the same clocks to draw each descent and impact cue.
 const fallingMeteors = [];
+const fallingFireballs = [];
 let damageNumberSequence=0;
 const state = {
   runMode:"normal",
@@ -178,8 +177,8 @@ const state = {
   // (null when the top copy is untouched). Written only by the hand helpers below.
   hand:[],
   // The card currently steering state.buildMode, or null: {id, type, cast}. `type` is the authored
-  // BUILDING_TYPES key whose ghost/footprint the placement flow draws; `cast` (fireball) replaces
-  // "leave a building" with an instant effect at the anchor.
+  // BUILDING_TYPES key whose ghost/footprint the placement flow draws; `cast` replaces placement
+  // with a spell call at the anchor.
   cardTargeting:null,
   baseHp:100,baseMax:100,gameOver:false,victory:false,continuedAfterVictory:false,paused:false,draftPaused:false,coinTimer:6,basePulse:0,screenShake:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed is simulated run time. remaining is the authoritative DAY countdown only; night has
@@ -440,7 +439,7 @@ function makeShowcaseWorker(f,index){
 }
 function clearShowcaseLive(){
   cancelHeldObject();closeUpgradeMenu();resetChop();state.showcaseFocus=null;
-  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=friendlyBrutes.length=controlledEnemies.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=lightningArcs.length=fallingMeteors.length=0;replaceGrass([]);state.workers.length=state.enemies.length=0;state.screenShake=0;
+  trees.length=rocks.length=diamonds.length=resourceDrops.length=buildings.length=friendlyBrutes.length=controlledEnemies.length=chests.length=damageDummies.length=showcaseProps.length=showcaseLabelRecords.length=workerCorpses.length=particles.length=damageNumbers.length=lightningArcs.length=fallingMeteors.length=fallingFireballs.length=0;replaceGrass([]);state.workers.length=state.enemies.length=0;state.screenShake=0;
   invariant(!state.heldObject,"held object survived showcase teardown");
 }
 function buildShowcaseFixtures(){
@@ -537,10 +536,11 @@ export function validateSimulationInvariants(){
     const entry=handEntry(targeting.id);
     invariant(entry&&entry.charges>0,"card targeting outlived the card it is placing");
   }
-  const collections=[trees,rocks,diamonds,grass,resourceDrops,chests,buildings,friendlyBrutes,controlledEnemies,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers,fallingMeteors];
+  const collections=[trees,rocks,diamonds,grass,resourceDrops,chests,buildings,friendlyBrutes,controlledEnemies,state.workers,state.enemies,damageDummies,showcaseProps,particles,damageNumbers,fallingMeteors,fallingFireballs];
   for(const collection of collections)for(const item of collection)invariant(Number.isFinite(item.x)&&Number.isFinite(item.y),"non-finite entity coordinates");
   // Landed records are spliced in the same update step, so between steps every record is mid-fall.
   for(const m of fallingMeteors)invariant(Number.isFinite(m.t)&&m.t>=0&&m.dur===METEOR.fallTime&&m.t<m.dur,"malformed falling meteor");
+  for(const f of fallingFireballs)invariant(Number.isFinite(f.t)&&f.t>=0&&f.dur===FIREBALL.fallTime&&f.t<f.dur,"malformed falling fireball");
   const wave=state.nightWave;
   invariant(Number.isInteger(wave.nightNumber)&&wave.nightNumber>=0,"illegal night number");
   invariant(wave.activeNightNumber===null||(Number.isInteger(wave.activeNightNumber)&&wave.activeNightNumber>0&&wave.activeNightNumber===wave.nightNumber),"illegal active wave identity");
@@ -1712,11 +1712,17 @@ function meteorImpact(x,y){
   addScreenShake(1);
   sound(42,.6);sound(90,.25);
 }
-/** The fireball's whole effect: one area hit at the anchor, no building, blast-style noise and dust. */
+/** Call the strike. Damage waits for touchdown in updateFallingFireballs(). */
 function castFireball(x,y){
+  fallingFireballs.push({x,y,t:0,dur:FIREBALL.fallTime});
+  toast("fireball incoming");sound(980,.12);
+}
+function fireballImpact(x,y){
   applyAreaDamage({centers:[{x,y}],radius:FIREBALL.radius,damage:FIREBALL.damage,targetType:FIREBALL.damageTargetType,color:"#ef7b3f"});
-  for(let i=0;i<42;i++)particles.push({x,y,vx:rand(-180,180),vy:rand(-190,40),life:rand(.35,.9),col:i%2?"#ef7b3f":"#b84b38"});
-  toast("fireball");sound(70,.3);
+  applyShockwave(x,y,{radius:FIREBALL.radius,force:115});
+  for(let i=0;i<64;i++)particles.push({x,y,vx:rand(-240,240),vy:rand(-260,35),life:rand(.35,1),col:i%3?"#ef7b3f":i%2?"#b84b38":"#ffd36a"});
+  addScreenShake(.55);
+  toast("fireball impact");sound(52,.38);sound(120,.16);
 }
 /** Arm the placement flow for one held card. The card STAYS in hand while its charges are spent. */
 function beginCardTargeting(entry){
@@ -2877,6 +2883,13 @@ function updateFallingMeteors(dt){
     if(m.t>=(m.nextBlip??0)){const p=m.t/m.dur;sound(1350-1050*p*p,.09);m.nextBlip=m.t+.13;}
   }
 }
+function updateFallingFireballs(dt){
+  for(let i=fallingFireballs.length-1;i>=0;i--){
+    const f=fallingFireballs[i];f.t+=dt;
+    if(f.t>=f.dur){fallingFireballs.splice(i,1);fireballImpact(f.x,f.y);continue;}
+    if(f.t>=(f.nextBlip??0)){const p=f.t/f.dur;sound(1050-650*p*p,.07);f.nextBlip=f.t+.11;}
+  }
+}
 function updateParticles(dt){
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.life-=dt;if(p.resource){const q=1-p.life/p.max;p.x+=(p.tx-p.x)*q*.28;p.y+=(p.ty-p.y)*q*.28;}else{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=80*dt;}if(p.life<=0)particles.splice(i,1);}
 }
@@ -2939,7 +2952,7 @@ function updateNormal(dt){
   for(const brute of [...friendlyBrutes])updateFriendlyBrute(brute,dt);
   for(const unit of [...controlledEnemies])updateControlledEnemy(unit,dt);
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
-  updateFallingMeteors(dt);updateScreenShake(dt);updateParticles(dt);updateDamageNumbers(dt);
+  updateFallingMeteors(dt);updateFallingFireballs(dt);updateScreenShake(dt);updateParticles(dt);updateDamageNumbers(dt);
   // Stable completion point: scheduled spawning plus every kill-capable stage (player/status/enemy,
   // king, towers, hazards, workers) has finished. The phase flip makes this condition false before
   // any later frame, so transitionPhase() owns exactly one dawn reward.
@@ -2961,7 +2974,7 @@ function updateShowcase(dt){
     if(dummy.defeatedTimer>0){dummy.defeatedTimer-=dt;if(dummy.defeatedTimer<=0){dummy.x=dummy.homeX;dummy.y=dummy.homeY;dummy.hp=dummy.max;dummy.status={burn:null,slow:null};}continue;}
     updateEnemyStatuses(dummy,dt);
   }
-  updateBuildings(dt,false);updateFallingMeteors(dt);updateScreenShake(dt);updateParticles(dt);updateDamageNumbers(dt);effects.afterUpdate();
+  updateBuildings(dt,false);updateFallingMeteors(dt);updateFallingFireballs(dt);updateScreenShake(dt);updateParticles(dt);updateDamageNumbers(dt);effects.afterUpdate();
 }
 
 // main.js supplies dt; the explicit mode dispatch keeps both pipelines auditable.
@@ -3430,7 +3443,7 @@ function skillTreeEdges(){
 
 export {
   // live collections — iterate, never mutate
-  state, trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers, lightningArcs, fallingMeteors,
+  state, trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers, lightningArcs, fallingMeteors, fallingFireballs,
   // debug flags (the gameplay pane's own bindings are the only writers)
   DBG,
   // the step

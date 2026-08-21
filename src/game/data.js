@@ -131,10 +131,9 @@ export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitC
   // nearest unstruck enemy OR resource within chainRange of the previous strike.
   chainChance:.2,chainChanceStack:.1,chainJumps:1,chainRange:120};
 export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay:20,calmNightFactor:.75};
-// The fireball card's cast: an instant area hit that leaves nothing behind. The radius matches the
-// blast charge's effectRadius on purpose — the cast borrows the blast placement ghost, so the ring
-// the player aims with IS the area this damages.
-export const FIREBALL={damage:6,radius:135,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY};
+// The fireball borrows the blast placement ghost, so its target ring and damage radius stay equal.
+// fallTime is gameplay: enemies may enter or leave the blast before the ball touches down.
+export const FIREBALL=Object.freeze({damage:5,radius:135,fallTime:.65,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY});
 // Intentional large-obstacle tuning: the impact reserves 3x3 through meteorTarget and the rock's
 // runtime footprint; its fixed 15 HP keeps the spell-created obstacle durable without inheriting
 // ordinary stone-node balance.
