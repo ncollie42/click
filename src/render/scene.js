@@ -43,7 +43,7 @@ import {
   BUILDING_TYPES,
   SUMMONING_CIRCLE,
   ENEMY_TYPES,
-  METEOR
+  FIREBALL,METEOR
 } from "../game/data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -51,7 +51,7 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs, fallingMeteors,
+  trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs, fallingMeteors, fallingFireballs,
   fogMetadata, fogAtPoint, footprintFogFree,
   badgeAction, hoveredBuilding, captureYardOccupancy, durablePostStatus,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
@@ -1530,6 +1530,64 @@ function drawMeteors(){
   }
 }
 
+// Fireballs use their own straight-down silhouette. The hot sphere, vertical wake, closing target
+// ring and impact flash all read the simulation-owned fallingFireballs clock. Damage still lands in
+// simulation.js, never here.
+const FIREBALL_FX = {height:26, blastDur:.42};
+const fireballGeo = new THREE.IcosahedronGeometry(1, 1);
+const fireballCoreMat = new THREE.MeshBasicMaterial({color:"#ffd35a"});
+const fireballShellMat = new THREE.MeshBasicMaterial({color:"#ff642f",transparent:true,opacity:.58,depthWrite:false});
+const fireballPool = []; let fireballUsed = 0;
+const fireballTracked = new Set(); const fireballBlasts = [];
+
+function stepFireballs(dt){
+  for(const f of fallingFireballs)fireballTracked.add(f);
+  for(const f of fireballTracked)if(!fallingFireballs.includes(f)){
+    fireballTracked.delete(f);
+    if(f.t>=f.dur)fireballBlasts.push({x:f.x,y:f.y,t:0});
+  }
+  for(let i=fireballBlasts.length-1;i>=0;i--){
+    fireballBlasts[i].t+=dt/FIREBALL_FX.blastDur;
+    if(fireballBlasts[i].t>=1)fireballBlasts.splice(i,1);
+  }
+}
+
+function drawFireballs(){
+  fireballUsed=0;
+  const nowT=performance.now()/1000;
+  for(const f of fallingFireballs){
+    const p=clamp(f.t/f.dur,0,1),e=p*p;
+    const h=.75+FIREBALL_FX.height*(1-e);
+    let group=fireballPool[fireballUsed];
+    if(!group){
+      group=new THREE.Group();
+      const core=new THREE.Mesh(fireballGeo,fireballCoreMat),shell=new THREE.Mesh(fireballGeo,fireballShellMat);
+      core.scale.setScalar(1.18);shell.scale.setScalar(1.62);core.castShadow=shell.castShadow=false;
+      group.add(core,shell);fireballPool.push(group);scene.add(group);
+    }
+    fireballUsed++;
+    group.visible=true;group.position.set(gx(f.x),h,gz(f.y));group.rotation.set(nowT*4.2,f.t*7.5,nowT*3.4);
+    group.scale.setScalar((1+.38*e)*(.96+.06*Math.sin(nowT*47+f.x)));
+
+    const flick=.82+.18*Math.sin(nowT*39+f.y);
+    const tailH=h+8+8*(1-e);
+    beam(f.x,f.y,tailH,f.x,f.y,h,.54+.18*e,"#e24528",.62*flick);
+    beam(f.x,f.y,tailH-1,f.x,f.y,h,.24+.08*e,"#ffd36a",.92*flick);
+    muzzle(f.x,f.y,h,1.5+.5*e,"#ff9b3d",.88);
+    ring(f.x,f.y,FIREBALL.radius,"#c9432c",.18+.55*e);
+    ring(f.x,f.y,FIREBALL.radius*(1-.82*e),"#ffb34f",.7);
+  }
+  for(let i=fireballUsed;i<fireballPool.length;i++)fireballPool[i].visible=false;
+
+  for(const b of fireballBlasts){
+    const q=b.t,fade=1-q;
+    ring(b.x,b.y,FIREBALL.radius*(.18+.82*q),"#e64e2d",fade*.95);
+    ring(b.x,b.y,FIREBALL.radius*(.08+.55*q),"#ffd36a",fade*.8);
+    if(q<.42)muzzle(b.x,b.y,.9,1.1+2.8*(1-q/.42),"#ffd36a",1-q/.42);
+    if(q<.28)beam(b.x,b.y,FIREBALL_FX.height*.55,b.x,b.y,.35,.72*(1-q/.28),"#ff7a32",.9*(1-q/.28));
+  }
+}
+
 function drawAttacks(){
   const hs = view.heightScale/100;
 
@@ -1584,6 +1642,7 @@ function drawAttacks(){
       beam(w.x, w.y, .8, w.combatTarget.x, w.combatTarget.y, .7, .06, "#f3dfa3", .85);
 
   drawMeteors();
+  drawFireballs();
 
   // Lightning arcs (chainLightning buff + lightning tower). Damage already landed in the sim;
   // each record is one jump, drawn as a short-lived jagged bolt. The per-arc seed keeps the
@@ -2433,6 +2492,7 @@ export function drawScene(){
   const drawDt = Math.min(.05, nowS - (lastDrawT || nowS));
   stepShots(drawDt);
   stepMeteors(drawDt);
+  stepFireballs(drawDt);
   lastDrawT = nowS;
 
   drawZones();
