@@ -4,6 +4,8 @@
 // (dependency direction: kit <- game-rig <- adopt <- models/*/ <- models.js barrel).
 import * as THREE from "three";
 import {PAL} from "../palette.js";
+import {setToneTargets} from "../material-light-mods.js";
+import {SUN_INTENSITY, SUN_NDOTL, HEMI_INTENSITY} from "../rig.js";
 import {CELL,W,H} from "../../game/data.js";
 
 // ── the one unit conversion the whole render layer shares ───────────────────
@@ -15,6 +17,16 @@ export const WU = W*S, HU = H*S;             // 480 x 320 world units
 export const gx = x => x*S, gz = y => y*S;
 
 export const flat = (color, extra={}) => new THREE.MeshLambertMaterial({color, flatShading:true, ...extra});
+// flat() + authored tone targets (palette.js TONES): the material's albedo is the triple's albedo,
+// its flat-lit face renders `lit` and its shaded face `shadow` exactly (material-light-mods).
+// For live-rig models only (trees, rocks); baked casts go through game-rig.js instead.
+const TONE_RIG = {sunColor: PAL.sunDay, sunIntensity: SUN_INTENSITY, ndotl: SUN_NDOTL,
+                  skyColor: PAL.skyLight, hemiIntensity: HEMI_INTENSITY};
+export const toned = (tone, extra={}) => {
+  const m = flat(tone.albedo, extra);
+  setToneTargets(m, {...tone, rig: TONE_RIG});
+  return m;
+};
 // ── outlines ────────────────────────────────────────────────────────────────
 // Inverted hull: a back-faced copy of each prop pushed out along its normals,
 // so only the shell behind the object survives depth testing and reads as ink.

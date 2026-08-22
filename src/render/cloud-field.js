@@ -42,7 +42,10 @@ float cloudCoverAt(vec2 worldXZ){
   // ever moves along one fixed diagonal, so composition needed a second, authored, dial
   // (round-2 critic: the shade masses sat mirrored from the reference with no knob to move them).
   float n = cfFbm(worldXZ * uCloudScale + uTime * uCloudSpeed + uCloudOffset) * 1.6 - 0.3;
-  return smoothstep(uCloudCover, uCloudCover + 0.18, n);
+  // Penumbra width in field units. .18 → .08 Aug 22 (owner: "clouds look weak"): with the meadow's
+  // shade now an authored swatch (material-light-mods tone targets), a wide ramp left most of each
+  // cloud as a partial blend; the reference's cloud/canopy shade is a crisp-edged dark mass.
+  return smoothstep(uCloudCover, uCloudCover + 0.08, n);
 }
 `;
 

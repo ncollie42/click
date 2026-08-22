@@ -25,8 +25,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
 import {configurePipelines, renderFrame, resizePipeline} from "./pipelines/index.js";
-import {initLightMods, applyLightingMods, syncLightMods} from "./material-light-mods.js";
-import {PAL, css, TOWER_TOP} from "./palette.js";
+import {initLightMods, applyLightingMods, syncLightMods, setToneTargets} from "./material-light-mods.js";
+import {PAL, css, TOWER_TOP, TONES} from "./palette.js";
+import {SUN_INTENSITY, SUN_NDOTL, HEMI_INTENSITY} from "./rig.js";
 import {
   S,WU,HU,gx,gz, flat, meshOf, isOutline, disposeGroup, FLOOR_TOP,
   makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeCorpse, makeGrassTuftGeometry,
@@ -243,7 +244,7 @@ export function combatTargetOnScreen(target){
 // S = 3.21·sin(60°)/π = 0.885, warm hemi 0.60. The old rig (sun 1.1 @ az 142/el 54.5, cool hemi
 // 0.5) ran the world ~2.45x darker in up-facing linear luma — models.js GAME_* mirrors this rig
 // and GAME_EXPOSURE was re-scaled by exactly that ratio; change the two files together.
-const sky = new THREE.HemisphereLight(PAL.skyLight, PAL.bounce, 0.6);
+const sky = new THREE.HemisphereLight(PAL.skyLight, PAL.bounce, HEMI_INTENSITY);
 scene.add(sky);
 const sun = new THREE.DirectionalLight(PAL.sunDay, 1.5);
 // The key light's direction as az/el (az 0 = +X/screen-right, positive toward +Z; el up).
@@ -274,24 +275,25 @@ sun.shadow.radius = 8;   // PCF blur kernel, tools/test-scene/preset.js SUN.shad
 scene.add(sun, sun.target);
 
 // ─────────────────────────────────────────────────────────── terrain
-// Grass presentation is world-aligned and independent of topology. A 64px deterministic repeat
-// avoids maximum-texture-size coupling: RGBA backing is 64*64*4 = 16 KiB CPU and 16 KiB GPU
-// (mipmaps disabled), versus 150 MiB each for the former 7680*5120 sheet.
-const GRASS_TILE_PX=64,GRASS_TEXTURE_BYTES=GRASS_TILE_PX*GRASS_TILE_PX*4;
-const grassLayer=document.createElement("canvas");grassLayer.width=grassLayer.height=GRASS_TILE_PX;
-(function bakeGrass(){
-  // Flat fill (owner pick, Aug 19): the old 8px checker + speck noise read as dirt once the pixel
-  // pipeline quantizes it. WHITE, not PAL.grass: the vertex colours below carry the albedo, and
-  // filling the texture with grass too rendered the floor as grass SQUARED (2x darker in linear
-  // than the blades — the olive floor game-rig.js documents). The blade layer on top is the
-  // meadow (syncMeadow below, built on src/render/grass.js).
-  const c=grassLayer.getContext("2d");c.imageSmoothingEnabled=false;
-  c.fillStyle="#ffffff";c.fillRect(0,0,GRASS_TILE_PX,GRASS_TILE_PX);
-})();
-const grassTex=new THREE.CanvasTexture(grassLayer);
-grassTex.wrapS=grassTex.wrapT=THREE.RepeatWrapping;grassTex.repeat.set(W/GRASS_TILE_PX,H/GRASS_TILE_PX);
+// PATCH MAP (Aug 22): the meadow's two-tone patches live in a map-sized, NEAREST-filtered texture
+// at PATCH_PX_PER_WU texels per wu, baked from groundColorInto — the same law the blades sample.
+// Before this the patch rode the VERTEX colour and interpolated across the 2-wu WFC cells, which
+// blurred the hard edge to mush at gameplay zoom. Texel = the ABSOLUTE meadow colour (green1 or
+// green0); the vertex colour is only the per-cell tint as a RATIO to PAL.grass, so base cells
+// render the texel exactly and the tone solve (albedo = green1) stays valid. 96x64 wu x 4 = 384x256
+// RGBA = 393 KiB; rebaked with the terrain when groundTune changes (groundKey).
+const PATCH_PX_PER_WU=4;
+const PATCH_W=Math.max(1,Math.round(WU*PATCH_PX_PER_WU)),PATCH_H=Math.max(1,Math.round(HU*PATCH_PX_PER_WU));
+const patchPixels=new Uint8Array(PATCH_W*PATCH_H*4);
+const GRASS_TEXTURE_BYTES=patchPixels.byteLength;
+const grassTex=new THREE.DataTexture(patchPixels,PATCH_W,PATCH_H,THREE.RGBAFormat,THREE.UnsignedByteType);
 grassTex.magFilter=grassTex.minFilter=THREE.NearestFilter;grassTex.generateMipmaps=false;grassTex.colorSpace=THREE.SRGBColorSpace;
+grassTex.flipY=false;   // uv.v = 1 - z/HU (pushTopPolygon), so texel row r ↔ z = HU·(1 - (r+.5)/PATCH_H)
 const landMat=flat(0xffffff,{map:grassTex,vertexColors:true});
+// The meadow's authored tones (palette.js TONES.meadow), solved into the material's direct/indirect
+// tints by material-light-mods. Rig numbers come from rig.js — the same ones the lights below use.
+const TONE_RIG={sunColor:PAL.sunDay,sunIntensity:SUN_INTENSITY,ndotl:SUN_NDOTL,skyColor:PAL.skyLight,hemiIntensity:HEMI_INTENSITY};
+setToneTargets(landMat,{...TONES.meadow,rig:TONE_RIG});
 // Terrain stays SMOOTH under the toon ramp (measured in the test-scene audition: banding the
 // ground caps its only highlights and draws contour rings). Cloud shade still applies to it.
 landMat.userData.noToonRamp=true;
@@ -308,11 +310,15 @@ const REGION_COLORS={forest:new THREE.Color(PAL.regionForest),rocky:new THREE.Co
 // second colour — a +16%-toward-white lerp averaged ~3% L over the field and vanished under the
 // 37-band quantizer (measured Aug 21). Strength/gate live in groundTune (R panel "ground").
 const GRASS_BRIGHT=new THREE.Color(PAL.grassAlt);
+// Aug 22 (owner, after t3ssel8r's imgur write-up): the meadow is TWO flat tones with a HARD edge —
+// big painted patches of green0 on green1 — and the blades (which sample this same law) break the
+// boundary into grass texture. Soft noise blends read as mush under the band quantizer.
 export const groundTune={
-  patchStrength:1,   // 0..1 lerp toward GRASS_BRIGHT inside a fully-open patch
-  patchOpen:.5,      // noise tone where the patch gate starts opening
-  patchWidth:.25,    // tone span from open to saturated (test scene: .55 → .80)
-  patchScale:120,    // wu per noise cell (second octave at half this)
+  patchStrength:1,   // 0..1 lerp toward GRASS_BRIGHT inside a patch
+  patchOpen:.5,      // noise tone where the patch gate opens (~40% of the field above it)
+  patchWidth:.03,    // tone span from open to saturated — near-zero = hard 2-tone edge
+  patchScale:18,     // wu per noise cell (second octave at half this). Map is 96x64 wu — 160 was ONE
+                     // cell for the whole meadow (no patches at all, Aug 22 preview); 18 ≈ reference
 };
 const GROUND_PANEL={sliders:[["patchStrength","patch strength",0,1,.05],["patchOpen","patch gate open",.3,.8,.01],
   ["patchWidth","patch gate width",.05,.5,.01],["patchScale","patch scale wu",30,300,5]],
@@ -324,7 +330,14 @@ function valueNoise(x,z,seed){
   const a=hashWU(ix,iz,seed),b=hashWU(ix+1,iz,seed),c=hashWU(ix,iz+1,seed),d=hashWU(ix+1,iz+1,seed);
   return a+(b-a)*ux+(c-a)*uz+(a-b-c+d)*ux*uz;
 }
-function patchTone(x,z,seed){const L=groundTune.patchScale;return .6*valueNoise(x/L-3.7,z/L+5.2,seed)+.4*valueNoise(x/(L*.5)+1.3,z/(L*.5)-2.9,seed+17);}
+// Domain-warped value noise: plain grid noise gives square-ish lobes; warping the sample point by
+// a second noise bends the patch outlines into the organic shapes of the reference meadow.
+function patchTone(x,z,seed){
+  const L=groundTune.patchScale;
+  const u=x/L,v=z/L;
+  const wx=(valueNoise(u*.7+11.1,v*.7-4.2,seed+5)-.5)*1.4, wz=(valueNoise(u*.7-6.3,v*.7+8.8,seed+9)-.5)*1.4;
+  return .6*valueNoise(u+wx-3.7,v+wz+5.2,seed)+.4*valueNoise((u+wx)*2+1.3,(v+wz)*2-2.9,seed+17);
+}
 /** Cell tint → ground albedo at (x,z) wu, written into `out`. */
 function groundColorInto(out,cellTint,x,z,seed){
   const t=patchTone(x,z,seed);
@@ -334,6 +347,24 @@ function groundColorInto(out,cellTint,x,z,seed){
 // Per-dual-cell tint, refreshed by rebuildTerrainPresentation. Dual cell (dx,dy) covers world px
 // [(dx-1)*CELL,dx*CELL) — the +1 in the lookup is that offset. Raised cells overwrite ground.
 let terrainTintMap={cols:0,rows:0,rgb:new Float32Array(0),has:new Uint8Array(0)};
+const GRASS_BASE=new THREE.Color(PAL.grass);
+/** Bake the patch map: every texel = groundColorInto at its world position over the BASE tint. */
+function bakePatchMap(seed){
+  const c=new THREE.Color();
+  for(let r=0;r<PATCH_H;r++){
+    const z=HU*(1-(r+.5)/PATCH_H);
+    for(let q=0;q<PATCH_W;q++){
+      const x=(q+.5)/PATCH_PX_PER_WU;
+      groundColorInto(c,GRASS_BASE,x,z,seed);
+      const i=(r*PATCH_W+q)*4;
+      // THREE.Color holds LINEAR floats; the texture is declared sRGB, so encode on the way in.
+      patchPixels[i]=Math.round(linToSrgb(c.r)*255);
+      patchPixels[i+1]=Math.round(linToSrgb(c.g)*255);patchPixels[i+2]=Math.round(linToSrgb(c.b)*255);patchPixels[i+3]=255;
+    }
+  }
+  grassTex.needsUpdate=true;
+}
+const linToSrgb=v=>v<=.0031308?v*12.92:1.055*Math.pow(v,1/2.4)-.055;
 const shoreMat=flat(PAL.cliff,{side:THREE.DoubleSide});
 
 // ── water: depth-foam shader (winner of the map-editor audition; see tools/map-editor water select) ──
@@ -532,13 +563,14 @@ function rebuildTerrainPresentation(){
   const metadata=terrainMetadata();
   if(metadata.revision!==builtTerrainRevision||groundKey()!==builtGroundKey){
     builtGroundKey=groundKey();
+    bakePatchMap(metadata.seed??0);
     const grid=authoredCellGrid(metadata),seed=metadata.seed??0;
     const solves=[
       {solve:solveTerrainWfc({doc:grid,catalog:GROUND_CATALOG,layer:"ground",seed,salt:GROUND_SALT}),topY:0,bottomY:SHORE_BOTTOM},
       {solve:solveTerrainWfc({doc:grid,catalog:RAISED_CATALOG,layer:"raised",seed,salt:RAISED_SALT}),topY:RAISED_TOP,bottomY:0},
     ];
     for(const {solve} of solves)if(solve.status!=="solved")throw new Error(`terrain WFC ${solve.layer} contradiction with the complete module catalog`);
-    const top=[],uv=[],colors=[],skirts=[],tint=new THREE.Color(),vtx=new THREE.Color();
+    const top=[],uv=[],colors=[],skirts=[],tint=new THREE.Color();
     {const cols=grid.width+1,rows=grid.height+1;
      terrainTintMap={cols,rows,rgb:new Float32Array(cols*rows*3),has:new Uint8Array(cols*rows)};}
     // Vertex tints multiply the shared grass texture, exactly like the old per-cell tinting:
@@ -557,8 +589,9 @@ function rebuildTerrainPresentation(){
       for(let i=0;i<points.length;i++){const [ax,az]=points[i],[bx,bz]=points[(i+1)%points.length];area+=ax*bz-bx*az;}
       const ordered=area>0?[...points].reverse():points;
       for(let i=1;i<ordered.length-1;i++)for(const [px,pz] of [ordered[0],ordered[i],ordered[i+1]]){
-        groundColorInto(vtx,color,px,pz,seed);
-        top.push(px,y,pz);uv.push(px/WU,1-pz/HU);colors.push(vtx.r,vtx.g,vtx.b);
+        // Vertex colour = cell tint as a ratio to the base, so the patch-map texel IS the colour.
+        top.push(px,y,pz);uv.push(px/WU,1-pz/HU);
+        colors.push(color.r/GRASS_BASE.r,color.g/GRASS_BASE.g,color.b/GRASS_BASE.b);
       }
     };
     const pushWallSegment=([[ax,az],[bx,bz]],yTop,yBottom)=>skirts.push(
@@ -803,6 +836,7 @@ function syncMeadow(time){
     meadow = createGrass(THREE, {seed: (terrainMetadata().seed ?? 1) | 0,
                                  region: {x0: 0, z0: 0, x1: WU, z1: HU}, sample: meadowSample});
     meadow.setWearMap(wearTex);
+    setToneTargets(meadow.mesh.material,{...TONES.meadow,rig:TONE_RIG});   // blades = ground tones
     scene.add(meadow.mesh);
     meadowKey = key;
   }else if(key !== meadowKey){
@@ -2533,7 +2567,7 @@ export function drawScene(){
   // the lights above). The night endpoint stays the OLD rig's 0.35 (1.1 − .75), byte-identical:
   // night readability was tuned against it and the unlit night materials assume it.
   const night = state.clock.light;
-  sun.intensity = 3.21 - night*2.86;
+  sun.intensity = SUN_INTENSITY*(1 - night*.89);   // night floor ≈ 0.35
   sun.color.setHex(night>.25 ? PAL.sunNight : PAL.sunDay);
   // The water shader ignores scene lights, so it tracks the night dim explicitly.
   waterUniforms.uLight.value = 1 - night*.6;
@@ -2555,6 +2589,7 @@ export function drawScene(){
       sunDir: _sunDirScratch.subVectors(sun.position, sun.target.position),
       time: lightTime,
       cloudShade: !!materialMode,
+      cloudMax: tune?.cloudMax ?? 0.8,
       toon: tune ? tune.toonRamp !== false : false,
     });
   }

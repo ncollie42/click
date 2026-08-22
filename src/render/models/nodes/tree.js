@@ -1,8 +1,9 @@
 // Owns: the tree model. Contract (scene.js scatter layer): userData.live = fused trunk+crown
-// mesh, userData.stump = hidden remnant. Variant 0..2 via t.variant (PAL.leaf, slot 2 = blossom).
+// mesh, userData.stump = hidden remnant. Variant 0..2 via t.variant (PAL.leaf — three greens; the
+// blossom variant was removed Aug 21, see palette.js leaf).
 import * as THREE from "three";
-import {PAL} from "../../palette.js";
-import {flat, meshOf, bakeStatic} from "../kit.js";
+import {PAL, TONES} from "../../palette.js";
+import {flat, toned, meshOf, bakeStatic} from "../kit.js";
 
 // Aug 21 (owner): trees REVERTED to the pre-gauntlet stacked primitives (from 923898b^,
 // verbatim shapes) — under the pixel pipeline the quantizer wants big smooth/simple forms, and
@@ -16,8 +17,10 @@ const TREE_SCALE = 1;
 export function makeTree(t){
   const K = TREE_SCALE;
   const g = new THREE.Group();
-  const leaf = PAL.leaf[t.variant] ?? PAL.leaf[0];
-  const trunk = meshOf(new THREE.CylinderGeometry(.16*K,.24*K,2.2*K,6), flat(PAL.trunk));
+  // Canopy tone triple per variant (palette.js TONES): lit = PAL.leaf[variant], shadow = a bridge
+  // dark, so a tree under cloud/canopy shade stays green instead of albedo × hemi grey-brown.
+  const leafTone = [TONES.canopy, TONES.canopyDk, TONES.canopyLt][t.variant] ?? TONES.canopy;
+  const trunk = meshOf(new THREE.CylinderGeometry(.16*K,.24*K,2.2*K,6), toned(TONES.wood));
   trunk.position.y = 1.1*K;
   // Crown is SMOOTH (geometry and shading), unlike the 2018-style faceted original: under the
   // pixel pipeline a flat-shaded icosahedron hands the quantizer one NdotL per facet — 20 flat
@@ -25,9 +28,9 @@ export function makeTree(t){
   // normal-edge pass. Smooth normals put the banding back in the quantizer, which is exactly
   // what makes the scale ball read (test-scene round-3 finding). Trunk/stump stay flat-shaded:
   // thin cylinders read as chunky wood either way.
-  const crown = meshOf(new THREE.SphereGeometry(1.35*K, 32, 20), flat(leaf, {flatShading:false}));
+  const crown = meshOf(new THREE.SphereGeometry(1.35*K, 32, 20), toned(leafTone, {flatShading:false}));
   crown.position.y = 3.0*K; crown.scale.set(1,.85,1);
-  const stump = meshOf(new THREE.CylinderGeometry(.26*K,.3*K,.42*K,6), flat(PAL.stump));
+  const stump = meshOf(new THREE.CylinderGeometry(.26*K,.3*K,.42*K,6), toned(TONES.wood));
   stump.position.y = .21*K; stump.visible = false;
   g.add(trunk, crown, stump);
   g.userData = {stump};

@@ -40,6 +40,7 @@
 // tools/shots/redgiraffe-scene-r1/full.png is, and what the ROUND-LOG's numbers were measured on.
 
 import {PAL} from "../../src/render/palette.js";
+import {SUN_INTENSITY, HEMI_INTENSITY} from "../../src/render/rig.js";
 
 export const SEED_DEFAULT = 3;
 
@@ -109,7 +110,7 @@ export const SUN = {
   azimuthDeg: 0,      // 0 = straight along +X (screen right); positive rotates toward the camera
   elevationDeg: 60,
   color: PAL.sunDay,  // held FIXED so the exposure solve has one unknown, not four
-  intensity: 3.21,    // = S*PI/sin(60 deg), S = 0.885. Paired with HEMI, not free
+  intensity: SUN_INTENSITY,   // rig.js: S*PI/sin(60 deg), S = 0.885. Paired with HEMI, not free
   distance: 240,      // must clear cloudHeight 60: sin(22)*240 = 90 wu up, above the plane
   shadow: {mapSize: 2048, halfSpan: 95, near: 1, far: 520, bias: -0.0006, normalBias: 0.035,
            radius: 8},   // PCF blur (needs PCFShadowMap — PCFSoft ignores radius): the el-22
@@ -128,7 +129,7 @@ export const SUN = {
 // ~42 and lifts p5 toward the reference's 55; the grass-shade sample drifts ~Δ3, accepted.
 // Round 6 (grass calibration): 0.48 -> 0.60. With the meadow bladed, cloud-shade areas measured
 // p25 66 vs the reference's 89 — the shade floor needed the ambient, not the grass, lifted.
-export const HEMI = {skyColor: PAL.skyLight, groundColor: PAL.bounce, intensity: 0.60};
+export const HEMI = {skyColor: PAL.skyLight, groundColor: PAL.bounce, intensity: HEMI_INTENSITY};
 
 // ── terrain ───────────────────────────────────────────────────────────────────────────────────
 // The whole frame is ground: at 55 deg pitch the top of the frame still hits the ground ~79 wu

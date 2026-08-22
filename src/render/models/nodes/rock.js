@@ -1,7 +1,8 @@
 // Owns: the rock model. Contract (scene.js scatter layer): userData.live = [fused body+chip],
 // userData.rubble = hidden remnant. Per-entity yaw comes from scene.js scatterYaw, not from here.
 import * as THREE from "three";
-import {flat, meshOf, bakeStatic} from "../kit.js";
+import {toned, meshOf, bakeStatic} from "../kit.js";
+import {TONES} from "../../palette.js";
 
 // Aug 21 (owner): rocks reworked as SHARP PLANES — the other legal surface type under the pixel
 // pipeline (docs/pixel-models.md): few large flat-shaded faces take one quantizer band each and
@@ -34,19 +35,17 @@ function rockHullGeometry(scale){
   geometry.computeBoundingSphere();
   return geometry;
 }
-// Rock family albedo, LOCAL to the boulders (PAL.rock is the castle's masonry — different job).
-// Cool-biased on purpose: the rig's warm sun (0xfff2d0) + warm hemi drag neutral greys to tan
-// (v3 read as sandstone loaves); the blue bias lands displayed stone on cool grey.
-const ROCK_ALBEDO = 0x7f8b9d, ROCK_ALBEDO_DARK = 0x525a68, ROCK_ALBEDO_RUBBLE = 0x6f7784;
+// Rock family = palette.js TONES.stone / stoneDk (Aug 22): authored lit/shadow swatches replace
+// the old hand-cooled local hexes (0x7f8b9d family) that compensated for the warm rig by eye.
 export function makeRock(){
   const g = new THREE.Group();
-  const body = meshOf(rockHullGeometry(1), flat(ROCK_ALBEDO));
+  const body = meshOf(rockHullGeometry(1), toned(TONES.stone));
   body.rotation.y = .35;
   // Chip sits CLEAR of the body silhouette (v2 tucked it against the face and the dark shape
   // read as a tent door), low and flat so it says "small stone", not "opening".
-  const chip = meshOf(rockHullGeometry(.42), flat(ROCK_ALBEDO_DARK));
+  const chip = meshOf(rockHullGeometry(.42), toned(TONES.stoneDk));
   chip.scale.y = .62; chip.position.set(1.08,0,.62); chip.rotation.y = -1.9;
-  const rubble = meshOf(rockHullGeometry(.6), flat(ROCK_ALBEDO_RUBBLE));
+  const rubble = meshOf(rockHullGeometry(.6), toned(TONES.stoneDk));
   rubble.scale.y = .45; rubble.rotation.y = 2.3; rubble.visible = false;
   g.add(body, chip, rubble);
   g.userData = {rubble};

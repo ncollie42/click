@@ -1890,7 +1890,30 @@ try{
 
   execFileSync(process.execPath,[join(root,"scripts/card-mechanics.test.mjs")],{cwd:root,stdio:"pipe"});
 
-  console.log(`validate ok | syntax ${jsFiles.length} | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level wave threat ${tierOneResult.threat}/${xpResult.waveThreat} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | labels ${showcaseResult.labels}`);
+  // Palette law (src/render/palette.js header): every PAL albedo is one of the 32 SWATCH colours,
+  // so the quantizer (mode 1) never has to guess. Light roles multiply and are exempt. The
+  // off-palette census over src/render/models is informational — per-model inks migrate separately.
+  const paletteResult=await(async()=>{
+    const {PAL,SWATCH,LIGHT_ROLES}=await import(pathToFileURL(join(root,"src/render/palette.js")).href);
+    const swatches=new Set(Object.values(SWATCH));
+    assert.equal(swatches.size,32,"SWATCH must hold exactly 32 distinct colours");
+    for(const [role,value] of Object.entries(PAL)){
+      if(LIGHT_ROLES.has(role))continue;
+      for(const hex of Array.isArray(value)?value:[value])
+        assert.ok(swatches.has(hex),`PAL.${role} ${hex.toString(16)} is not a SWATCH colour`);
+    }
+    let offPalette=0;const perFile=new Map();
+    for(const path of jsFiles){
+      const rel=relative(root,path);
+      if(!rel.startsWith("src/render/models/"))continue;   // where per-model ink lives
+      const hits=(readFileSync(path,"utf8").match(/0x[0-9a-fA-F]{6}\b/g)||[])
+        .map(h=>parseInt(h,16)).filter(h=>!swatches.has(h)&&h!==0xffffff&&h!==0x000000);
+      if(hits.length){offPalette+=hits.length;perFile.set(rel,hits.length);}
+    }
+    return {roles:Object.keys(PAL).length,offPalette,files:perFile.size};
+  })();
+
+  console.log(`validate ok | syntax ${jsFiles.length} | palette ${paletteResult.roles} roles on 32 swatches, ${paletteResult.offPalette} off-palette literals in ${paletteResult.files} model files | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level wave threat ${tierOneResult.threat}/${xpResult.waveThreat} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

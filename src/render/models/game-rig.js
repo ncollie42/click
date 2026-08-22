@@ -2,6 +2,7 @@
 // targets into albedo for it. Interlocked with scene.js's lights — see the rig comment there and
 // memory/docs: change the two together.
 import * as THREE from "three";
+import {SUN_INTENSITY, HEMI_INTENSITY, SUN_ELEVATION_DEG} from "../rig.js";
 import {PAL} from "../palette.js";
 import {isOutline} from "./kit.js";
 
@@ -29,8 +30,8 @@ import {isOutline} from "./kit.js";
 //   displayed_linear = albedo * (sun*I*max(0,N·L) + mix(ground,sky,.5+.5*N.y)*I_hemi) / PI
 // which was verified against the shipped build to the byte: a fog block of authored 0x484253 on
 // its top face predicts (44,39,48) and the render measures (44,40,48).
-const GAME_SUN_DIR = new THREE.Vector3(Math.cos(Math.PI/3), Math.sin(Math.PI/3), 0);
-const GAME_SUN_I = 3.21, GAME_HEMI_I = .6;
+const GAME_SUN_DIR = new THREE.Vector3(Math.cos(SUN_ELEVATION_DEG*Math.PI/180), Math.sin(SUN_ELEVATION_DEG*Math.PI/180), 0);
+const GAME_SUN_I = SUN_INTENSITY, GAME_HEMI_I = HEMI_INTENSITY;   // rig.js — one source
 const _sunLin = new THREE.Color(PAL.sunDay), _skyLin = new THREE.Color(PAL.skyLight), _gndLin = new THREE.Color(PAL.bounce);
 // THE ONE EXPOSURE NUMBER, and the honest limit of this whole exercise.
 // The gauntlet calibrated its cast against a clearing that DISPLAYS at (173,187,127), luma 180.

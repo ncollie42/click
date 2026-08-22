@@ -87,6 +87,8 @@ export const pixelTune = {
   cloudDarken: 0.1,      // image mode only (inert in scene mode)
   cloudHeight: 60,
   cloudBands: 1,         // smooth coverage measured better than posterized
+  cloudMax: 0.8,         // material mode: fraction of the sun a full cloud removes. <1 keeps cloud
+                         // shade a step lighter than canopy/cast shadow (Aug 22)
   cloudOffsetX: 2,       // pans the field in FIELD units (≈1/cloudScale wu each) — composition
   cloudOffsetZ: -2,      // authoring; drift (time) only moves along one fixed diagonal
   // god rays (needs clouds on — the beams ARE the gaps in that same field)
@@ -117,11 +119,18 @@ export const pixelTune = {
   edgeHighlight: 0.75,
   normalThreshold: 0.35, // 0.1 inked every facet seam on curved meshes
   // quantize
-  quantizeMode: 0,       // 0 oklab bands (default) · 1 palette match
+  quantizeMode: 0,       // 0 oklab bands (DEFAULT) · 1 palette match. Aug 22 verdict: palette
+                         // match A/B'd against bands with the v2 swatches and lost — selout ink
+                         // on blade edges quantized to wood2/red3 (brown speckle in every shadow),
+                         // rocks went lavender, the meadow's green0 patches dithered away. Bands
+                         // keeps the palette discipline at AUTHORING (every albedo is a SWATCH)
+                         // and lets lighting modulate it — t3ssel8r's actual method. Mode 1 stays
+                         // as an A/B; palette-snap.mjs still predicts lit landings for authoring.
   bands: 37,             // mode 0 — solved: the quantizer's own floor over the reference samples
                          // is lowest at 37 (round 2)
-  spread: 0.16,          // dither amplitude at band borders (both modes)
-  paletteSize: 16,       // mode 1: which authored PALETTES tier to match against (8/16/32)
+  spread: 0.08,          // dither amplitude at band borders (both modes). .16 → .08 Aug 22: with
+                         // 32 swatches the wider zone read as speckle over the meadow
+  paletteSize: 32,       // mode 1: the one authored tier (palette.js QUANT_PALETTES)
   palette: null,         // set an array of hexes (≤32) to override the authored tiers
 };
 if(typeof window !== "undefined") window.pixelTune = pixelTune;
@@ -149,6 +158,7 @@ export const PANEL_SPEC = {
     ["cloudDarken",    "cloud darken floor", 0, 1, 0.01],
     ["cloudHeight",    "cloud plane wu", 10, 200, 5],
     ["cloudBands",     "cloud bands", 1, 8, 1],
+    ["cloudMax",       "cloud darkness", 0.3, 1, 0.05],
     ["cloudOffsetX",   "cloud offset x", -50, 50, 0.1],
     ["cloudOffsetZ",   "cloud offset z", -50, 50, 0.1],
     "god rays",
@@ -166,7 +176,7 @@ export const PANEL_SPEC = {
   ],
   selects: [
     ["quantizeMode", "quantize", [[0, "oklab bands"], [1, "palette match"]]],
-    ["paletteSize", "palette (m1)", [[8, "8 colors"], [16, "16 colors"], [32, "32 colors"]]],
+    ["paletteSize", "palette (m1)", [[32, "swatches (32)"]]],
     ["cloudsMode", "cloud shade via",
      [["material", "material (smooth)"], ["scene", "shadow plane"], ["image", "image fold"]]],
     ["inkMode", "outline ink", [["selout", "selout (own colour)"], ["uniform", "uniform olive"]]],
@@ -191,6 +201,7 @@ export const PANEL_SPEC = {
     cloudDarken: "Image-fold mode only: multiplier on cloud-shaded pixels (0.72 = 28% darker). Inert in shadow-plane mode, where shade darkness comes from the sun:ambient ratio.",
     cloudHeight: "Cloud plane altitude (wu). Tilts where sun-projected shade lands and shapes the god-ray march.",
     cloudBands: "Posterizes cloud coverage into N levels before dithering. 1 = smooth coverage.",
+    cloudMax: "Material cloud shade: 1 = a full cloud is as dark as a cast shadow; lower keeps some sun under cloud.",
     cloudOffsetX: "Pans the whole cloud field east-west (field units, ≈1/cloud-scale wu each). Composition authoring.",
     cloudOffsetZ: "Pans the whole cloud field north-south. Composition authoring.",
     rayStrength: "God-ray intensity: max fraction lerped toward sun-cream where lit air hangs over shaded ground. Clear sky adds zero.",
@@ -216,7 +227,7 @@ export const PANEL_SPEC = {
   swatches: {
     after: "paletteSize",
     tip: "The authored colours palette-match snaps to. Console-set pixelTune.palette overrides the tiers.",
-    get: t => Array.isArray(t.palette) && t.palette.length ? t.palette : PALETTES[t.paletteSize] || PALETTES[16],
+    get: t => Array.isArray(t.palette) && t.palette.length ? t.palette : PALETTES[t.paletteSize] || PALETTES[32],
   },
 
   // Knobs that are inert under a condition; debug-panel dims the row and appends `why` to the
@@ -680,7 +691,7 @@ function syncUniforms(THREE, renderer, cam, sun){
   // A console-authored pixelTune.palette wins; otherwise paletteSize picks an authored tier.
   const pal = Array.isArray(pixelTune.palette) && pixelTune.palette.length
     ? pixelTune.palette
-    : PALETTES[pixelTune.paletteSize] || PALETTES[16];
+    : PALETTES[pixelTune.paletteSize] || PALETTES[32];
   const key = pal.join(",");
   if(key !== paletteKey){
     paletteKey = key;
