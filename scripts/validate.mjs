@@ -342,15 +342,15 @@ try{
       assert.equal(garrisonCard.ref,"building:garrison","bpGarrison must reference the authored garrison row");
       assert.equal(garrisonCard.implemented,true);assert.equal(garrisonCard.inPool,true,"the garrison is drafted, not granted");
       assert.equal(garrisonCard.requires,undefined,"the garrison build card is ungated");
-      // Not in the opening hand: the starting-kit assertion below pins that hand to the base kit alone.
+      // Not in the opening hand: the starting-kit assertion below pins that hand explicitly.
       // The barracks stays a separate, unbuilt warrior-PRODUCING concept; the garrison never became it.
       const barracks=cards.cardById.bpBarracks;
       assert.equal(barracks.ref,"concept:barracks");assert.equal(barracks.produces,"warriors");
       assert.equal(barracks.implemented,false);assert.equal(barracks.inPool,false);
     }
 
-    // Consumable Forge registry contract. The card is live but remains absent from the opening hand,
-    // which the startup assertion below pins separately.
+    // Consumable Forge registry contract. The card is live and seeded in the opening hand; it also
+    // remains in the finite build pool, so a later base reward may grant one additional copy.
     {
       const forge=data.BUILDING_TYPES.consumableForge,forgeCard=cards.cardById.bpConsumableForge;
       assert.equal(forge.footprint,data.FOOTPRINT_1x1);assert.deepEqual(forge.cost,{wood:5,stone:5});assert.equal(forge.buildSlots,2);assert.equal(forge.instant,undefined);assert.equal(forge.movable,undefined);
@@ -434,12 +434,12 @@ try{
   assert.equal(sim.diamonds.every(node=>node.max===6),true,"world deposits must yield 6 diamonds");
   assert.equal(data.METEOR.rockHp,15,"meteor rocks must keep their independent spell yield");
   // ── the opening ──
-  // A run BOOTS with nothing built and one card. The base is raised from that card, finished by the
+  // A run BOOTS with nothing built and three cards. The base is raised from its card, finished by the
   // ordinary delivery path, and only then does day 1 — and therefore the wave clock — begin. Dealt
   // ONCE (re-initializing the same mode stays idempotent) through the ordinary hand writer.
   {
     const opening=sim.hand();
-    assert.deepEqual(opening.map(entry=>entry.id),["bpMainBase"],"a normal run must open with the main base card alone");
+    assert.deepEqual(opening.map(entry=>entry.id),["bpMainBase","bpConsumableForge","bpHouse"],"a normal run must open with the authored three-card kit");
     assert.equal(opening.every(entry=>entry.count===1&&entry.charges===null),true,"a seeded card must be an ordinary untouched stack");
     assert.equal(opening.every(entry=>cardCatalog.cardById[entry.id].category==="build"),true);
     assert.equal(cardCatalog.cardById.bpMainBase.inPool,false,"the opening card must never be draftable");
@@ -461,7 +461,7 @@ try{
     assert.equal(sim.hoverTarget(),null,"the map centre must expose no base action before the base stands");
     assert.equal(sim.debugDealCard("bpMainBase"),true);
     assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpMainBase")),false,"a second main base must refuse");
-    assert.deepEqual(sim.hand().map(entry=>entry.id),["bpMainBase"],"a refused card must stay in hand");
+    assert.deepEqual(sim.hand().map(entry=>entry.id),["bpConsumableForge","bpHouse","bpMainBase"],"a refused card must stay beside the remaining opening kit");
     assert.equal(sim.buildings.filter(building=>building.type==="mainBase").length,1);
     // Indefinite: no countdown to run out, no wave to schedule, and elapsed run time still moves.
     const beforeElapsed=sim.state.clock.elapsed;
@@ -1982,10 +1982,11 @@ try{
         // 0 · the opening kit, and the debug command that takes it away again. One card opens a run;
         // this block is about the HAND, so the base is stood up (which spends that card) and a
         // drafted-style build is dealt in its place to prove a seeded card and a dealt one behave alike.
-        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpMainBase"],"a normal run must open with the main base card alone");
+        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpMainBase","bpConsumableForge","bpHouse"],"a normal run must open with the authored three-card kit");
         assert.equal(sim.debugRaiseMainBase(),true);drain();
         clearGround();
-        assert.deepEqual(sim.hand().map(entry=>entry.id),[],"standing the base must spend the opening card");
+        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpConsumableForge","bpHouse"],"standing the base must preserve the rest of the opening kit");
+        assert.equal(sim.debugClearHand(),2,"clearing the seeded forge and house must report two cards");
         assert.equal(sim.debugDealCard("bpTower"),true);assert.equal(sim.debugDealCard("bpHouse"),true);
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpTower")),"targeting","a dealt card must play like any other");
         assert.equal(sim.state.buildMode,"tower");assert.equal(sim.cancelBuildMode(),true);

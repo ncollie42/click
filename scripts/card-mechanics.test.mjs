@@ -7,11 +7,11 @@ import * as data from "../src/game/data.js";
 import {cardById,RARITY_WEIGHTS} from "../src/game/cards.js";
 import {buildingFootprint,cellToWorld,footprintCells,worldToCell} from "../src/game/grid.js";
 
-// ── the opening: one card, an untimed pre-wave, and the base that starts day 1 ──
+// ── the opening: three cards, an untimed pre-wave, and the base that starts day 1 ──
 // Also the setup every check below depends on: the rest of this file assumes an ordinary day.
 sim.initializeRunMode("normal");
 {
-  assert.deepEqual(sim.hand().map(entry=>entry.id),["bpMainBase"],"a normal run must open with the main base card alone");
+  assert.deepEqual(sim.hand().map(entry=>entry.id),["bpMainBase","bpConsumableForge","bpHouse"],"a normal run must open with the authored three-card kit");
   assert.equal(sim.state.clock.phase,"pre-wave");assert.equal(sim.state.baseLevel,0);
   assert.equal(sim.buildings.length,0,"the world must boot with nothing built");
   assert.equal(sim.playCard(0),"applied","the opening card places itself — it never arms a ghost");
@@ -20,7 +20,7 @@ sim.initializeRunMode("normal");
   assert.ok(site&&!site.complete,"playing the opening card must leave one unfinished site");
   assert.deepEqual({x:site.x,y:site.y},{x:data.BASE.x,y:data.BASE.y},"the base site must sit on the authored anchor");
   assert.deepEqual(site.cost,{...data.MAIN_BASE.cost},"the site must charge the authored level-1 recipe");
-  assert.deepEqual(sim.hand(),[],"the opening card must leave the hand as its site lands");
+  assert.deepEqual(sim.hand().map(entry=>entry.id),["bpConsumableForge","bpHouse"],"playing the base must preserve the rest of the opening kit");
   // A second copy refuses and stays in hand: the map has one centre.
   assert.equal(sim.debugDealCard("bpMainBase"),true);
   assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpMainBase")),false,"a second main base must refuse");

@@ -222,7 +222,7 @@ export const CARDS=[
    notes:"prototype: matching biome costs 25% less; mismatched biome costs 25% more; biome detection does not exist yet"},
 
   // ── D · builds — the main base ────────────────────────────────────────
-  // The OPENING card, and the only card a run is dealt (STARTING_HAND in simulation.js).
+  // The required OPENING card, dealt beside the forge and house (STARTING_HAND in simulation.js).
   // inPool:false is load-bearing: this is not a menu item, it is the run's start button, and no
   // draft may ever offer it. It asks WHERE nothing — the base's anchor is authored (BASE in
   // data.js) — so playing it drops the one unfinished site on the map centre and refuses a second.

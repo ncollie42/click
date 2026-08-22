@@ -455,11 +455,9 @@ function buildShowcaseFixtures(){
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
 function resetShowcaseEconomy(){state.draft={buffs:{},calmNight:false,dayBonus:0};rewardDraft.reset();state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.baseLevelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();}
 // ── the opening hand ────────────────────────────────────────────────────────
-// ONE card. The run opens with nothing on the map and no clock pressure: the player gathers 10 wood
-// by hand, plays this card to raise the base site, and delivers the wood to it. Completing it ends
-// pre-wave and starts day 1, and the base level it completes is what deals the first draft — so the
-// house and the first tower are now EARNED in the opening rather than handed out with it.
-const STARTING_HAND=["bpMainBase"];
+// Three authored plans. The main base remains the only way to leave pre-wave; the forge and house
+// may be placed before or after it and use the same ordinary card path as drafted copies.
+const STARTING_HAND=["bpMainBase","bpConsumableForge","bpHouse"];
 let startingHandDealt=false;
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
