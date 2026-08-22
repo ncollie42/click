@@ -24,7 +24,7 @@ the trunk is still toppling (~0.6s).
 
 ## 3 · Resource-node gauntlet — 4 rounds, STOPPED per judge protocol
 New models (NOT yet in the game): 4 trees incl. blossom, rock, diamond, chest + 4 depleted
-states. `src/render/models/resource-nodes.js`, viewable in tools/model-viewer.html.
+states. `src/render/models/reviewed/resource-nodes.js`, viewable in tools/model-viewer.html.
 - Hero shots: `tools/shots/gauntlet-nodes-r4/` — start with `before-after.png` and
   `far-30px.png`. Full history: `tools/shots/gauntlet-nodes-r2/ROUND-LOG.md`.
 - Final verdict CLOSE; judge ruled the rest taste-level (your calls, listed in the log):

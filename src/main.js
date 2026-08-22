@@ -16,6 +16,7 @@ import {initInput} from "./input.js";
 import {
   initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, tickPerformance, drainScans
 } from "./debug/view-debugger.js";
+import {initCardSandbox} from "./debug/card-sandbox.js";
 import {initShowcaseUi, updateShowcaseUi} from "./ui/showcase.js";
 import {initBuildVersion} from "./ui/build-version.js";
 
@@ -70,6 +71,9 @@ initInput(surface, {
   uiVisibilityChanged(hidden){document.body.classList.toggle("ui-hidden",hidden);},
 });
 initViewDebugger({resizeView});
+// The card sandbox binds a CAPTURE-phase keydown, so its position in this order is free; after the
+// debugger only because its launcher button lives in the view panel's markup.
+initCardSandbox();
 initBuildVersion();
 // Initialize after adapters bind their authored defaults, so showcase camera/fixtures are the final
 // boot state; normal initialization remains a no-op and leaves production startup untouched.

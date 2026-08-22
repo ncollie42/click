@@ -122,8 +122,11 @@ export const PAL = {
   // ── lighting ───────────────────────────────────────────
   sunDay:     0xfff2d0,
   sunNight:   0x9fb4e8,
-  skyLight:   0xd8e8ff,
-  bounce:     0x6b6350,
+  // Hemi pair ported from the test-scene solve (tools/test-scene/preset.js HEMI, Aug 21):
+  // warm sky, not blue — the pixel pipeline's quantizer re-cools it; a blue hemi double-cools.
+  // Consumers: scene.js hemisphere light + models.js game-rig mirror. Change both rigs together.
+  skyLight:   0xffde82,
+  bounce:     0x6b5a4a,
 };
 /** Hex number -> css string, for the 2D overlay and canvas textures. */
 export const css = n => "#" + n.toString(16).padStart(6,"0");

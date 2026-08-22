@@ -328,7 +328,8 @@ const TINT = {
 // 1b · THE GAME PIPELINE — ADDITIVE. The viewer path above is byte-for-byte untouched.
 // ════════════════════════════════════════════════════════════════════════════
 // The viewer renders UNLIT through ACES @1.18; the game renders NoToneMapping + sRGB through a
-// LIT Lambert (warm sun 0xfff2d0 @1.1 + hemisphere 0xd8e8ff/0x6b6350 @0.5). Nothing about the
+// LIT Lambert (warm sun 0xfff2d0 + hemisphere PAL.skyLight/PAL.bounce — the live rig is
+// mirrored in models.js GAME_SUN_I/GAME_HEMI_I; see there for current values). Nothing about the
 // authored ramp changes here — what changes is the number stored in the colour attribute:
 //
 //   viewer  colour = the SCENE-LINEAR value that ACES turns into the calibrated pixel   (unlit)

@@ -517,6 +517,40 @@
   #draftReroll:disabled{opacity:.45;cursor:default}
   #draftReroll:not(:disabled):hover{background:#241a12;border-color:#a3854e}
 
+  /* ── debug card sandbox ───────────────────────────────────────────────
+     Full-stage like the draft overlay (same layer 10; the two are never open together — the
+     sandbox is a debug bench, the draft a run moment). Card faces reuse the shared .card anatomy
+     at a compact --cw; every affordance the bench adds (stack badge, out-of-pool tag, deal flash)
+     lives on the .csCard wrapper, never inside the face. */
+  #cardSandbox{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
+    background:#0b0810f2;color:#d9c9a3;font-size:11px}
+  #cardSandbox[hidden]{display:none}
+  #csHeader{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:10px 16px;
+    background:#050308;border-bottom:2px solid #6b5a3a}
+  #csHeader h2{margin:0;font-size:15px;letter-spacing:.06em;color:#e8c96a}
+  #csFilter{flex:1;max-width:280px;font:inherit;font-size:11px;padding:5px 8px;
+    background:#0d0910;border:1px solid #6b5a3a;color:#e6d9b8}
+  #csHeader label{display:flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap}
+  #csHeader label input{accent-color:#d4a443}
+  #csHeader button{font:inherit;font-size:11px;padding:5px 12px;background:#0d0910;
+    border:1px solid #6b5a3a;color:#e8c96a;cursor:pointer}
+  #csHeader button:hover{background:#241a12;border-color:#a3854e}
+  #csHint{flex:0 0 auto;margin:0;padding:6px 16px;font-size:10px;color:#9d8c6d}
+  #csGrid{flex:1;min-height:0;overflow-y:auto;padding:4px 16px 20px}
+  .csSection h3{margin:12px 0 6px;font-size:11px;letter-spacing:.08em;color:#bda98a;
+    border-bottom:1px solid #3a3126;padding-bottom:3px}
+  .csRow{display:flex;flex-wrap:wrap;gap:10px}
+  .csCard{--cw:118px;position:relative;cursor:pointer;transition:transform .1s ease}
+  .csCard:hover{transform:translateY(-4px)}
+  .csCard.csOff{opacity:.35;cursor:default}
+  .csCard.csOff:hover{transform:none}
+  .csCard .csStacks{position:absolute;top:-6px;right:-6px;padding:1px 6px;border-radius:9px;
+    background:#d4a443;color:#17120d;font-size:11px;font-weight:bold;pointer-events:none}
+  .csCard .csTag{position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);
+    padding:0 5px;background:#3a3126;color:#9d8c6d;font-size:8px;white-space:nowrap;pointer-events:none}
+  .csCard.dealt{animation:csDealt .35s ease}
+  @keyframes csDealt{30%{transform:translateY(-10px) scale(1.05)}}
+
   @media (prefers-reduced-motion:reduce){
     /* Fades only. The row still assembles itself — its geometry is where a card IS, not an
        approach to it — but nothing travels: the card jumps to its raised position, the picks
@@ -531,6 +565,8 @@
     .pick.rejected{opacity:0}
     #draftOverlay.resolving{transition:none}
     #handHint,#toast{transition:opacity var(--duration-reduced) linear}
+    .csCard,.csCard:hover{transition:none;transform:none}
+    .csCard.dealt{animation:none}
   }
 
   /* Compact-frame placement follows the XP bar into its left-side half-width lane. */

@@ -100,7 +100,9 @@ export const pixelTune = {
                           // opt out scene-side). Lives here so ONE panel owns the look knobs.
   cloudScale: 0.038,     // ~26 wu features
   cloudSpeed: 0.01,
-  cloudCover: 0.38,      // THRESHOLD (lower = more cloud); field mean ~0.45
+  cloudCover: 0.65,      // THRESHOLD (lower = more cloud); field mean ~0.45. Owner call Aug 21:
+                         // only the fbm peaks shade — a cute passing puff now and then, never
+                         // half the map dark (was 0.38, which shaded ~half the meadow).
   cloudDarken: 0.1,      // image mode only (inert in scene mode)
   cloudHeight: 60,
   cloudBands: 1,         // smooth coverage measured better than posterized

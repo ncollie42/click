@@ -51,14 +51,14 @@
         <section class="pane" data-tab="camera">
           <h4>pose</h4>
           <label><span class="row"><span>pitch</span><span id="o_vPitch"></span></span>
-            <input autocomplete="off" type="range" id="vPitch" min="15" max="89" step="1" value="40"></label>
+            <input autocomplete="off" type="range" id="vPitch" min="15" max="89" step="1" value="33"></label>
           <label><span class="row"><span>yaw</span><span id="o_vYaw"></span></span>
             <input autocomplete="off" type="range" id="vYaw" min="-180" max="180" step="45" value="0"></label>
           <label><span class="row"><span>zoom</span><span id="o_vZoom"></span></span>
             <input autocomplete="off" type="range" id="vZoom" min="0.1" max="5" step="0.05" value="0.9"></label>
           <label><span class="row"><span>fov</span><span id="o_vFov"></span></span>
-            <input autocomplete="off" type="range" id="vFov" min="12" max="70" step="1" value="38"></label>
-          <label class="chk"><input autocomplete="off" type="checkbox" id="vOrtho"><span>orthographic</span></label>
+            <input autocomplete="off" type="range" id="vFov" min="8" max="70" step="0.25" value="10.75"></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vOrtho" checked><span>orthographic</span></label>
           <label class="chk"><input autocomplete="off" type="checkbox" id="vOrbit"><span>auto-orbit yaw</span></label>
           <div id="vReadout"></div>
         </section>
@@ -259,6 +259,7 @@
                consumables and builds can be HELD, which is what debugDealCard() deals. -->
           <div class="vSubpane" data-subtab="cards">
           <div class="btnrow">
+            <button id="vOpenCardSandbox" type="button">open card sandbox (c)</button>
             <button id="vClearHand" type="button">clear hand</button>
           </div>
           <div id="vCardDealer"></div>
@@ -398,6 +399,21 @@
       <div id="draftPicks"></div>
       <div id="draftActions"><button id="draftReroll" type="button"></button></div>
       <footer id="draftBar"><p><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> or click · <kbd>←</kbd><kbd>→</kbd> then <kbd>enter</kbd> · <kbd>r</kbd> reroll</p></footer>
+    </section>
+    <!-- Debug card sandbox (C, or view panel > gameplay > cards). Empty grid root on purpose:
+         src/debug/card-sandbox.js builds one REAL card face per registry row from src/game/cards.js,
+         so a card added tomorrow appears here the same day and this markup names none of them. -->
+    <section id="cardSandbox" hidden tabindex="-1" role="dialog" aria-modal="true" aria-label="debug card sandbox" aria-keyshortcuts="C">
+      <header id="csHeader">
+        <h2>card sandbox</h2>
+        <input id="csFilter" type="search" placeholder="filter: id, text, rarity…" autocomplete="off" spellcheck="false">
+        <label><input id="csShowInactive" type="checkbox"><span>show inactive</span></label>
+        <label><input id="csFreeCosts" type="checkbox"><span>free placement</span></label>
+        <button id="csClearHand" type="button">clear hand</button>
+        <button id="csClose" type="button">close (esc)</button>
+      </header>
+      <p id="csHint">click a build or consumable to deal it into the hand and close · <b>shift+click</b> deals and stays open · clicking a buff applies one stack instantly (uncapped) · sorted by rarity; out-of-pool and unimplemented cards hide behind <b>show inactive</b></p>
+      <div id="csGrid"></div>
     </section>
     <div id="pauseBadge" class="off">paused · esc to resume</div>
     <section id="upgradePanel" class="off">

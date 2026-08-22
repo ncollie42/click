@@ -1,7 +1,7 @@
 # The Render Lab — workflow for visual R&D
 
 How a technique goes from "saw it in a video" to "shipped in the game", as practiced Aug 17-19
-2026. This is the renderer-side sibling of docs/gauntlet.md (which owns MODEL quality loops).
+2026. This is the renderer-side sibling of docs/pixel-models.md + the pixel-model skill (which own MODEL quality).
 
 ## The pipeline of a technique
 
@@ -34,7 +34,7 @@ video/repo ─► transcript ─► INSPECT ─► AUDITION ─► VERIFY ─►
 5. **Judge cold and tough.** Fresh agent per round, never the builder, measurements over
    adjectives, reference art is law, verdict + numbered fix list tagged structural/paint/taste.
    Loop on structural, STOP on taste — the owner is the finish line. (Full judging protocol:
-   docs/gauntlet.md.) codex CLI can serve as an extra independent critic on the code itself.
+   docs/pixel-models.md.) codex CLI can serve as an extra independent critic on the code itself.
 6. **Owner gate.** Screenshots + verdicts land in the showcase artifact and the round logs;
    nico picks. Nothing integrates without it (the Aug-18 model integration was itself gated).
 7. **Integrate with contracts.** Keep signatures/userData stable, adapt colours through the

@@ -4,5 +4,7 @@
 
 /node_modules
 /tools/shots
-/.claude
+# Local agent state stays out; the project skills are source (docs/tickets/ depend on them).
+/.claude/*
+!/.claude/skills/
 /tmp.txt

@@ -7,6 +7,10 @@ Quality bar: `docs/quality-bar.md` — blind side-by-side with reference, as goo
 ## Ground rules
 
 - **Flat shading everywhere** (`flatShading:true`), facets visible, three-step lighting feel.
+  **Scoped Aug 21 by `docs/pixel-models.md`** (the pixel-pipeline law): flat shading is for few
+  LARGE planes only; anything meant to read round must be genuinely smooth (normals + segments),
+  because small facets turn to plates + seam ink under the quantizer. Read that file before
+  building any new model.
 - **Palette from `src/render/palette.js` only.** Violet/cyan = the thing and its creatures, never on villager builds or workers.
 - **No skeletal rigs.** Every model is a THREE.Group tree; animation is transforms on named child
   groups (position/rotation/scale). Accessories are separate child meshes with pivots at their strap point.

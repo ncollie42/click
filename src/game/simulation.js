@@ -342,9 +342,9 @@ function terrainMetadata(){return terrainDescriptor;}
 function vegetationMetadata(){return Object.freeze({revision:vegetationRevision,count:grass.length});}
 // ── mineable fog of war ─────────────────────────────────────────────────────
 // The unexplored map is a field of destructible fog blocks, one per fully-on-land placement cell
-// beyond the starting clearing. Blocks are mined like resource nodes (player clicks or idle
-// workers); a cleared cell is gone for the run. `fogByCell` is the identity index every lookup
-// uses; `fogRevision` invalidates the render layer's instanced field.
+// beyond the starting clearing. Blocks are mined like resource nodes (player clicks, or workers
+// posted on a scout hut); a cleared cell is gone for the run. `fogByCell` is the identity index
+// every lookup uses; `fogRevision` invalidates the render layer's instanced field.
 const fog=[],fogByCell=new Map();
 // Pending cascade pops: {cell,at,ring} entries scheduled by a mined-out block, popped when the
 // clock reaches them. cell.popQueued marks membership so a cell is never scheduled twice.
@@ -359,7 +359,6 @@ let fogRevision=0;
 const FOG_KEY_PAD=64,FOG_KEY_STRIDE=2048;
 const fogCellKey=(cx,cy)=>(cy+FOG_KEY_PAD)*FOG_KEY_STRIDE+(cx+FOG_KEY_PAD);
 function fogAtPoint(x,y){const cell=worldToCell(x,y);return fogByCell.get(fogCellKey(cell.cx,cell.cy))||null;}
-function fogHpAtRing(ring){for(const tier of FOG.ringTiers)if(ring<tier.rings)return tier.hp;return FOG.farHp;}
 function buildFogField(){
   fog.length=0;fogByCell.clear();fogPopQueue.length=0;fogRevision++;
   // Fog covers EVERYTHING beyond the clearing — land, coast, open water, and a marginCells-wide
@@ -371,34 +370,9 @@ function buildFogField(){
     // The water tag is presentation truth (blocks sit down at water level) and worker policy truth
     // (the scheduler never sends a walker out onto water to mine). idx is the cell's live position
     // in `fog`, maintained by clearFogCell's swap-remove so clears are O(1).
-    const cell={x,y,cx,cy,idx:fog.length,ring:-1,hp:0,max:0,shake:0,water:terrainAtWorldPoint(x,y)!==LAND,footprint:RESOURCE_FOOTPRINT};
+    // Health is FLAT — FOG.blockHp everywhere (the BFS ring-depth ramp is gone, see data.js).
+    const cell={x,y,cx,cy,idx:fog.length,hp:FOG.blockHp,max:FOG.blockHp,shake:0,water:terrainAtWorldPoint(x,y)!==LAND,footprint:RESOURCE_FOOTPRINT};
     fog.push(cell);fogByCell.set(fogCellKey(cx,cy),cell);
-  }
-  // Health comes from BFS ring depth measured from the STARTING CLEARING only: seeds are cells
-  // bordering a missing cell that lies inside the field rectangle (the clearing), never cells on
-  // the outer apron rim, whose missing neighbours are simply outside the built field.
-  const inField=(cx,cy)=>cx>=minC&&cx<maxCx&&cy>=minC&&cy<maxCy;
-  // 8-connected: rings are Chebyshev bands (squares), so diagonal expansion prices the same as
-  // cardinal — a 4-connected sweep would tax diagonals ~40% extra in Manhattan diamonds.
-  const STEPS=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
-  let frontier=[];
-  for(const cell of fog)for(const [dx,dy] of STEPS){
-    const nx=cell.cx+dx,ny=cell.cy+dy;
-    if(inField(nx,ny)&&!fogByCell.has(fogCellKey(nx,ny))){cell.ring=0;frontier.push(cell);break;}
-  }
-  let ring=0;
-  while(frontier.length){
-    const next=[];
-    ring++;
-    for(const cell of frontier)for(const [dx,dy] of STEPS){
-      const neighbour=fogByCell.get(fogCellKey(cell.cx+dx,cell.cy+dy));
-      if(neighbour&&neighbour.ring<0){neighbour.ring=ring;next.push(neighbour);}
-    }
-    frontier=next;
-  }
-  for(const cell of fog){
-    if(cell.ring<0)cell.ring=ring;   // an unreachable enclave prices as the deepest ring
-    cell.hp=cell.max=cell.water?FOG.waterHp:fogHpAtRing(cell.ring);
   }
   fogPops.length=0;
 }
@@ -420,8 +394,10 @@ const RUN_MODES=new Set(["normal","showcase"]);
 const RESOURCE_KIND_SET=new Set(RESOURCE_KINDS);
 // The closed worker-job vocabulary. `free` is the autonomous idle role workers spawn into;
 // `guard` exists only as a GARRISON posting — reached by dropping a worker onto a station or by the
-// autonomous muster answering a nearby hostile. Dropping a worker on open ground or a house
-// repositions it as free, and no other path in the game mints a guard.
+// autonomous muster answering a nearby hostile. `clearfog` exists only as a SCOUT HUT posting
+// (drop or construction inheritance) — the posted scout mines fog frontier blocks for as long as
+// it holds the post. Dropping a worker on open ground or a house repositions it as free, and no
+// other path in the game mints a guard or a scout.
 const WORKER_JOBS=new Set(["free","build","haul","harvest","staff","guard","clearfog"]);
 let initializedMode=null;
 function invariant(condition,message){if(!condition)throw new Error("simulation invariant: "+message);}
@@ -569,7 +545,6 @@ export function validateSimulationInvariants(){
   fog.forEach((cell,i)=>{
     const center=cellToWorld(cell.cx,cell.cy);
     invariant(cell.idx===i,"fog block idx drifted from its live position");
-    invariant(Number.isInteger(cell.ring)&&cell.ring>=0,"fog block has no BFS ring");
     invariant(cell.x===center.x&&cell.y===center.y,"fog block is not cell aligned");
     invariant(Number.isInteger(cell.hp)&&Number.isInteger(cell.max)&&cell.max>0&&cell.hp>0&&cell.hp<=cell.max,"illegal fog block health");
     invariant(fogByCell.get(fogCellKey(cell.cx,cell.cy))===cell,"fog cell index lost identity");
@@ -613,7 +588,12 @@ export function validateSimulationInvariants(){
     // Health is bounded by the EFFECTIVE maximum — the garrison pool for an arrived guard, the
     // ordinary pool for everyone else, held workers included — so a stale bonus is a hard error.
     invariant(worker.hp>=0&&worker.hp<=workerMaxHp(worker),"illegal worker health");
-    if(worker.taskTarget)invariant(resourceDrops.includes(worker.taskTarget)||trees.includes(worker.taskTarget)||rocks.includes(worker.taskTarget)||diamonds.includes(worker.taskTarget),"worker task target left owned collection");
+    // A scout's task is a fog cell, identity deliberately unasserted — the block it just mined out
+    // stays referenced for one frame until its next update re-targets. Everything else must task an
+    // object still living in an owned collection.
+    if(worker.taskTarget)invariant(worker.job==="clearfog"
+      ?Number.isInteger(worker.taskTarget.cx)&&Number.isInteger(worker.taskTarget.cy)
+      :resourceDrops.includes(worker.taskTarget)||trees.includes(worker.taskTarget)||rocks.includes(worker.taskTarget)||diamonds.includes(worker.taskTarget),"worker task target left owned collection");
     // The closed job vocabulary and explicit assignment provenance. Staff is manual (drop/drag,
     // sticky) OR an autonomous slot claim by the free-worker scheduler; guard is manual OR an
     // autonomous garrison muster; free is autonomous idle carrying no target and no claims.
@@ -629,9 +609,9 @@ export function validateSimulationInvariants(){
     // may mint one without a station. Showcase guards are inert display fixtures, exempt by design.
     if(worker.job==="guard"&&state.runMode==="normal")invariant(isGuardStation(worker.jobTarget),"a guard is not posted to a completed garrison");
     if(worker.job==="free")invariant(worker.autonomous&&worker.jobTarget===null&&worker.taskTarget===null&&worker.selfSupply===null,"free worker retains job state");
-    // Only the scheduler mints fog miners; the target may be a just-cleared cell for one frame
-    // (the miner resolves to free on its next update), so identity is not asserted here.
-    if(worker.job==="clearfog")invariant(worker.autonomous&&worker.jobTarget&&Number.isInteger(worker.jobTarget.cx)&&Number.isInteger(worker.jobTarget.cy),"fog miner has no fog cell");
+    // A production scout is always POSTED: only a completed scout hut mints the job (drop or
+    // construction inheritance). Its fog-cell task is checked with the taskTarget rule above.
+    if(worker.job==="clearfog"&&state.runMode==="normal")invariant(buildings.includes(worker.jobTarget)&&worker.jobTarget.type==="scoutHut","a scout is not posted to a scout hut");
   }
   // Guard occupancy is DERIVED from the workers pointing at each garrison — held workers included —
   // so a reservation can never drift from a stored counter or oversubscribe the authored capacity.
@@ -803,7 +783,11 @@ function executePlayerHit(hit,context={}){
     const kind=assertCombatKind(hit.target),damage=clickDamage()*(critical?CARD_BUFFS.critMultiplier:1);
     if(kind==="damage-dummy")damageDummy(hit.target,damage,"#d25b49",5,{critical});
     else damageEnemy(hit.target,damage,"#d25b49",5,null,{announce:true,critical});
-  }else damageResourceTarget(hit.target,hit.resourceKind,critical);
+  }else{
+    const damage=clickDamage()*(critical?CARD_BUFFS.critMultiplier:1);
+    const drops=TUNE.chopYield+(critical?CARD_BUFFS.critYield*buffStacks("critYield"):0);
+    damageResourceTarget(hit.target,hit.resourceKind,{damage,drops,critical});
+  }
   if(!ctx.quiet){const frequency=hit.kind==="combat"?(critical?820:610):hit.resourceKind==="wood"?350+hit.target.hp*25:hit.resourceKind==="diamond"?760:170+hit.target.hp*15;sound(frequency,.045);}
   if(ctx.depth<MAX_PLAYER_HIT_EFFECT_DEPTH&&ctx.allowChain)resolvePlayerHitChain(hit,ctx);
   const stacks=buffStacks("freeHit");
@@ -906,7 +890,7 @@ function isActiveGarrisonGuard(worker){
  * ordinary worker pool. Every health bar, invariant and heal reads this, never WORKER_HP. */
 function workerMaxHp(worker){return isActiveGarrisonGuard(worker)?GARRISON.maxHp:WORKER_HP;}
 /** THE effective melee damage of a worker, on the same predicate. */
-function workerDamage(worker){return isActiveGarrisonGuard(worker)?GARRISON.damage:WORKER_DAMAGE;}
+function workerDamage(worker){return (isActiveGarrisonGuard(worker)?GARRISON.damage:WORKER_DAMAGE)+CARD_BUFFS.workerCombatDamage*buffStacks("workerCombatDamage");}
 // The ONE writer of the garrison health bonus. Taking the post grants only the MAX-HP DELTA — a
 // 3/5 worker becomes 8/10, never 10/10 — and losing it CLAMPS the pool back under the ordinary
 // maximum rather than subtracting a fixed amount, so a wounded guard is never healed or killed by
@@ -927,6 +911,10 @@ function builtJobAssignment(building){
   // A garrison is a durable post like any other station — its jobSlots ARE the guard slots, so it
   // shares the occupancy, reservation and arrival machinery instead of inventing a parallel one.
   if(building.type==="garrison"){const post=garrisonPost(building);return {job:"guard",jobTarget:building,postX:post.x,postY:post.y};}
+  // The scout hut is a durable post exactly like a camp: its jobSlots ARE the scout posts, so it
+  // shares occupancy/reservation/arrival. A posted worker mines fog frontier blocks (updateFogMiner)
+  // the way a camp staffer works wild nodes — jobTarget is the HUT, taskTarget the claimed block.
+  if(building.type==="scoutHut")return {job:"clearfog",jobTarget:building,postX:building.x,postY:building.y+18};
   // Post-less buildings (house, tower, obelisk, deployables) hold nobody: a worker that lands on one
   // is repositioned free, never converted into a guard standing watch over nothing.
   return {job:"free",jobTarget:null,postX:building.x,postY:building.y+(building.type==="house"?23:18)};
@@ -969,10 +957,13 @@ function cancelHeldObject(){if(!state.heldObject)return;installHeldAtOrigin(stat
 function workerAssignmentAt(worker,x,y){
   if(x<20||y<20||x>W-20||y>H-20)return null;
   const near=predicate=>buildings.find(item=>predicate(item)&&distance(x,y,item.x,item.y)<42);
-  const blueprint=near(item=>!item.complete),node=workerNodeAt(x,y),staff=near(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")),stockpile=near(item=>item.complete&&item.type==="stockpile"),garrison=near(item=>item.complete&&item.type==="garrison"),house=near(item=>item.complete&&item.type==="house");
+  const blueprint=near(item=>!item.complete),node=workerNodeAt(x,y),staff=near(item=>item.complete&&(item.type==="lumber"||item.type==="quarry")),stockpile=near(item=>item.complete&&item.type==="stockpile"),garrison=near(item=>item.complete&&item.type==="garrison"),scoutHut=near(item=>item.complete&&item.type==="scoutHut"),house=near(item=>item.complete&&item.type==="house");
   if(blueprint){const status=workerOccupancyStatus(blueprint,worker);if(status.assigned>=status.capacity)return null;return {job:"build",target:blueprint,postX:blueprint.x,postY:blueprint.y+20,zoneX:blueprint.x,zoneY:blueprint.y,zoneRadius:WORKER_LEASH};}
   if(node){const status=workerOccupancyStatus(node.node,worker);if(status.assigned>=status.capacity)return null;return {job:"harvest",target:node,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};}
   if(staff){const status=workerOccupancyStatus(staff,worker);if(status.assigned>=status.capacity)return null;return {job:"staff",target:staff,postX:staff.x,postY:staff.y+16,zoneX:staff.x,zoneY:staff.y,zoneRadius:BUILDING_TYPES[staff.type].serviceRadius};}
+  // The scout hut is a station: a full one REJECTS the drop like a full camp. The posted worker
+  // becomes a scout — a durable fog miner with no working radius, so the zone ring only marks the post.
+  if(scoutHut){const status=workerOccupancyStatus(scoutHut,worker);if(status.assigned>=status.capacity)return null;return {job:"clearfog",target:scoutHut,postX:scoutHut.x,postY:scoutHut.y+18,zoneX:scoutHut.x,zoneY:scoutHut.y,zoneRadius:WORKER_LEASH};}
   if(stockpile){const status=workerOccupancyStatus(stockpile,worker);if(status.assigned>=status.capacity)return null;return {job:"haul",target:stockpile,postX:stockpile.x,postY:stockpile.y+18,zoneX:stockpile.x,zoneY:stockpile.y,zoneRadius:storageServiceRadius(stockpile)};}
   // The garrison is a station: a full one REJECTS the drop outright (like a full camp or stockpile)
   // rather than quietly leaking the worker onto the ground beside it.
@@ -1017,7 +1008,7 @@ function dropHeldObject(){
   }
   if(held.kind==="worker"){
     const worker=held.object,result=state.mouse.inside&&assignWorker(worker,state.mouse.x,state.mouse.y);
-    if(result){setWorkerStationArrival(worker,null);state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):worker.job==="guard"?"garrison guard":result;toast(result==="free"?"worker moved — free":"worker assigned: "+assignment);}
+    if(result){setWorkerStationArrival(worker,null);state.workers.push(worker);const assignment=worker.job==="haul"?"haul to "+(worker.jobTarget===BASE?"base":"stockpile"):worker.job==="guard"?"garrison guard":worker.job==="clearfog"?"fog scout":result;toast(result==="free"?"worker moved — free":"worker assigned: "+assignment);}
     else{worker.x=held.originX;worker.y=held.originY;state.workers.push(worker);toast("invalid ground — worker returned");}
     state.heldObject=null;sound(260,.06);return true;
   }
@@ -1321,13 +1312,12 @@ function clearGrassInFootprint(x,y,footprint){
 
 // Worker automation enters only the physical resource impact; player work always enters the unified
 // click pipeline above, where crit, chain, Free Hit, and later click effects compose once.
-function hitResource(target,kind,automatic,quiet=false,autoDrops=1){
-  if(automatic)return damageResourceTarget(target,kind,false,true,autoDrops);
+function hitResource(target,kind,automatic,quiet=false,autoDrops=1,autoDamage=1){
+  if(automatic)return damageResourceTarget(target,kind,{damage:autoDamage,drops:autoDrops,automatic:true});
   return executePlayerHit({kind:"resource",target,resourceKind:kind},{quiet});
 }
-function damageResourceTarget(target,kind,critical,automatic=false,autoDrops=1){
-  const drops=automatic?autoDrops:TUNE.chopYield+(critical?1:0);
-  addDamageNumber(target,1,{critical});target.hp--;target.shake=1;
+function damageResourceTarget(target,kind,{damage=1,drops=1,critical=false,automatic=false}={}){
+  addDamageNumber(target,damage,{critical});target.hp-=damage;target.shake=1;
   for(let i=0;i<drops;i++)spawnResource(kind,target.x+rand(-12,12),target.y+rand(-6,7));
   burst(target.x,target.y-12,kind==="wood"?"#9fb351":kind==="diamond"?"#78d7e5":"#bbb7ae",5);
   if(target.hp<=0&&kind==="wood"){
@@ -1493,7 +1483,7 @@ function applyFinishedUpgrade(building){
   const upgrade=upgradeList(job.kind).find(item=>item.id===job.id);if(!upgrade)return false;
   // The rewrite below discards any ward-totem grant; clearing the flag lets syncTowerWard re-grant
   // on the next update instead of silently eating the pool.
-  if(job.kind==="tower"){const tower=building.tower,healthRatio=tower.maxHp?clamp(tower.hp/tower.maxHp,0,1):1;tower.variant=job.id;tower.ward=false;tower.maxHp=upgrade.maxHp;tower.hp=upgrade.maxHp*healthRatio;}
+  if(job.kind==="tower"){const tower=building.tower,healthRatio=tower.maxHp?clamp(tower.hp/tower.maxHp,0,1):1,newMaxHp=towerMaxHp(upgrade);tower.variant=job.id;tower.ward=false;tower.maxHp=newMaxHp;tower.hp=newMaxHp*healthRatio;}
   else building.upgrades[job.id]=true;
   building.activeUpgrade=null;burst(building.x,building.y-25,"#72d4cc",22);toast(upgrade.name+" complete");sound(820,.2);
   return true;
@@ -1616,7 +1606,8 @@ function recallResources(){
 // instant it is PLAYED out of the hand. Buff entries are deliberately empty: their whole effect is
 // the stack tally, layered over the authored numbers by the accessors below.
 const CARD_EFFECTS={
-  clickSpeed(){},critClicks(){},freeHit(){},enemyPickup(){},vacuumRadius(){},workerSpeed(){},workerCarry(){},buildCapacity(){},towerDamage(){},towerSpeed(){},towerRange(){},clickDamage(){},chainLightning(){},deathTree(){},deathExplosion(){},
+  clickSpeed(){},critClicks(){},critYield(){},freeHit(){},enemyPickup(){},vacuumRadius(){},workerSpeed(){},workerResourceDamage(){},workerCombatDamage(){},workerCarry(){},buildCapacity(){},towerDamage(){},towerSpeed(){},towerRange(){},clickDamage(){},chainLightning(){},deathTree(){},deathExplosion(){},
+  towerHp(){for(const building of [...buildings,heldBuilding()])if(building?.tower){building.tower.maxHp+=CARD_BUFFS.towerHp;building.tower.hp+=CARD_BUFFS.towerHp;}},
   handCarry(){state.capacity+=CARD_BUFFS.handCarry;},
   baseHp(){state.baseMax+=CARD_BUFFS.baseHp;state.baseHp+=CARD_BUFFS.baseHp;},
   woodBundle(){state.stored.wood+=CARD_CONSUMABLES.woodBundle;state.basePulse=1;},
@@ -1669,8 +1660,8 @@ function consumeHandCopy(entry){
 }
 // Consumables that ask WHERE. Each names the authored building type whose ghost, footprint and
 // radius ring the existing placement flow already draws — so targeting needs no render work at all.
-// `cast` is the escape hatch for a spell: fireball borrows the blast charge's ghost (its radius IS
-// FIREBALL.radius) and detonates on placement instead of leaving anything behind.
+// `cast` is the escape hatch for a spell: fireball aims with its own target-only row (its
+// effectRadius IS FIREBALL.radius) and detonates on placement instead of leaving anything behind.
 // `site` is the build half of the table (below): the card drops one CONSTRUCTION SITE where a kit
 // drops an authored instant building. A tower variant site combines chassis + variant materials,
 // then produces the named tower in one completion transition.
@@ -1681,7 +1672,7 @@ const TARGETED_CARDS={
   tarKit:{type:"tar"},
   damageOrbs:{type:"damageOrbs"},
   summoningCircle:{type:"summoningCircle"},
-  fireball:{type:"blast",cast:castFireball},
+  fireball:{type:"fireballTarget",cast:castFireball},
   meteor:{type:"meteorTarget",cast:castMeteor},
   // A build card asks WHERE exactly like a kit does — its own authored row names what lands, so the
   // whole set is derived from the registry rather than restated here. "tower:sniper" drops a tower
@@ -1729,9 +1720,11 @@ function castFireball(x,y){
 }
 function fireballImpact(x,y){
   applyAreaDamage({centers:[{x,y}],radius:FIREBALL.radius,damage:FIREBALL.damage,targetType:FIREBALL.damageTargetType,color:"#ef7b3f"});
-  applyShockwave(x,y,{radius:FIREBALL.radius,force:115});
-  for(let i=0;i<64;i++)particles.push({x,y,vx:rand(-240,240),vy:rand(-260,35),life:rand(.35,1),col:i%3?"#ef7b3f":i%2?"#b84b38":"#ffd36a"});
-  addScreenShake(.55);
+  applyShockwave(x,y,{radius:FIREBALL.radius,force:90});
+  // Juice sized to the halved radius: fewer, tighter embers and a lighter kick, so the punch the
+  // player feels matches the ground the blast actually covers (the rings read FIREBALL.radius).
+  for(let i=0;i<40;i++)particles.push({x,y,vx:rand(-150,150),vy:rand(-170,25),life:rand(.35,1),col:i%3?"#ef7b3f":i%2?"#b84b38":"#ffd36a"});
+  addScreenShake(.4);
   toast("fireball impact");sound(52,.38);sound(120,.16);
 }
 /** Arm the placement flow for one held card. The card STAYS in hand while its charges are spent. */
@@ -1788,19 +1781,27 @@ function endCardTargeting(){
 // Every accessor reads the authored value (data.js constant or TUNE knob) and applies this run's
 // stacks on top. Nothing here writes an authored table, so turning the buffs off is just an empty
 // ledger. critHit() short-circuits at zero stacks so an unbuffed run consumes no randomness.
-function chopFillRate(){return (globalUpgradeEnabled("autoClick")?STEADY_HAND_RATE:1)*CARD_BUFFS.clickSpeed**buffStacks("clickSpeed");}
+function chopFillRate(){
+  // The debugger may tune the unbuffed swing below the production floor. Zero stacks must preserve
+  // that authored value rather than make the player slower, so the floor never exceeds chopTime.
+  const minimumSeconds=Math.min(TUNE.chopTime,CARD_BUFFS.clickSpeedMinimumSeconds);
+  const swingSeconds=Math.max(minimumSeconds,TUNE.chopTime-CARD_BUFFS.clickSpeedSeconds*buffStacks("clickSpeed"));
+  return (globalUpgradeEnabled("autoClick")?STEADY_HAND_RATE:1)*TUNE.chopTime/swingSeconds;
+}
 function vacuumRadius(){return TUNE.vacuumRadius+CARD_BUFFS.vacuumRadius*buffStacks("vacuumRadius");}
 function clickDamage(){return TUNE.clickDamage+CARD_BUFFS.clickDamage*buffStacks("clickDamage");}
 function critHit(){const stacks=buffStacks("critClicks");return stacks>0&&Math.random()<CARD_BUFFS.critChance*stacks;}
 function chainLightningJumps(){const stacks=buffStacks("chainLightning");return stacks>0?CARD_BUFFS.chainJumps+stacks-1:0;}
 function chainLightningChance(){const stacks=buffStacks("chainLightning");return stacks>0?CARD_BUFFS.chainChance+CARD_BUFFS.chainChanceStack*(stacks-1):0;}
 function workerSpeed(){return WORKER_SPEED*CARD_BUFFS.workerSpeed**buffStacks("workerSpeed");}
+function workerResourceDamage(){return 1+CARD_BUFFS.workerResourceDamage*buffStacks("workerResourceDamage");}
 function workerCarry(){return WORKER_CARRY+CARD_BUFFS.workerCarry*buffStacks("workerCarry");}
 function towerDamageBuildingBonus(tower){
   const shrine=BUILDING_TYPES.warShrine;
   return buildings.some(building=>building.complete&&building.type==="warShrine"&&distance(tower.x,tower.y,building.x,building.y)<=shrine.effectRadius)?shrine.damageBonus:0;
 }
-function towerDamage(tower,variant=towerVariant(tower)){return Math.ceil(variant.damage*CARD_BUFFS.towerDamage**buffStacks("towerDamage"))+towerDamageBuildingBonus(tower);}
+function towerDamage(tower,variant=towerVariant(tower)){return variant.damage+CARD_BUFFS.towerDamage*buffStacks("towerDamage")+towerDamageBuildingBonus(tower);}
+function towerMaxHp(variant){return variant.maxHp+CARD_BUFFS.towerHp*buffStacks("towerHp");}
 function nearAuraBuilding(tower,type){
   const aura=BUILDING_TYPES[type];
   return buildings.some(building=>building.complete&&building.type===type&&distance(tower.x,tower.y,building.x,building.y)<=aura.effectRadius);
@@ -1833,7 +1834,8 @@ function completeBuilding(building){
   const planned=building.plannedVariant&&TOWER_VARIANTS[building.plannedVariant]?building.plannedVariant:null;
   if(building.type==="tower"){
     const id=planned||"basic",variant=TOWER_VARIANTS[id];
-    building.tower={variant:id,cooldown:0,flash:0,hitFlash:0,hp:variant.maxHp,maxHp:variant.maxHp};
+    const maxHp=towerMaxHp(variant);
+    building.tower={variant:id,cooldown:0,flash:0,hitFlash:0,hp:maxHp,maxHp};
   }
   building.plannedVariant=null;
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
@@ -1849,7 +1851,7 @@ function completeBuilding(building){
   fxGroundThump(building.x,building.y,buildingFootprint(building.type),"#c0a170");
   fxDebris(building.x,building.y-14,"#ead28d",10,{spread:66,lift:135,size:.85});
   sound(300,.11);
-  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
+  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="scoutHut"?"scout hut complete — drop a worker on it to scout the fog":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
   // Completion is the run's only XP moment. Showcase fixtures complete through this same path but
   // must never pollute the sandbox economy (rebuildShowcase asserts xp stays 0 after its reset),
   // and a free-cost debug placement spent nothing, so it earns nothing.
@@ -1938,11 +1940,12 @@ function createHouseWorker(house){
   if(!house.complete||house.type!=="house")return null;
   const postX=house.x,postY=house.y+23;
   // Workers are born FREE: no job, no post loyalty. The scheduler below hands them autonomous work.
+  // Houses are the ONLY worker source — the scout hut is a staffed post, never a spawner.
   return {x:postX+rand(-8,8),y:postY,postX,postY,spawnSource:house,job:"free",jobTarget:null,autonomous:true,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:{wood:0,stone:0,dust:0,coin:0,diamond:0},hp:WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,guardSafeTime:0,garrisonBonus:false};
 }
 function spawnHouseWorker(house){
   const worker=createHouseWorker(house);if(!worker)return;
-  state.workers.push(worker);burst(house.x,house.y+23,"#ead28d",9);sound(720,.12);
+  state.workers.push(worker);burst(worker.postX,worker.postY,"#ead28d",9);sound(720,.12);
 }
 function updateWorkerSpawns(dt){
   for(const house of completeHouses()){
@@ -1959,10 +1962,10 @@ function resourceIsActive(node,kind){if(fogAtPoint(node.x,node.y))return false;r
 function workerCanPickupDrop(drop){return drop.kind!=="dust";}
 function workerLoad(worker){return RESOURCE_KINDS.reduce((total,kind)=>total+worker.carried[kind],0);}
 function clearWorkerTask(worker){
+  // One teardown for every claim kind — drops, and a scout's fog-cell reservation, which rides
+  // taskTarget exactly like a drop claim so no abandonment path (death, lift, flee, reassignment)
+  // can leak it.
   if(worker.taskTarget?.claimedBy===worker)delete worker.taskTarget.claimedBy;worker.taskTarget=null;
-  // A fog miner's reservation lives on its jobTarget cell; every abandonment path (death, lift,
-  // muster, flee, reassignment) runs through here, so the claim can never outlive the job.
-  if(worker.job==="clearfog"&&worker.jobTarget?.claimedBy===worker)delete worker.jobTarget.claimedBy;
 }
 function clearWorkerSelfSupply(worker){clearWorkerTask(worker);worker.selfSupply=null;}
 // ── the free-worker scheduler ───────────────────────────────────────────────
@@ -2026,10 +2029,11 @@ function freeWorkerGatherCandidate(worker,radius){
   }
   return choice;
 }
-// Fog-mining claims mirror drop claims (targetIsClaimed): stale owners self-heal on read.
+// Fog-mining claims mirror drop claims (targetIsClaimed): stale owners self-heal on read. The
+// claim lives on the scout's taskTarget — its jobTarget is the hut it staffs.
 function fogIsClaimed(cell){
   const owner=cell.claimedBy;
-  if(owner&&(!state.workers.includes(owner)||owner.jobTarget!==cell)){delete cell.claimedBy;return false;}
+  if(owner&&(!state.workers.includes(owner)||owner.taskTarget!==cell)){delete cell.claimedBy;return false;}
   return !!owner;
 }
 /** Only frontier blocks are mineable by workers: at least one cardinal neighbour must be revealed
@@ -2088,9 +2092,8 @@ function assignFreeWorkerWithin(worker,radius){
   const gather=freeWorkerGatherCandidate(worker,radius);
   if(gather){worker.job="harvest";worker.jobTarget=gather;worker.autonomous=true;worker.postX=worker.x;worker.postY=worker.y;return true;}
   // Fog is deliberately NOT autonomous work: the scheduler never mints clearfog, so the frontier
-  // only moves when the player pushes it. The clearfog job, its claim machinery and
-  // freeWorkerFogCandidate() stay live for the planned explicit-assignment path (drop a worker on
-  // the frontier), which will decide its own trigger.
+  // moves only when the player pushes it — by hand-mining, or by POSTING a worker on a scout hut
+  // (workerAssignmentAt), whose staffer then works blocks through updateFogMiner.
   return false;
 }
 // ── the garrison muster ─────────────────────────────────────────────────────
@@ -2106,6 +2109,8 @@ function livingHostileWithin(x,y,radius){
  * guards and are not entangled in combat answer the muster. A worker held for dragging is not in
  * state.workers at all, and the explicit check keeps that true even if the roster ever changes. */
 function workerAnswersMuster(worker){
+  // Posted scouts never answer for free: a scout-hut posting is a manual standing order
+  // (autonomous=false), so the existing manual-assignment rule already keeps them on the frontier.
   return worker.autonomous&&worker.job!=="guard"&&!worker.combatTarget&&!worker.retaliationTarget&&!worker.returnAfterCombat&&!worker.fleeing&&heldWorker()!==worker;
 }
 function nearestOpenGarrison(worker){
@@ -2293,7 +2298,7 @@ function updateBuilderSelfSupply(worker,building,dt){
   if(!resourceIsActive(supply.node,supply.kind)){clearWorkerSelfSupply(worker);return true;}
   worker.starved=false;
   if(moveWorker(worker,supply.node.x,supply.node.y,dt,20)&&worker.hitCooldown<=0){
-    worker.hitCooldown=WORKER_HIT_COOLDOWN;const firstNewDrop=resourceDrops.length;hitResource(supply.node,supply.kind,true);
+    worker.hitCooldown=WORKER_HIT_COOLDOWN;const firstNewDrop=resourceDrops.length;hitResource(supply.node,supply.kind,true,false,1,workerResourceDamage());
     const drop=resourceDrops[firstNewDrop];invariant(drop?.kind===supply.kind,"self-supply mining did not create its physical drop");drop.claimedBy=worker;worker.taskTarget=drop;
   }
   return true;
@@ -2665,23 +2670,29 @@ function updateGatherer(worker,dt){
     // drops. This margin over one-strike free harvesting is the whole reason to staff the building.
     const staffed=worker.job==="staff";
     worker.hitCooldown=WORKER_HIT_COOLDOWN*(staffed?STAFF_GATHER.cooldownFactor:1);
-    hitResource(node,kind,true,false,staffed?STAFF_GATHER.yield:1);
+    hitResource(node,kind,true,false,staffed?STAFF_GATHER.yield:1,workerResourceDamage());
     // Exactly one successful strike, then free: the physical drop it just made can now trigger hauling.
     if(worker.job==="harvest"&&worker.autonomous){releaseWorkerToFree(worker);return;}
     if(!resourceIsActive(node,kind)){if(worker.job==="harvest")worker.jobTarget={node:null,kind};else worker.taskTarget=null;}
   }
 }
-/** Autonomous fog mining follows the harvest contract exactly: walk to the block, land ONE strike,
- * resolve to free. A block cleared or claimed away mid-walk resolves to free without striking. */
+/** The scout hut's posted staffer, mirroring the camp gatherer's contract: jobTarget is the HUT
+ * (the durable post), taskTarget the currently claimed fog block. The scout walks to a block,
+ * chips it until it dies, then claims the next nearest frontier block — no radius cap, batch
+ * after batch, until the hut falls or the player pulls the worker off. A block cleared or
+ * claimed away mid-walk simply re-targets; with no frontier left the scout waits at its post. */
 function updateFogMiner(worker,dt){
-  const cell=worker.jobTarget;
-  // Abandon a cell that was cleared, or claimed away while this worker was interrupted (a combat
-  // detour releases the claim through clearWorkerTask); otherwise re-assert the claim and resume.
-  if(!cell||fogByCell.get(fogCellKey(cell.cx,cell.cy))!==cell||(fogIsClaimed(cell)&&cell.claimedBy!==worker)){releaseWorkerToFree(worker);return;}
+  const hut=worker.jobTarget;
+  if(!hut||!buildings.includes(hut)||!hut.complete||hut.type!=="scoutHut"){releaseWorkerToFree(worker);return;}
+  let cell=worker.taskTarget;
+  if(!cell||fogByCell.get(fogCellKey(cell.cx,cell.cy))!==cell||(fogIsClaimed(cell)&&cell.claimedBy!==worker)){
+    cell=freeWorkerFogCandidate(worker,Infinity);
+    worker.taskTarget=cell;
+    if(!cell){moveWorker(worker,worker.postX,worker.postY,dt);return;}
+  }
   cell.claimedBy=worker;
   if(moveWorker(worker,cell.x,cell.y,dt,24)&&worker.hitCooldown<=0){
     worker.hitCooldown=WORKER_HIT_COOLDOWN;hitFog(cell,true);
-    releaseWorkerToFree(worker);
   }
 }
 function updateWorker(worker,dt){
@@ -3229,7 +3240,7 @@ function debugClearEnemies(){
 }
 function debugHealAll(){
   state.baseHp=state.baseMax;
-  for(const building of [...buildings,heldBuilding()]) if(building?.tower){ const variant=towerVariant(building); building.tower.ward=false; building.tower.maxHp=variant.maxHp; building.tower.hp=variant.maxHp; }
+  for(const building of [...buildings,heldBuilding()]) if(building?.tower){ const maxHp=towerMaxHp(towerVariant(building)); building.tower.ward=false; building.tower.maxHp=maxHp; building.tower.hp=maxHp; }
   for(const worker of state.workers) worker.hp=workerMaxHp(worker);
   const held=heldWorker(); if(held) held.hp=workerMaxHp(held);
   toast("healed base, towers and workers"); sound(780,.12);
@@ -3281,7 +3292,15 @@ export function releaseKey(code){ state.keys.delete(code); }
 export function beginCameraPan(x,y){ const camera=state.camera; camera.panning=true; camera.dragX=x; camera.dragY=y; }
 export function endCameraPan(){ state.camera.panning=false; }
 export function dragCameraTo(x,y){ const camera=state.camera; camera.x+=camera.dragX-x; camera.y+=camera.dragY-y; clampCamera(); }
-export function zoomCameraBy(factor){ const camera=state.camera; camera.zoom=clamp(camera.zoom*factor,.1,5); }
+// Debug-tunable zoom bounds (R panel "camera / sun" mutates this holder in place, same pattern
+// as scene.js's `view`). Shipped clamp is [.1, 5]; clamp:false frees the wheel entirely for
+// scale experiments — the .01 floor stays even then, because zoom divides halfW/halfH above and
+// a zero would blow the projection. Presentation-only: nothing in the sim reads these bounds.
+export const ZOOM_LIMITS={min:.1,max:5,clamp:true};
+export function zoomCameraBy(factor){
+  const camera=state.camera, z=camera.zoom*factor;
+  camera.zoom=ZOOM_LIMITS.clamp?clamp(z,ZOOM_LIMITS.min,ZOOM_LIMITS.max):Math.max(.01,z);
+}
 export function setCameraZoom(zoom){ state.camera.zoom=zoom; clampCamera(); }
 /** Showcase UI camera command; section coordinates remain authored in showcase-data.js. */
 export function focusShowcaseSection(id){const section=SHOWCASE_MANIFEST.sections[id];if(state.runMode!=="showcase"||!section)return false;state.camera.x=section.x;state.camera.y=section.y;state.camera.zoom=section.zoom;clampCamera();return true;}

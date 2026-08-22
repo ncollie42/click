@@ -48,7 +48,7 @@ try{
   assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.pool)&&recipe.pool.every(type=>data.ENEMY_TYPES[type])),true);
   assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});assert.equal(data.SKILL_POINT_LEVELS,4);
   assert.deepEqual(Object.values(data.DAMAGE_TARGET_TYPE),["enemies-only","resources-only","enemies-resources","player-resources","all"]);assert.equal(data.DAMAGE_ORBS.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);
-  assert.equal(data.FIREBALL.damage,5);assert.equal(data.FIREBALL.fallTime,.65);assert.equal(Object.isFrozen(data.FIREBALL),true);assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
+  assert.equal(data.FIREBALL.damage,5);assert.equal(data.FIREBALL.fallTime,.65);assert.equal(data.FIREBALL.radius,68,"fireball radius halved Aug 20");assert.equal(data.BUILDING_TYPES.fireballTarget.effectRadius,data.FIREBALL.radius,"the fireball aiming ghost must show the damage radius");assert.equal(data.FOG.blockHp,4,"fog cost is flat 4 across the board");assert.equal(Object.isFrozen(data.FIREBALL),true);assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
   assert.equal(Object.values(data.TOWER_VARIANTS).every(variant=>variant.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every tower must author its damage target type");
   assert.equal([data.BUILDING_TYPES.blast,data.BUILDING_TYPES.spikes,data.BUILDING_TYPES.landmine].every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every damaging deployable must author its target type");
   assert.equal(Object.values(data.ENEMY_TYPES).every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES),true,"every hostile attack must author its target type");assert.equal(data.ENEMY_TYPES.bruteBoss.stompDamageTargetType,data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES);
@@ -288,9 +288,9 @@ try{
     assert.equal(inBand.length,data.CHEST.startingCount);
   }
   sim.initializeRunMode("normal");
-  assert.equal(sim.trees.every(node=>node.max===25),true,"world trees must yield 25 wood");
-  assert.equal(sim.rocks.every(node=>node.max===18),true,"world rocks must yield 18 stone");
-  assert.equal(sim.diamonds.every(node=>node.max===13),true,"world deposits must yield 13 diamonds");
+  assert.equal(sim.trees.every(node=>node.max===12),true,"world trees must yield 12 wood");
+  assert.equal(sim.rocks.every(node=>node.max===9),true,"world rocks must yield 9 stone");
+  assert.equal(sim.diamonds.every(node=>node.max===6),true,"world deposits must yield 6 diamonds");
   assert.equal(data.METEOR.rockHp,15,"meteor rocks must keep their independent spell yield");
   // ── the starting hand ──
   // With the build shop gone a fresh run can only build out of the hand, so normal initialization
@@ -438,19 +438,19 @@ try{
         assert.equal(sim.buffStacks("chainLightning"),2);
         sim.setPointerWorld(a.x,a.y);swing();
         assert.equal(sim.lightningArcs.length,2,"two stacks must yield exactly two jumps");
-        assert.equal(a.hp,2,"the initial swing must land a full x3 crit");
-        assert.equal(tree.hp,2,"the chain must strike the resource node");
-        assert.equal(sim.resourceDrops.filter(d=>d.kind==="wood").length,2,"a chained crit chop must add its bonus drop");
-        assert.equal(b.hp,2,"a chained combat hit must deal full crit damage");
+        assert.equal(a.hp,3,"the initial click must land a full x2 crit");
+        assert.equal(tree.hp,1,"the chained resource crit must deal x2 damage");
+        assert.equal(sim.resourceDrops.filter(d=>d.kind==="wood").length,1,"crit damage must not invent yield without the crit-yield card");
+        assert.equal(b.hp,3,"a chained combat hit must deal full crit damage");
         assert.equal(c.hp,5,"a two-jump chain must not reach the third target");
         // At the 4-stack cap the same swing runs the full chain: tree, B, C, D.
         for(const id of ["chainLightning","chainLightning"])assert.equal(sim.debugApplyBuff(id),true);
-        a.hp=b.hp=c.hp=d.hp=5;
+        a.hp=b.hp=c.hp=d.hp=5;tree.hp=3;tree.stump=0;
         let arcsBefore=sim.lightningArcs.length;swing();
         assert.equal(sim.lightningArcs.length-arcsBefore,4,"four stacks must yield exactly four jumps");
-        assert.equal(b.hp,2);assert.equal(c.hp,2);assert.equal(d.hp,2,"the capped chain must reach the fourth jump");
+        assert.equal(b.hp,3);assert.equal(c.hp,3);assert.equal(d.hp,3,"the capped chain must reach the fourth jump");
         // One stack: a single jump into the tree, nothing further.
-        a.hp=b.hp=c.hp=d.hp=5;sim.state.draft.buffs.chainLightning=1;
+        a.hp=b.hp=c.hp=d.hp=5;tree.hp=3;tree.stump=0;sim.state.draft.buffs.chainLightning=1;
         arcsBefore=sim.lightningArcs.length;swing();
         assert.equal(sim.lightningArcs.length-arcsBefore,1,"one stack must yield exactly one jump");
         assert.equal(b.hp,5,"a one-jump chain must stop at the resource node");
@@ -465,11 +465,18 @@ try{
         assert.equal(a.hp,3);assert.equal(b.hp,3);assert.equal(c.hp,3);assert.equal(d.hp,3);
         assert.equal(tree.hp,treeHp,"the tower chain must never strike resources");
         assert.ok(sim.buildings[0].tower.cooldown>0,"the strike must consume the tower cooldown");
+        const tower=sim.buildings[0].tower,towerHp=tower.hp,baseHp=sim.state.baseHp,baseMax=sim.state.baseMax;
+        assert.equal(sim.debugApplyBuff("towerHp"),true);assert.equal(tower.hp,towerHp+data.CARD_BUFFS.towerHp);assert.equal(tower.maxHp,variant.maxHp+data.CARD_BUFFS.towerHp);
+        assert.equal(sim.debugApplyBuff("baseHp"),true);assert.equal(sim.state.baseHp,baseHp+data.CARD_BUFFS.baseHp);assert.equal(sim.state.baseMax,baseMax+data.CARD_BUFFS.baseHp);
+        assert.equal(sim.debugApplyBuff("towerDamage"),true);assert.equal(sim.debugApplyBuff("towerSpeed"),true);
+        sim.state.enemies.length=0;a.hp=a.max=10;a.status={burn:null,slow:null};sim.state.enemies.push(a);tower.cooldown=0;sim.update(.001);
+        assert.equal(a.hp,10-(variant.damage+data.CARD_BUFFS.towerDamage),"tower damage must be a flat bonus");
+        assert.ok(Math.abs(tower.cooldown-variant.cooldown/data.CARD_BUFFS.towerSpeed)<1e-9,"tower speed must reduce cooldown by 25%");
         sim.validateSimulationInvariants();
         // Arcs are transient run state: they age out on their own and a mode reset clears them.
         for(let i=0;i<30;i++)sim.update(1/60);
         assert.equal(sim.lightningArcs.length,0,"arcs must age out");
-        console.log(JSON.stringify({checks:16,capJumps:4}));
+        console.log(JSON.stringify({checks:24,capJumps:4}));
       }finally{Math.random=oldRandom;}
     `
   }).trim());
@@ -503,11 +510,53 @@ try{
       const sweep=()=>step(31);
       try{
         sim.initializeRunMode("normal");
+        // ── the scout hut: a staffed post whose staffers mine the fog ── (runs FIRST, on the real
+        // fog field, because everything after this block strips the fog for coordinate-free fixtures)
+        {
+          assert.ok(sim.fog.length>0,"the scout scenario needs a standing fog field");
+          assert.equal(sim.fog.every(cell=>cell.hp===data.FOG.blockHp&&cell.max===data.FOG.blockHp),true,"every fog block must cost the same flat hp");
+          const fogBefore=sim.fog.length;
+          const anchor=cellToWorld(134,80);   // ~448px east of the base: inside the clearing, near the frontier
+          const hut=building("scoutHut",anchor.x,anchor.y);sim.buildings.push(hut);
+          assert.equal(data.BUILDING_TYPES.scoutHut.jobSlots,data.SCOUT_HUT_SLOTS);
+          step(5);
+          assert.equal(sim.state.workers.length,0,"a scout hut must never spawn workers — houses are the only source");
+          // Posting: the drop assignment on a completed hut is the scout job, and a full hut refuses.
+          const idle=freeWorker(anchor.x+40,anchor.y);sim.state.workers.push(idle);
+          const posting=sim.workerAssignmentAt(idle,hut.x,hut.y);
+          assert.equal(posting.job,"clearfog","dropping a worker on a scout hut must post it as a scout");
+          assert.equal(posting.target,hut);
+          // Open posts stay open under the sweep: the scheduler may hand the idle worker ordinary
+          // economy work, but never a scout posting.
+          sweep();
+          assert.notEqual(idle.job,"clearfog","the scheduler must never auto-post scouts");
+          assert.equal(sim.workerOccupancyStatus(hut).assigned,0,"an open scout post must survive the sweep unfilled");
+          const scout=worker("clearfog",hut,hut.x,hut.y+18);scout.postX=hut.x;scout.postY=hut.y+18;sim.state.workers.push(scout);
+          const second=worker("clearfog",hut,hut.x,hut.y+18);second.postX=hut.x;second.postY=hut.y+18;sim.state.workers.push(second);
+          assert.equal(sim.workerAssignmentAt(idle,hut.x,hut.y),null,"a full scout hut must reject further postings");
+          assert.equal(sim.workerOccupancyStatus(hut).assigned,data.SCOUT_HUT_SLOTS);
+          step(2);   // arrival at the post, then the first block claim
+          // The posted scouts work the frontier: claimed land blocks, then real clears over time.
+          assert.equal(scout.job,"clearfog");
+          assert.ok(scout.taskTarget&&second.taskTarget,"posted scouts must claim frontier blocks");
+          assert.notEqual(scout.taskTarget,second.taskTarget,"two scouts must never claim one block");
+          assert.equal(scout.taskTarget.water,false,"a scout must never claim a water block");
+          assert.equal(scout.taskTarget.claimedBy,scout,"the scout's block must be reserved on claim");
+          step(30*60);
+          assert.ok(sim.fog.length<fogBefore,"posted scouts must actually clear fog blocks");
+          assert.equal(scout.job,"clearfog","a posted scout keeps its post, batch after batch");
+          assert.equal(scout.jobTarget,hut);
+          // Razing the hut releases its scouts back to free through the ordinary transition.
+          sim.buildings.length=0;step(2);
+          assert.equal(scout.job,"free","a scout whose hut fell must resolve to free");
+          assert.equal(sim.fog.every(cell=>cell.claimedBy===undefined||sim.state.workers.includes(cell.claimedBy)),true);
+          sim.state.workers.length=0;
+        }
         // These scenarios build fixtures at arbitrary coordinates the fog field would otherwise
         // cover; fogged nodes are inactive and fogged cells reject placement, so strip the fog once.
         sim.clearAllFog();
-        assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2],["garrison",3]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);
-        assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{lumber:2,quarry:3,stockpile:2,house:2,rangeBeacon:2,warShrine:2,wardTotem:2,hasteTotem:2,obelisk:3,tower:3,captureYard:3,garrison:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0});
+        assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2],["scoutHut",2],["garrison",3]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);
+        assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{lumber:2,quarry:3,stockpile:2,house:2,scoutHut:2,rangeBeacon:2,warShrine:2,wardTotem:2,hasteTotem:2,obelisk:3,tower:3,captureYard:3,garrison:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0,fireballTarget:0});
         assert.equal(sim.DBG.groundSourcing,true);assert.equal(sim.TUNE.builderSourceRadius,400);
         // Camps and quarries are pure WORK buildings: they grow nothing, ever. Their value is the
         // staffed-gather rate on wild nodes inside serviceRadius (covered by the staffing tests).
@@ -563,8 +612,9 @@ try{
         reset();{const store=building("stockpile",300,300),hauler=freeWorker(320,300),dust=drop("dust",321,300);sim.buildings.push(store);sim.resourceDrops.push(dust,drop("wood",330,300),drop("wood",340,300),drop("stone",350,300));sim.state.workers.push(hauler);sweep();assert.equal(hauler.job,"haul");assert.ok(hauler.taskTarget);assert.notEqual(hauler.taskTarget,dust,"workers must skip loose dust even when it is nearest");step(900);assert.equal(store.storage.wood,2);assert.equal(store.storage.stone,1);assert.equal(store.storage.dust,0);assert.equal(hauler.job,"free","a deposited batch must end the autonomous haul");assert.deepEqual(sim.resourceDrops,[dust],"loose dust must remain for the player");}
         // Manual builders of a post-less building (a tower has no durable job) also resolve to free.
         reset();{const site=building("tower",300,300,false,{wood:1,stone:0}),a=worker("build",site,300,300),b=worker("build",site,301,300);a.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(a,b);step(20);assert.equal(site.complete,true);assert.deepEqual([a.job,b.job],["free","free"],"completing a post-less building must free its builders, not mint guards");}
-        // One autonomous strike: the worker hits once, leaves the physical drop, and is free again.
-        reset();{const tree={x:200,y:200,hp:5,max:5,stump:0,shake:0};sim.trees.push(tree);const gatherer=worker("harvest",{node:tree,kind:"wood"},200,220);gatherer.autonomous=true;gatherer.hitCooldown=0;sim.state.workers.push(gatherer);step();assert.equal(tree.hp,4);assert.equal(sim.resourceDrops.length,1);assert.equal(gatherer.job,"free","autonomous gathering is exactly one strike");}
+	        // One autonomous strike: the worker hits once, leaves the physical drop, and is free again.
+	        reset();{const tree={x:200,y:200,hp:5,max:5,stump:0,shake:0};sim.trees.push(tree);const gatherer=worker("harvest",{node:tree,kind:"wood"},200,220);gatherer.autonomous=true;gatherer.hitCooldown=0;sim.state.workers.push(gatherer);step();assert.equal(tree.hp,4);assert.equal(sim.resourceDrops.length,1);assert.equal(gatherer.job,"free","autonomous gathering is exactly one strike");}
+	        reset();{const priorSeed=seed;assert.equal(sim.debugApplyBuff("workerResourceDamage"),true);const tree={x:200,y:200,hp:5,max:5,stump:0,shake:0};sim.trees.push(tree);const gatherer=worker("harvest",{node:tree,kind:"wood"},200,220);gatherer.autonomous=true;gatherer.hitCooldown=0;sim.state.workers.push(gatherer);step();assert.equal(tree.hp,3,"worker resource damage must gain one flat damage");assert.equal(sim.resourceDrops.length,1,"worker damage must not multiply resource yield");delete sim.state.draft.buffs.workerResourceDamage;seed=priorSeed;}
         // An autonomous gather objective that dies before impact resolves to free with no yield.
         reset();{const tree={x:200,y:200,hp:5,max:5,stump:1,shake:0};sim.trees.push(tree);const gatherer=worker("harvest",{node:tree,kind:"wood"},200,220);gatherer.autonomous=true;gatherer.hitCooldown=0;sim.state.workers.push(gatherer);step();assert.equal(gatherer.job,"free");assert.equal(sim.resourceDrops.length,0,"an invalid node must not produce resources");}
         // Worker death frees the house slot; the replacement spawns free like every newborn.
@@ -580,7 +630,8 @@ try{
         // Fleeing interrupts the objective but never the assignment: claims release, the job survives.
         reset();{const tower=building("tower",120,100),site=building("lumber",300,300,false,{wood:99,stone:0}),builder=worker("build",site,200,100),claimed=drop("wood",202,100);tower.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:10,maxHp:10};builder.autonomous=true;builder.hp=1;builder.carried.dust=1;builder.taskTarget=claimed;builder.retaliationTarget={x:205,y:100};claimed.claimedBy=builder;sim.buildings.push(tower,site);sim.resourceDrops.push(claimed);sim.state.workers.push(builder);sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=210;danger.y=100;const prior={job:builder.job,jobTarget:builder.jobTarget,carried:{...builder.carried}};step();assert.equal(builder.fleeing,true);assert.equal(builder.taskTarget,null);assert.equal(claimed.claimedBy,undefined);assert.equal(builder.job,prior.job);assert.equal(builder.jobTarget,prior.jobTarget);assert.deepEqual(builder.carried,prior.carried);assert.equal(builder.combatTarget,null);assert.equal(builder.retaliationTarget,null);const fledX=builder.x;step(10);assert.ok(builder.x<fledX);danger.x=700;danger.y=700;step(179);assert.equal(builder.fleeing,true);danger.x=builder.x+data.WORKER_LEASH+5;danger.y=builder.y;step();assert.equal(builder.fleeing,true,"danger inside recovery radius must reset safe time without causing fight/flee oscillation");assert.equal(builder.combatTarget,null);danger.x=700;danger.y=700;step(179);assert.equal(builder.fleeing,true);step(2);assert.equal(builder.fleeing,false);assert.equal(builder.job,prior.job);assert.equal(builder.jobTarget,prior.jobTarget);assert.deepEqual(builder.carried,prior.carried);assert.equal(builder.hp,1);}
         reset();{const lowStation=building("garrison",200,100),low=worker("guard",lowStation,200,100);low.hp=1;sim.buildings.push(lowStation);sim.state.workers.push(low);sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=205;danger.y=100;step();assert.equal(low.fleeing,true);sim.setPointerWorld(low.x,low.y);sim.secondaryPress();assert.equal(sim.heldWorker(),low);sim.setPointerWorld(500,500);sim.secondaryRelease();assert.equal(low.fleeing,false);assert.equal(low.fleeSafeTime,0);assert.deepEqual([low.x,low.y],[500,500]);assert.equal(low.job,"free","open ground must REPOSITION the worker as free, never mint a guard");assert.equal(low.jobTarget,null);assert.equal(low.autonomous,true);assert.equal(sim.durablePostStatus(lowStation).assigned,0,"leaving the garrison must release its reserved slot");}
-        reset();{const healthyStation=building("garrison",200,100),healthy=worker("guard",healthyStation,200,100);healthy.hp=sim.TUNE.fleeHpThreshold+1;healthy.attackCooldown=0;sim.buildings.push(healthyStation);sim.state.workers.push(healthy);sim.spawnEnemy("healer");const enemy=sim.state.enemies[0];enemy.x=healthy.x;enemy.y=healthy.y;const hpBefore=enemy.hp;step();assert.equal(healthy.fleeing,false);assert.equal(healthy.combatTarget,enemy);assert.equal(enemy.hp,hpBefore-data.WORKER_DAMAGE);assert.equal(healthy.attackCooldown,data.WORKER_ATTACK_RATE);}
+	        reset();{const healthyStation=building("garrison",200,100),healthy=worker("guard",healthyStation,200,100);healthy.hp=sim.TUNE.fleeHpThreshold+1;healthy.attackCooldown=0;sim.buildings.push(healthyStation);sim.state.workers.push(healthy);sim.spawnEnemy("healer");const enemy=sim.state.enemies[0];enemy.x=healthy.x;enemy.y=healthy.y;const hpBefore=enemy.hp;step();assert.equal(healthy.fleeing,false);assert.equal(healthy.combatTarget,enemy);assert.equal(enemy.hp,hpBefore-data.WORKER_DAMAGE);assert.equal(healthy.attackCooldown,data.WORKER_ATTACK_RATE);}
+	        reset();{const priorSeed=seed;assert.equal(sim.debugApplyBuff("workerCombatDamage"),true);const healthyStation=building("garrison",200,100),healthy=worker("guard",healthyStation,200,100);healthy.hp=sim.TUNE.fleeHpThreshold+1;healthy.attackCooldown=0;sim.buildings.push(healthyStation);sim.state.workers.push(healthy);sim.spawnEnemy("healer");const enemy=sim.state.enemies[0];enemy.x=healthy.x;enemy.y=healthy.y;const hpBefore=enemy.hp;step();assert.equal(enemy.hp,hpBefore-data.WORKER_DAMAGE-data.CARD_BUFFS.workerCombatDamage,"worker combat damage must gain one flat damage");delete sim.state.draft.buffs.workerCombatDamage;seed=priorSeed;}
         // Explicit guards are isolated: never rescheduled, never borrowed, never tidying drops.
         reset();{const site=building("lumber",300,300,false,{wood:99,stone:0}),store=building("stockpile",360,300),tree={x:270,y:300,hp:9,max:9,stump:0,shake:0},loose=drop("wood",312,312),station=building("garrison",310,310),guard=worker("guard",station,310,310);guard.postX=310;guard.postY=310;sim.buildings.push(site,store,station);sim.trees.push(tree);sim.resourceDrops.push(loose);sim.state.workers.push(guard);sweep();assert.equal(guard.job,"guard","an explicit guard must never be given autonomous work");assert.equal(guard.jobTarget,station,"a garrison guard keeps its station through every scheduler sweep");assert.equal(sim.workerOccupancyStatus(site).assigned,0);assert.equal(sim.resourceDrops.includes(loose),true,"guards must not opportunistically collect drops");assert.equal(loose.claimedBy,undefined);assert.equal(guard.carried.wood,0);}
         // Free is not guard: with an enemy inside the old guard leash but NO garrison within the
@@ -1440,7 +1491,8 @@ try{
         while(sim.draftPending()){const offer=sim.draftPending();sim.chooseDraft(Math.max(0,offer.findIndex(id=>!["calmNight","longDay","clickSpeed"].includes(id))));}
         assert.equal(sim.buffStacks("clickSpeed"),2);
         const after=fill();
-        assert.ok(Math.abs(after/before-CARD_BUFFS.clickSpeed**2)<1e-9,"two clickSpeed stacks must compound to 1.2544x");
+        const expectedRate=sim.TUNE.chopTime/Math.max(CARD_BUFFS.clickSpeedMinimumSeconds,sim.TUNE.chopTime-CARD_BUFFS.clickSpeedSeconds*2);
+        assert.ok(Math.abs(after/before-expectedRate)<1e-9,"two clickSpeed stacks must remove 0.4 seconds from swing time");
         assert.equal(sim.vacuumRadius(),baseRadius+CARD_BUFFS.vacuumRadius*sim.buffStacks("vacuumRadius"));
         assert.equal(sim.TUNE.vacuumRadius,45,"a card must never write the authored tuning value");
         while(sim.buffStacks("critClicks")<1&&guard++<1200){
@@ -1452,19 +1504,22 @@ try{
         // yield measurement below only needs at least one.
         assert.ok(sim.buffStacks("critClicks")>=1,"critClicks never appeared in a draft");
         while(sim.draftPending())sim.chooseDraft(0);
-        // Isolate crit yield from randomly drafted secondary-hit effects.
-        delete sim.state.draft.buffs.freeHit;delete sim.state.draft.buffs.chainLightning;
-        Math.random=()=>0;const dropsBefore=sim.resourceDrops.length;
+        // Isolate crit yield from randomly drafted secondary-hit effects and grant exactly one stack
+        // of the separate yield card. Crit Clicks itself changes damage only.
+        delete sim.state.draft.buffs.freeHit;delete sim.state.draft.buffs.chainLightning;delete sim.state.draft.buffs.clickDamage;delete sim.state.draft.buffs.critYield;
+        assert.equal(sim.debugApplyBuff("critYield"),true);
+        Math.random=()=>0;const dropsBefore=sim.resourceDrops.length,hpBeforeCrit=tree.hp;
         sim.setPointerWorld(tree.x,tree.y);sim.primaryPress();sim.update(1);sim.primaryRelease();
         const critDrops=sim.resourceDrops.length-dropsBefore;
-        assert.equal(critDrops,sim.TUNE.chopYield+1,"a resource crit must add exactly one drop");
+        assert.equal(tree.hp,hpBeforeCrit-CARD_BUFFS.critMultiplier,"a resource crit must deal x2 flat damage");
+        assert.equal(critDrops,sim.TUNE.chopYield+CARD_BUFFS.critYield,"the separate crit-yield card must add exactly one drop");
         assert.equal(sim.damageNumbers.at(-1).critical,true,"the critical resource drop disagrees with its damage number");
         sim.validateSimulationInvariants();
         console.log(JSON.stringify({before,after,ratio:after/before,stacks:sim.buffStacks("clickSpeed"),critDrops}));
       }finally{Math.random=old;}
     `
   }).trim());
-  assert.ok(Math.abs(buffResult.ratio-1.2544)<1e-9);
+  assert.ok(Math.abs(buffResult.ratio-5/3)<1e-9);
   // ── the hand ──
   // Drafting, dawn rewards, playing, targeting, partial kits and build placements, all measured in
   // one clean process: a card is only ever an effect once the player plays it.
@@ -1559,7 +1614,7 @@ try{
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="fireball")),"targeting");
         assert.equal(held("fireball").charges,3);
         const anchor=placementAnchor(600,300);
-        near.x=anchor.x;near.y=anchor.y+100;far.x=anchor.x;far.y=anchor.y+200;
+        near.x=anchor.x;near.y=anchor.y+50;far.x=anchor.x;far.y=anchor.y+100;
         const nearRange=sim.distance(anchor.x,anchor.y,near.x,near.y),farRange=sim.distance(anchor.x,anchor.y,far.x,far.y);
         assert.ok(nearRange<=data.FIREBALL.radius&&farRange>data.FIREBALL.radius,"the fireball test targets are not on both sides of the radius");
         const buildingsBefore=sim.buildings.length,nearHp=near.hp,farHp=far.hp;
@@ -1568,7 +1623,7 @@ try{
         assert.equal(near.hp,nearHp,"fireball damage landed on the cast frame");
         assert.equal(far.hp,farHp,"the fireball reached past its radius");
         assert.equal(sim.fallingFireballs.length,1);assert.equal(held("fireball").charges,2);
-        sim.update(data.FIREBALL.fallTime-.05);near.x=anchor.x;near.y=anchor.y+100;far.x=anchor.x;far.y=anchor.y+200;sim.update(.1);
+        sim.update(data.FIREBALL.fallTime-.05);near.x=anchor.x;near.y=anchor.y+50;far.x=anchor.x;far.y=anchor.y+100;sim.update(.1);
         assert.equal(near.hp,nearHp-5,"fireball touchdown did not deal exactly 5 damage");
         assert.equal(far.hp,farHp,"the fireball reached past its radius");assert.equal(sim.fallingFireballs.length,0);
         place(anchor.x,anchor.y);assert.equal(held("fireball").charges,1);
@@ -1610,8 +1665,9 @@ try{
         assert.equal(sniper.complete,true,"the combined cost did not finish the site");
         assert.equal(sniper.tower.variant,"sniper");assert.equal(sniper.plannedVariant,null,"the designation must be spent on completion");
         assert.equal(sniper.activeUpgrade,null,"completion created an unwanted second build");
-        assert.equal(sniper.tower.maxHp,data.TOWER_VARIANTS.sniper.maxHp);
-        assert.equal(sniper.tower.hp,data.TOWER_VARIANTS.sniper.maxHp,"a finished variant tower must be at full hp");
+        const sniperMaxHp=data.TOWER_VARIANTS.sniper.maxHp+data.CARD_BUFFS.towerHp*sim.buffStacks("towerHp");
+        assert.equal(sniper.tower.maxHp,sniperMaxHp);
+        assert.equal(sniper.tower.hp,sniperMaxHp,"a finished variant tower must include the run's tower-hp stacks at full health");
         assert.deepEqual(sim.state.carried,counts(),"the delivery spent exactly the authored costs");
         assert.equal(JSON.stringify(sim.state.stored),storedBeforeBlueprint,"deliveries come from the hand, never from storage");
 

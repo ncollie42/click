@@ -80,11 +80,11 @@ const CATEGORY_LABEL={buff:"buff",consumable:"consumable",aura:"aura",build:"bui
 // point at things that own no icon (buildings) or at nothing built yet (concepts), so those are
 // presentation-only picks made HERE, drawn from the same glyph vocabulary the authored tables use.
 const REF_GLYPHS={
-  "concept:clickCombat":"✊","concept:chopTime":"↻","concept:chopYield":"⛏","concept:crit":"⌖",
+  "concept:clickCombat":"✊","concept:chopTime":"↻","concept:chopYield":"⛏","concept:crit":"⌖","concept:critYield":"◆",
   "concept:chainLightning":"ϟ","concept:freeHit":"✦","concept:enemyPickup":"☝","concept:loadedDrop":"▣","concept:enemySlam":"↓","concept:retaliation":"↩",
-  "concept:workerSpeed":"»","concept:workerCarry":"▣","concept:houseSlots":"⌂","concept:workerHp":"♥",
-  "concept:dawnHeal":"☀","concept:towerDamage":"●","concept:towerSpeed":"↯","concept:towerRange":"◎",
-  "concept:dawnRepair":"▦","concept:baseHp":"⌂","concept:nightGather":"☾","concept:feedXp":"◉",
+  "concept:workerSpeed":"»","concept:workerResourceDamage":"⛏","concept:workerCombatDamage":"⚔","concept:workerCarry":"▣","concept:houseSlots":"⌂","concept:workerHp":"♥",
+  "concept:dawnHeal":"☀","concept:towerDamage":"●","concept:towerSpeed":"↯","concept:towerRange":"◎","concept:towerHp":"♥",
+  "concept:dawnRepair":"▦","concept:baseHp":"⌂","concept:nightGather":"☾","concept:buildXp":"◉",
   "concept:screenClick":"✊","concept:resourceRecall":"⌁","concept:touchOfDeath":"☠","concept:meteor":"●",
   "concept:fireball":"♨","concept:treants":"♣","concept:healBase":"♥","concept:repairTowers":"▦","concept:rushBuild":"↯",
   "concept:bundle":"▣","concept:tempWorker":"☝","concept:calmNight":"☾","concept:longDay":"☀",
@@ -96,6 +96,8 @@ const REF_GLYPHS={
   // their names and costs but no icon, so — like every other building above — the picture is
   // chosen here, out of the same glyph vocabulary the authored tables use.
   "building:house":"⌂","building:lumber":"♣","building:quarry":"⛏","building:stockpile":"▣","building:tower":"⌖",
+  // The scout hut reads as the expedition flag planted at the frontier.
+  "building:scoutHut":"⚑",
   // The capture yard's picture is the three-bay pen read edge-on: distinct from the storage "▣".
   "building:captureYard":"▤",
 };

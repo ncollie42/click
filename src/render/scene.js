@@ -57,7 +57,7 @@ import {
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
   heldWorker, heldEnemy, heldBuilding, heldChest, heldProp, workerLoad,
   vacuumRadius,terrainAtRasterCell,terrainMetadata,terrainRaisedAtCell,vegetationMetadata,
-  clamp, distance, setCameraZoom
+  clamp, distance, setCameraZoom, ZOOM_LIMITS
 } from "../game/simulation.js";
 import {LAND, TERRAIN_CELL_SIZE} from "../game/authored-map.js";
 import {createGrass, grassTune, GRASS_PANEL} from "./grass.js";
@@ -100,9 +100,12 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PAL.sky);
 
-const persp = new THREE.PerspectiveCamera(38, 16/9, 0.5, 600);
+// Constructor values are placeholders: placeCamera() owns fov/near/far every frame.
+const persp = new THREE.PerspectiveCamera(10.75, 16/9, 0.5, 600);
 const ortho = new THREE.OrthographicCamera(-1,1,1,-1,-200,600);
-let camera3 = persp;
+// Ortho by default (owner call Aug 21, after the test-scene A/B): camera3 must agree with
+// view.ortho below, and the index.html vOrtho markup must agree with both (bindV boot-applies it).
+let camera3 = ortho;
 
 // Debug-owned view state. pitch 90 reproduces the original top-down framing.
 // MUTABLE HOLDER, on purpose: the debugger writes view.pitch / view.yaw / … as properties, which an
@@ -112,7 +115,13 @@ let camera3 = persp;
 // simulation's pop records are aged against FOG.popAnimTime, so fogPopTime seeds from it as ms and
 // can only ever COMPRESS the tween: a record is spliced out at age >= FOG.popAnimTime, so a longer
 // visual would be cut mid-curve. syncFogPops() clamps to that ceiling.
-export const view = {pitch:40, yaw:0, fov:38, ortho:false, orbit:false,
+// pitch 33 / fov 10.75: the test-scene camera solve (tools/test-scene/preset.js CAMERA — owner
+// read the reference at "30-ish", settled on 33 Aug 21; near-ortho fov stabilises the sun angle
+// across the frame). placeCamera() compensates dist from fov, so fov changes projection
+// convergence only, never coverage — that is why the fov slider reads as subtle.
+// COUPLING: view-debugger's bindV() applies the index.html slider markup defaults at boot, so
+// vPitch/vFov values there must match these or they silently win.
+export const view = {pitch:33, yaw:0, fov:10.75, ortho:true, orbit:false,
               heightScale:100, ghostPins:false,
               fogHeight:100, fogPopTime:FOG.popAnimTime*1000, fogPopSwell:35};
 
@@ -144,9 +153,12 @@ export function placeCamera(){
   const halfH = VIEW_H/(2*cam.zoom)*S, halfW = halfH*viewAspect;
   ortho.left=-halfW; ortho.right=halfW; ortho.top=halfH; ortho.bottom=-halfH;
   ortho.updateProjectionMatrix();
-  persp.fov = view.fov; persp.updateProjectionMatrix();
-
   const dist = camera3===ortho ? 160 : halfH/Math.tan(THREE.MathUtils.degToRad(view.fov/2));
+  // near/far track dist (test-scene lesson: a fixed 0.5 near over a hundreds-of-wu scene wastes
+  // most of the depth texture, and the pixel pipeline's outline/edge passes read that texture).
+  // Also what makes low fov usable at all: at fov 10.75 zoomed out, dist blows past a fixed far.
+  persp.fov = view.fov; persp.near = dist*.1; persp.far = dist*3;
+  persp.updateProjectionMatrix();
   const h = Math.sin(p)*dist, r = Math.cos(p)*dist;
   camera3.position.set(tx + Math.sin(y)*r, h, tz + Math.cos(y)*r);
   camera3.lookAt(tx, 0, tz);
@@ -224,32 +236,32 @@ export function combatTargetOnScreen(target){
 }
 
 // ─────────────────────────────────────────────────────────── lights
-// Ambient stays low so cast shadows actually read as shadows.
-const sky = new THREE.HemisphereLight(PAL.skyLight, PAL.bounce, 0.5);
+// The whole day rig (hemi pair+intensity, sun az/el/intensity) is the test-scene owner solve
+// ported verbatim (tools/test-scene/preset.js SUN/HEMI, Aug 21): flat-ground sun term
+// S = 3.21·sin(60°)/π = 0.885, warm hemi 0.60. The old rig (sun 1.1 @ az 142/el 54.5, cool hemi
+// 0.5) ran the world ~2.45x darker in up-facing linear luma — models.js GAME_* mirrors this rig
+// and GAME_EXPOSURE was re-scaled by exactly that ratio; change the two files together.
+const sky = new THREE.HemisphereLight(PAL.skyLight, PAL.bounce, 0.6);
 scene.add(sky);
 const sun = new THREE.DirectionalLight(PAL.sunDay, 1.5);
 // The key light's direction as az/el (az 0 = +X/screen-right, positive toward +Z; el up).
-// Defaults DERIVED from the historical hardcoded offset (-26, 46, +20) so the stock look is
-// byte-identical; the R panel's "camera / sun" section mutates this. Day/night still owns
-// intensity/colour — this is direction only.
+// az 0 / el 60 = the test-scene owner default: high sun from screen-right, short skirts.
+// The R panel's "camera / sun" section mutates this. Day/night still owns intensity/colour.
 const SUN_OFFSET_DIST = Math.hypot(26, 46, 20);
 const _sunDirScratch = new THREE.Vector3();
-const sunPose = {
-  az: THREE.MathUtils.radToDeg(Math.atan2(20, -26)),
-  el: THREE.MathUtils.radToDeg(Math.asin(46 / Math.hypot(26, 46, 20))),
-};
+const sunPose = {az: 0, el: 60};
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048,2048);
 // Material-stage light mods (material-light-mods.js): analytic cloud shade + the toon ramp,
 // injected into every Lambert/Toon material each frame in drawScene. The ramp is the round-5
-// audition's shape re-anchored to THIS rig's sun elevation (sin 54.5° = 0.814) — the band
+// audition's shape re-anchored to THIS rig's sun elevation (sin 60° = 0.866) — the band
 // holding flat-ground NdotL carries exactly that value, so un-ramped and ramped flat ground
 // match and the palette work survives. Terrain and fog opt out via userData.noToonRamp.
 initLightMods(THREE, {rampSteps: 32, rampLevels: [
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   // dotNL < 0
   0.22, 0.22, 0.22, 0.22, 0.22,                     // terminator (dotNL 0–0.3125)
   0.55, 0.55, 0.55, 0.55, 0.55,                     // low-mid   (0.3125–0.625)
-  0.814, 0.814, 0.814, 0.814,                       // anchor = sin(54.5°) (0.625–0.875)
+  0.866, 0.866, 0.866, 0.866,                       // anchor = sin(60°) (0.625–0.875)
   1.0, 1.0,                                         // crown (0.875–1)
 ]});
 sun.shadow.camera.near = 1;
@@ -808,8 +820,12 @@ function makeScatterLayer(buildTemplate, variantCount){
   };
   return layer;
 }
-const _sm=new THREE.Matrix4(),_sq=new THREE.Quaternion(),_sv=new THREE.Vector3(),_ssc=new THREE.Vector3(),_axisZ=new THREE.Vector3(0,0,1);
-// classify(e) -> [unitIndex, rotZ, wear, squash]; scale is (wear, wear*heightScale*squash, wear).
+const _sm=new THREE.Matrix4(),_sq=new THREE.Quaternion(),_sqYaw=new THREE.Quaternion(),_sv=new THREE.Vector3(),_ssc=new THREE.Vector3(),_axisZ=new THREE.Vector3(0,0,1),_axisY=new THREE.Vector3(0,1,0);
+// Deterministic per-entity yaw so one scatter template doesn't tile visibly (every rock used to
+// face the same way). Pure function of the sim position — stable across rebuilds and states, so
+// a boulder doesn't snap around when it starts crumbling.
+const scatterYaw=e=>{const h=Math.sin(e.x*12.9898+e.y*78.233)*43758.5453;return (h-Math.floor(h))*Math.PI*2;};
+// classify(e) -> [unitIndex, rotZ, wear, squash, yaw]; scale is (wear, wear*heightScale*squash, wear).
 // `squash` defaults to 1 and scales HEIGHT ONLY, so an impact thump or a collapsing node can flatten
 // toward the ground without its footprint shrinking with it.
 function syncScatter(layer, list, classify){
@@ -817,10 +833,12 @@ function syncScatter(layer, list, classify){
   for(const u of layer.units){ u.mesh.count = 0; u.mesh.userData.entities.length = 0; }
   const hs = view.heightScale/100;
   for(const e of list){
-    const [unit, rotZ, wear, squash = 1] = classify(e);
+    const [unit, rotZ, wear, squash = 1, yaw = 0] = classify(e);
     const u = layer.units[unit], i = u.mesh.count++;
     u.mesh.userData.entities[i] = e;
     _sq.setFromAxisAngle(_axisZ, rotZ);
+    // yaw first, collapse-lean second, so a crumble still tips in a WORLD direction.
+    if(yaw){ _sqYaw.setFromAxisAngle(_axisY, yaw); _sq.multiply(_sqYaw); }
     _sv.set(gx(e.x), terrainLiftAt(e.x,e.y), gz(e.y));
     _ssc.set(wear, wear*hs*squash, wear);
     _sm.compose(_sv, _sq, _ssc);
@@ -858,10 +876,10 @@ const syncRocks = list => syncScatter(rockLayer, list, r => {
     // The crumble: the live boulder settles into the ground and spreads as it goes, so the rubble
     // it becomes appears to be what is left of it rather than a swapped-in prop.
     const p = 1-r.collapse;
-    return [0, shakeOf(r) + .22*p*collapseDir(r), (.8 + .38*p)*meteor, Math.max(.06, 1-p*p)];
+    return [0, shakeOf(r) + .22*p*collapseDir(r), (.8 + .38*p)*meteor, Math.max(.06, 1-p*p), scatterYaw(r)];
   }
-  return spent ? [1, 0, meteor]
-               : [0, shakeOf(r), (.8 + .2*(r.hp/r.max))*meteor*hitBulgeOf(r), hitSquashOf(r)];
+  return spent ? [1, 0, meteor, 1, scatterYaw(r)]
+               : [0, shakeOf(r), (.8 + .2*(r.hp/r.max))*meteor*hitBulgeOf(r), hitSquashOf(r), scatterYaw(r)];
 });
 const syncDiamonds = makeLayer(makeDiamond, (g,n)=>{
   setXZ(g,n);
@@ -924,10 +942,14 @@ const syncDrops = makeLayer(e=>makeDrop(e.kind), (g,r)=>{
 // the placement grid (full-cell footprint), with hashed height variance so the field reads as
 // carved slabs rather than a flat wall; wear squashes a block toward the ground as it is mined.
 const FOG_BLOCK_H=2.5;
-const FOG_SHADES=[new THREE.Color(0x524c5e),new THREE.Color(0x5a5468),new THREE.Color(0x484253)];
+// Shades are ALBEDO under the live light rig. Aug 21 rig re-solve (×2.45 up-facing luma — see
+// the lights comment above): these are the original owner-picked hexes (52 4c 5e / 5a 54 68 /
+// 48 42 53, water 49 48 5e / 50 4f 68 / 41 40 53) divided by 2.45 in linear, so the fog DISPLAYS
+// byte-near-identical to the pre-relight build and keeps receding instead of riding the new sun.
+const FOG_SHADES=[new THREE.Color(0x34303c),new THREE.Color(0x3a3543),new THREE.Color(0x2d2935)];
 // Blocks standing in open water shade cooler and sit down at the water surface, so the fog field
 // reads as one sheet draped over an unknown silhouette rather than floating slabs.
-const FOG_WATER_SHADES=[new THREE.Color(0x49485e),new THREE.Color(0x504f68),new THREE.Color(0x414053)];
+const FOG_WATER_SHADES=[new THREE.Color(0x2e2d3c),new THREE.Color(0x333243),new THREE.Color(0x282835)];
 const fogGeo=new THREE.BoxGeometry(CELL*S,1,CELL*S);fogGeo.translate(0,.5,0);
 const fogMat=new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true});
 // Fog is a gameplay surface a third of the screen wide — banding it is a look decision the owner
@@ -1752,6 +1774,32 @@ function syncHand(){
   }
 }
 
+// ─────────────────────────────────────────────────────────── scale-reference balls
+// The test scene's red dome pair (tools/test-scene/preset.js OBJECTS "red"/"red-1x1": sink 0.46
+// of the diameter, albedo 0xc84d3f — solved for the rig the game now runs), parked at the
+// castle's east edge for size/shading comparison. Sized on the PLACEMENT GRID: 1 cell = 2 wu,
+// big ball 3x3 cells (r 3), small ball 1x1 (r 1). R panel "camera / sun" → "scale ball" toggles
+// both; built lazily so a normal session never pays for it. SMOOTH spheres on purpose: faceting
+// re-inks every quad seam under the pixel pipeline's normal-edge pass (test-scene round-3
+// finding). Debug-only — never referenced by the simulation.
+let scaleBall = null;
+function setScaleBall(on){
+  if(on && !scaleBall){
+    scaleBall = new THREE.Group();
+    const mat = new THREE.MeshLambertMaterial({color: 0xc84d3f});
+    // [radius wu, east offset from castle center in game px]: big ball parked against the
+    // castle, small one just past it. Ground seat matches the buildings' plane (FLOOR_TOP).
+    for(const [r, off] of [[3, 45 + BASE.r], [1, 45 + BASE.r + 70]]){
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(r, 48, 32), mat);
+      ball.castShadow = ball.receiveShadow = true;
+      ball.position.set(gx(BASE.x + off), FLOOR_TOP + r*(1 - 2*.46), gz(BASE.y));
+      scaleBall.add(ball);
+    }
+    scene.add(scaleBall);
+  }
+  if(scaleBall) scaleBall.visible = on;
+}
+
 // ─────────────────────────────────────────────────────────── the base pile
 // state.stored is just counts (storeAtBase credits it, builders withdraw), and the design rule is
 // that resources stay PHYSICAL: the banked stock is shown as an actual pile at the base's south
@@ -2416,7 +2464,7 @@ export function drawScene(){
   const cam = state.camera;
   {
     // Sun offset from the camera target, az/el-parameterised (R panel "camera / sun" drives
-    // sunPose). Defaults reproduce the historical fixed offset (-26, 46, +20) exactly.
+    // sunPose; defaults az 0 / el 60, the test-scene owner solve).
     const saz = THREE.MathUtils.degToRad(sunPose.az), sel = THREE.MathUtils.degToRad(sunPose.el);
     const h = Math.cos(sel) * SUN_OFFSET_DIST;
     sun.position.set(gx(cam.x) + Math.cos(saz)*h, Math.sin(sel)*SUN_OFFSET_DIST, gz(cam.y) + Math.sin(saz)*h);
@@ -2424,8 +2472,11 @@ export function drawScene(){
   sun.target.position.set(gx(cam.x), 0, gz(cam.y));
   sun.target.updateMatrixWorld();
   // Night dims and cools the key light; day/night already lives in state.clock.
+  // Noon 3.21 = the test-scene exposure solve (S·π/sin 60°, S = 0.885 — see the rig comment at
+  // the lights above). The night endpoint stays the OLD rig's 0.35 (1.1 − .75), byte-identical:
+  // night readability was tuned against it and the unlit night materials assume it.
   const night = state.clock.light;
-  sun.intensity = 1.1 - night*.75;
+  sun.intensity = 3.21 - night*2.86;
   sun.color.setHex(night>.25 ? PAL.sunNight : PAL.sunDay);
   // The water shader ignores scene lights, so it tracks the night dim explicitly.
   waterUniforms.uLight.value = 1 - night*.6;
@@ -2525,10 +2576,11 @@ configurePipelines({
   poseControls: {
     sliders: [
       ["pitch", "pitch", 15, 89, 1], ["yaw", "yaw", -180, 180, 1],
-      ["zoom", "zoom", 0.1, 5, 0.05], ["fov", "fov", 12, 70, 1],
+      ["zoom", "zoom", 0.1, 5, 0.05], ["fov", "fov", 8, 70, 0.25],
+      ["zoomMin", "zoom clamp min", 0.02, 1, 0.01], ["zoomMax", "zoom clamp max", 1, 20, 0.5],
       ["sunAz", "sun azimuth", -180, 180, 1], ["sunEl", "sun elevation", 10, 85, 1],
     ],
-    checks: [["ortho", "orthographic"]],
+    checks: [["ortho", "orthographic"], ["ball", "scale ball"], ["zoomClamp", "clamp zoom"]],
     buttons: [["iso", "isometric"]],
     get(k){
       switch(k){
@@ -2537,6 +2589,10 @@ configurePipelines({
         case "zoom": return state.camera.zoom;
         case "fov": return view.fov;
         case "ortho": return view.ortho;
+        case "ball": return !!(scaleBall && scaleBall.visible);
+        case "zoomMin": return ZOOM_LIMITS.min;
+        case "zoomMax": return ZOOM_LIMITS.max;
+        case "zoomClamp": return ZOOM_LIMITS.clamp;
         case "sunAz": return sunPose.az;
         case "sunEl": return sunPose.el;
       }
@@ -2548,6 +2604,10 @@ configurePipelines({
         case "zoom": setCameraZoom(v); break;
         case "fov": view.fov = v; break;
         case "ortho": setOrthoCamera(v); break;
+        case "ball": setScaleBall(v); return;
+        case "zoomMin": ZOOM_LIMITS.min = v; return;   // read on the next wheel tick
+        case "zoomMax": ZOOM_LIMITS.max = v; return;
+        case "zoomClamp": ZOOM_LIMITS.clamp = v; return;
         case "sunAz": sunPose.az = v; return;   // sun is placed per frame in drawScene
         case "sunEl": sunPose.el = v; return;
       }

@@ -406,7 +406,7 @@ function rampCol(R, yaw, nx, ny, nz, jitter) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 3 · THE INK LINE  (ported from src/render/models/resource-nodes.js, § THE INK LINE)
+// 3 · THE INK LINE  (ported from src/render/models/reviewed/resource-nodes.js, § THE INK LINE)
 //
 // The reference world draws a dark line around every shape and this asset had none — the judge's
 // single biggest register note. The implementation below is NOT new work: it is the sibling

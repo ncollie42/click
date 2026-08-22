@@ -536,8 +536,8 @@ function drawClickRipples(){
 }
 
 // ── coin beacon ─────────────────────────────────────────────────────────────
-// Timed drops (the wandering gold coin) get a pulsing ground ring and a soft rising beam so the
-// toast is no longer their only announcement. The scene's TTL blink still owns despawn urgency.
+// Timed drops (the wandering gold coin) get a soft rising beam so the toast is not their only
+// announcement. The scene's TTL blink still owns despawn urgency.
 function drawCoinBeacons(){
   const t = performance.now()/1000;
   for(const drop of resourceDrops){
@@ -551,9 +551,6 @@ function drawCoinBeacons(){
     beam.addColorStop(0,"rgba(227,180,69,0)");
     beam.addColorStop(1,"rgba(227,180,69,"+(.34*fade).toFixed(3)+")");
     ctx.fillStyle = beam;ctx.fillRect(p.x-beamW/2, p.y-beamH, beamW, beamH);
-    ctx.beginPath();ctx.arc(p.x, p.y, (9+4*pulse)*k, 0, Math.PI*2);
-    ctx.strokeStyle = "rgba(227,180,69,"+((.30+.35*pulse)*fade).toFixed(3)+")";
-    ctx.lineWidth = 2*k;ctx.stroke();
   }
 }
 

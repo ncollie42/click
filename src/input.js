@@ -10,7 +10,7 @@ import {
   offsetCamera, clampCamera,
   togglePause, cancelBuildMode, closeUpgradeMenu, closeSkillTree
 } from "./game/simulation.js";
-import {placeCamera, groundFromEvent} from "./render/scene.js";
+import {placeCamera, groundFromEvent, view} from "./render/scene.js";
 import {addClickRipple} from "./render/overlay.js";
 import {modalOpen, toggleMute} from "./ui/hud.js";
 
@@ -32,6 +32,35 @@ function pointerPosition(event){
   setPointerWorld(g.x,g.y);
 }
 
+// ── orbit (shift+left-drag) ─────────────────────────────────────────────────
+// The test scene's camera feel (tools/test-scene/camera-controls.js) ported behind SHIFT, because
+// a bare left press is gameplay (gather/build). Yaw is free while dragging; release glides to the
+// nearest 45° compass detent — same law as the view debugger's yaw slider. Pitch drags too,
+// clamped to the debugger's 15–89 range. view.* is the debug-owned pose holder scene.js exports;
+// drawScene re-places the camera from it every frame, so handlers only need HOOKS.cameraChanged
+// to keep the debugger readouts honest (the same contract the middle-drag pan uses).
+const ORBIT_RATE = .25, YAW_DETENT = 45, YAW_TWEEN_MS = 220;
+let orbitDrag = null;   // {x, y} last pointer position while shift-dragging
+let yawTweenId = 0;
+function tweenYawTo(target){
+  cancelAnimationFrame(yawTweenId); yawTweenId = 0;
+  const from = view.yaw, delta = ((target - from + 540) % 360) - 180;
+  if(Math.abs(delta) < .5){ view.yaw = (target + 360) % 360; return; }
+  const t0 = performance.now();
+  const step = now => {
+    const k = Math.min((now - t0) / YAW_TWEEN_MS, 1);
+    view.yaw = (from + delta * (1 - Math.pow(1 - k, 3)) + 360) % 360;
+    placeCamera(); HOOKS.cameraChanged();
+    if(k < 1) yawTweenId = requestAnimationFrame(step); else yawTweenId = 0;
+  };
+  yawTweenId = requestAnimationFrame(step);
+}
+function endOrbit(snap){
+  if(!orbitDrag) return;
+  orbitDrag = null;
+  if(snap) tweenYawTo(Math.round(view.yaw / YAW_DETENT) * YAW_DETENT % 360);
+}
+
 // ── handlers ────────────────────────────────────────────────────────────────
 // Named rather than inline so the registration list below reads as a table.
 
@@ -47,6 +76,14 @@ function onWheel(event){
   clampCamera();placeCamera();pointerPosition(event);HOOKS.cameraChanged();
 }
 function onPointerMove(event){
+  if(orbitDrag){
+    const dx = event.clientX - orbitDrag.x, dy = event.clientY - orbitDrag.y;
+    orbitDrag.x = event.clientX; orbitDrag.y = event.clientY;
+    view.yaw = (view.yaw - dx * ORBIT_RATE + 360) % 360;
+    view.pitch = Math.max(15, Math.min(89, view.pitch + dy * ORBIT_RATE));
+    placeCamera(); HOOKS.cameraChanged();
+    return;
+  }
   if(state.camera.panning){
     // Drag keeps the grabbed ground point pinned under the cursor.
     const g=groundFromEvent(event);
@@ -63,6 +100,15 @@ function onPreventDefault(event){ event.preventDefault(); }
 function onPointerDown(event){
   pointerPosition(event);
   if(event.button===1){event.preventDefault();const g=groundFromEvent(event);beginCameraPan(g?g.x:state.camera.x,g?g.y:state.camera.y);surface.setPointerCapture(event.pointerId);return;}
+  // Shift+left claims the press for orbiting before any guard, same priority rule as the middle
+  // pan above — the camera stays drivable while paused or over the upgrade panel.
+  if(event.button===0&&event.shiftKey){
+    event.preventDefault();
+    cancelAnimationFrame(yawTweenId); yawTweenId=0;
+    orbitDrag={x:event.clientX,y:event.clientY};
+    surface.setPointerCapture(event.pointerId);
+    return;
+  }
   if(state.gameOver||state.paused||modalOpen())return;
   // Presentation-only press mark: every primary press on the world gets a same-frame ripple at the
   // cursor, whether or not the press resolves to an action — empty ground included.
@@ -71,8 +117,8 @@ function onPointerDown(event){
   if(event.button===2)secondaryPress();
 }
 // Window-level release prevents collection or camera drag getting stuck outside the canvas.
-function onPointerUp(event){if(event.button===0)primaryRelease();if(event.button===2)secondaryRelease();if(event.button===1)endCameraPan();}
-function onPointerCancel(){ pointerCancelled(); }
+function onPointerUp(event){if(event.button===0&&orbitDrag){endOrbit(true);return;}if(event.button===0)primaryRelease();if(event.button===2)secondaryRelease();if(event.button===1)endCameraPan();}
+function onPointerCancel(){ endOrbit(false); pointerCancelled(); }
 function onBlur(){ windowBlurred();HOOKS.uiVisibilityChanged(false); }
 function onKeyDown(event){
   // Hold-to-hide is presentation-only. It precedes modal guards so screenshots can hide any UI,

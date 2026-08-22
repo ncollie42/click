@@ -59,7 +59,9 @@ BASE.footprint=FOOTPRINT_3x3;
 
 // ── resources ───────────────────────────────────────────────────────────────
 // Standard node health is also total yield: every hit removes one HP and creates one resource.
-export const RESOURCE_NODE_HP=Object.freeze({wood:25,stone:18,diamond:13});
+// Owner halving Aug 20 (was 25/18/13): nodes deplete twice as fast, so expansion — new groves,
+// new rockfields, fog frontier — is forced instead of optional.
+export const RESOURCE_NODE_HP=Object.freeze({wood:12,stone:9,diamond:6});
 // Mineable fog of war: every cell beyond clearRadius of the base — land, coast and open water —
 // starts under a destructible fog block.
 // Mining a block to death also pops its neighbourhood, staggered popDelay seconds per cell of
@@ -68,16 +70,14 @@ export const RESOURCE_NODE_HP=Object.freeze({wood:25,stone:18,diamond:13});
 // expected to grow popRadius later. marginCells extends the field that far beyond every world
 // edge (over open water) so no bare ground or sea shows at the rim; must stay under 64 (see
 // fogCellKey's padding).
-// Block health is keyed to BFS ring depth from the starting clearing (cells per ring band), not
-// raw radius, so the ramp feels identical in every direction on the wide map; open water is a
-// flat premium instead — shoreline water still falls to land-side cascades for free, but
-// hand-carving into deep sea is deliberately expensive.
+// Block health is FLAT (owner call Aug 20): every block — near, far, land, water — costs blockHp
+// hits. The BFS ring-depth ramp and the open-water premium are gone; distance pricing now lives
+// entirely in walk time, and depth pacing can return as a buff lever if flat proves too cheap.
 // popAnimTime: seconds a cleared block spends on its inflate-then-collapse death tween.
 // loot: independent roll per cleared LAND block — a rare buried chest (falls back to a coin when
 // the revealed cell is blocked), else maybe a coin or dust. Cascade pops roll too; that slot-pull
 // is the point.
-export const FOG=Object.freeze({clearRadius:560,marginCells:24,
-  ringTiers:Object.freeze([Object.freeze({rings:12,hp:1}),Object.freeze({rings:30,hp:2}),Object.freeze({rings:55,hp:4})]),farHp:6,waterHp:8,
+export const FOG=Object.freeze({clearRadius:560,marginCells:24,blockHp:4,
   popRadius:2,popEdgeChance:.55,popDelay:.07,popAnimTime:.22,
   loot:Object.freeze({chestChance:.003,coinChance:.05,dustChance:.015})});
 // Canonical kind order. Every per-kind record (carried, stored, storage, delivered,
@@ -121,7 +121,7 @@ export const DAMAGE_TARGET_TYPE=Object.freeze({
 // ids, rarities, texts and stack limits but none of the arithmetic. Read only by simulation.js;
 // no runtime path may assign into these tables — a taken card tallies a stack in run state and
 // the accessors layer these numbers over the authored values at read time.
-export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.12,workerCarry:1,buildCapacity:1,towerDamage:1.1,towerSpeed:1.1,towerRange:50,baseHp:5,clickDamage:1,
+export const CARD_BUFFS={clickSpeedSeconds:.2,clickSpeedMinimumSeconds:.1,critChance:.1,critMultiplier:2,critYield:1,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.25,workerResourceDamage:1,workerCombatDamage:1,workerCarry:1,buildCapacity:1,towerDamage:1,towerSpeed:1.25,towerRange:50,towerHp:5,baseHp:25,clickDamage:1,
   deathTreeChance:.25,deathExplosionDamage:3,deathExplosionRadius:64,deathExplosionTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,
   // Chain lightning scales BOTH dials per stack: stack N procs a completed player swing at
   // chainChance+(N-1)*chainChanceStack and throws chainJumps+(N-1) jumps — 20%/1, 30%/2, 40%/3,
@@ -129,9 +129,11 @@ export const CARD_BUFFS={clickSpeed:1.12,critChance:.1,critMultiplier:3,freeHitC
   // nearest unstruck enemy OR resource within chainRange of the previous strike.
   chainChance:.2,chainChanceStack:.1,chainJumps:1,chainRange:120};
 export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay:20,calmNightFactor:.75};
-// The fireball borrows the blast placement ghost, so its target ring and damage radius stay equal.
+// The fireball aims with its own fireballTarget row below (not the blast's, whose 135 radius it no
+// longer shares), so the target ring and the damage radius can never disagree. Radius halved from
+// 135 Aug 20: a precision slam, not a screen-clearer.
 // fallTime is gameplay: enemies may enter or leave the blast before the ball touches down.
-export const FIREBALL=Object.freeze({damage:5,radius:135,fallTime:.65,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY});
+export const FIREBALL=Object.freeze({damage:5,radius:68,fallTime:.65,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY});
 // Intentional large-obstacle tuning: the impact reserves 3x3 through meteorTarget and the rock's
 // runtime footprint; its fixed 15 HP keeps the spell-created obstacle durable without inheriting
 // ordinary stone-node balance.
@@ -163,6 +165,11 @@ export const GARRISON=Object.freeze({capacity:3,musterRadius:300,threatRadius:18
 // The first house prices the deliberate hand-played opening chapter: the player chops ~5 wood
 // personally before automation exists. Later houses retain the escalating progression below.
 export const HOUSE_SLOTS=2,STARTING_HOUSE_COST={wood:5,stone:0},HOUSE_COST={wood:3,stone:1},HOUSE_COST_ESCALATION={wood:4,stone:3},WORKER_SPAWN_TIME=12;
+// Scout posts per hut (its BUILDING_TYPES jobSlots, garrison-style). The hut SPAWNS nothing —
+// houses remain the only worker source; dropping a worker on a completed hut converts it into a
+// scout, a durable staffer whose "nodes" are fog frontier blocks, mined batch after batch with no
+// radius cap. Manual-only: the free-worker scheduler never fills these posts.
+export const SCOUT_HUT_SLOTS=2;
 // Resource-node capacity is global because nodes have no type table. Construction capacity belongs
 // to each BUILDING_TYPES row below and is modified only when read for the current run.
 export const RESOURCE_NODE_JOB_SLOTS=1;
@@ -190,6 +197,9 @@ export const BUILDING_TYPES = {
   stockpile:{name:"stockpile",resource:null,cost:{wood:2,stone:0},buildSlots:2,serviceRadius:175,jobSlots:2,footprint:FOOTPRINT_1x1},
   // The house model remains centered in its anchor cell; its yard reserves the surrounding eight.
   house:{name:"house",resource:null,cost:HOUSE_COST,buildSlots:2,footprint:FOOTPRINT_3x3},
+  // A staffed post, not a spawner (see SCOUT_HUT_SLOTS above): drop a worker on it and that
+  // worker becomes a scout — a durable fog miner working the frontier until pulled off.
+  scoutHut:{name:"scout hut",resource:null,cost:{wood:5,stone:3},buildSlots:2,jobSlots:SCOUT_HUT_SLOTS,footprint:FOOTPRINT_1x1},
   rangeBeacon:{name:"range beacon",resource:null,cost:{wood:4,stone:6},buildSlots:2,effectRadius:128,rangeBonus:50,footprint:FOOTPRINT_1x1},
   warShrine:{name:"war shrine",resource:null,cost:{wood:5,stone:7},buildSlots:2,effectRadius:128,damageBonus:1,footprint:FOOTPRINT_1x1},
   // The other two aura supports. wardTotem grants a real hp pool (granted/removed by
@@ -209,7 +219,10 @@ export const BUILDING_TYPES = {
   tar:{name:"tar pit",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:48,damage:0,cooldown:.25,slowDuration:2,slowMultiplier:.5,instant:true,stack:true,footprint:FOOTPRINT_3x3},
   damageOrbs:{name:"damage orbs",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:DAMAGE_ORBS.orbitRadius+DAMAGE_ORBS.aoeRadius,instant:true,movable:true,footprint:FOOTPRINT_1x1},
   summoningCircle:{name:"summoning circle",resource:null,cost:{wood:0,stone:0},buildSlots:0,instant:true,movable:true,footprint:FOOTPRINT_3x3},
-  meteorTarget:{name:"meteor impact",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:METEOR.radius,instant:true,targetOnly:true,footprint:FOOTPRINT_3x3}
+  meteorTarget:{name:"meteor impact",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:METEOR.radius,instant:true,targetOnly:true,footprint:FOOTPRINT_3x3},
+  // The fireball's aiming ghost (see FIREBALL above): target-only like the meteor's, so the ring
+  // the player aims with IS the damage radius, independent of the blast charge's.
+  fireballTarget:{name:"fireball strike",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:FIREBALL.radius,instant:true,targetOnly:true,footprint:FOOTPRINT_1x1}
 };
 export const UPGRADES=[
   {id:"hardness",icon:"⛏",name:"click hardness",cost:{wood:5,stone:5},description:"placeholder: mine tougher resources with each click."},

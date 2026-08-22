@@ -186,7 +186,12 @@ export const OBJECTS = [
   // see up to 2.36x the flat-ground sun term, which is what blew the old crowns to 222-255):
   // red desaturated to land on the reference's (195,51,48) — the pure 0xe03a49 quantized its
   // highlight to (252,0,31), which is what CRITIC-R2's "magenta rim" gate was actually catching.
-  {kind: "sphere", name: "yellow", x: -31.2, z: -10.9, r: 4.65, sink: 0.54, color: 0x8cb91c},
+  // Aug 21 (owner): the whole cast rescaled by 3.0/4.3 ≈ 0.698 so the RED dome lands exactly on
+  // the game's placement grid — 1 game cell = 2 wu (CELL 32 px · S 1/16), red = 6 wu = a 3x3
+  // footprint, the "red-1x1" sphere below = one cell. Every r/size is the round-5 solve times
+  // that one factor (family proportions and albedos untouched); positions were NOT moved, so the
+  // gaps between props read wider than the judged rounds' frames.
+  {kind: "sphere", name: "yellow", x: -31.2, z: -10.9, r: 3.24, sink: 0.54, color: 0x8cb91c},
   // ROUND 5, and the ONLY albedo the toon ramp forced: 0xc1363f -> 0xc84d3f.
   // Round 4 solved red against its family MEDIAN, which put its red channel at 194-235 — the flat
   // top of the sRGB curve, where a 3x change in the light term is worth ~20 luma. Consequence:
@@ -202,18 +207,21 @@ export const OBJECTS = [
   // COST, accepted and not hidden: measure.py's red FAMILY median goes Δ26.1 -> Δ47.6, because
   // 52% of our dome's core sits in the crown band where the reference's sits lower. That yardstick
   // cannot see shading structure (CRITIC-R2 §0) and probe.py is the round-3+ yardstick.
-  {kind: "sphere", name: "red",    x: -15.7, z:  -3.0, r: 4.30, sink: 0.46, color: 0xc84d3f},
+  {kind: "sphere", name: "red",    x: -15.7, z:  -3.0, r: 3.00, sink: 0.46, color: 0xc84d3f},
+  // One-cell reference ball (owner ask, Aug 21): same albedo/sink as red, 2 wu diameter = 1x1
+  // game cell. Mirrored in the game as the second "scale ball" sphere (scene.js setScaleBall).
+  {kind: "sphere", name: "red-1x1", x: -8.6, z: -1.8, r: 1.00, sink: 0.46, color: 0xc84d3f},
   // ROUND 4 (owner): SQUARE footprint — the reference box reads square, ours read as an oblong
   // slab. Shrunk toward the reference's 195x143 visible px while keeping the ~30 deg yaw.
   // Box albedo solved for a SUN-LIT top face (r4c proved the locked composition leaves the box
   // lit — the lavender shade-solve rendered pink): top = albedo*(amb + S*sun), so albedo =
   // (72,54,49)_lin / (1.022, 0.885, 0.588) -> dark warm plum. Sides fall darker on their own.
-  {kind: "box",    name: "box",    x:   1.3, z:  -6.5, size: [4.5, 3.1, 4.5], sink: 0.34,
+  {kind: "box",    name: "box",    x:   1.3, z:  -6.5, size: [3.14, 2.16, 3.14], sink: 0.34,
    rot: [0.10, 0.52, -0.07], color: 0x473a40},
-  {kind: "sphere", name: "orange", x:  18.9, z: -14.9, r: 4.30, sink: 0.52, color: 0x916721},
+  {kind: "sphere", name: "orange", x:  18.9, z: -14.9, r: 3.00, sink: 0.52, color: 0x916721},
   // White solved for a ~205 crown (the crown, not the median, owns the frame's max luma; the
   // reference dome is unphysically flat — critic note — so the median lands a little dark).
-  {kind: "sphere", name: "white",  x:  34.9, z: -11.6, r: 3.70, sink: 0.56, color: 0x8890aa},
+  {kind: "sphere", name: "white",  x:  34.9, z: -11.6, r: 2.58, sink: 0.56, color: 0x8890aa},
 ];
 
 // ── toon ramp (ROUND 5) ───────────────────────────────────────────────────────────────────────
