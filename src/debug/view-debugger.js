@@ -549,8 +549,8 @@ function bindControls(){
   // simulation.js; only the bindings are here.
   // NOTHING in this block may mutate authored data: BUILDING_TYPES / UPGRADES /
   // TOWER_VARIANTS costs and stats, ENEMY_TYPES, and NIGHT_WAVE_RECIPES are read
-  // only. The grant buttons are the sole writers of state.stored, and the free
-  // costs toggle deliberately is not one of them.
+  // only. Grant buttons create ordinary loose drops, and the free-costs toggle
+  // deliberately is not one of them.
   // ═════════════════════════════════════════════════════════════════════════
 
   fillSelect("vEnemyType", Object.entries(ENEMY_TYPES).map(([id,def])=>[id,def.name]));
@@ -558,9 +558,9 @@ function bindControls(){
 
   // economy — free costs bypasses the DELIVERY, it does not zero a cost or top up a store.
   bindV("vFreeCosts", v=>{ DBG.freeCosts=v; debugSweepFreeCosts(); });
-  bindV("vGroundSourcing", v => { DBG.groundSourcing = v; });
-  bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });
-  bindV("vBuilderRadius", v => { TUNE.builderSourceRadius = v; }, v => v + "px");
+  bindV("vGroundSourcing", v => { DBG.deliveryGroundSourcing = v; });
+  bindV("vDeliverySelfSupply", v => { DBG.deliverySelfSupply = v; });
+  bindV("vDeliveryRadius", v => { TUNE.deliverySourceRadius = v; }, v => v + "px");
   bindV("vFreeSearchRadius", v => { TUNE.freeSearchRadius = v; }, v => v + "px");
   bindBtn("vDealBaseDraft",()=>debugQueueDraft("base"));
   bindBtn("vDealDawnDraft",()=>debugQueueDraft("dawn"));

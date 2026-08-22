@@ -22,7 +22,7 @@ import {project} from "./scene.js";
 import {
   VIEW_W,VIEW_H,BASE,
   RESOURCE_KINDS,
-  BUILDING_TYPES,TOWER_VARIANTS,UPGRADES,DAMAGE_ORBS,SUMMONING_CIRCLE,CONSUMABLE_FORGE,CAPTURE_YARD,
+  BUILDING_TYPES,TOWER_VARIANTS,UPGRADES,DAMAGE_ORBS,SUMMONING_CIRCLE,CAPTURE_YARD,
   ENEMY_TYPES,
   NIGHT_TELEGRAPH_TIME
 } from "../game/data.js";
@@ -30,7 +30,7 @@ import {
   state, trees, rocks, diamonds, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, damageNumbers, resourceDrops,
   fogAtPoint,
   badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget, hoveredBuilding, captureYardOccupancy,
-  buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldBuilding, heldChest, workerOccupancyStatus, workerOccupancyAt, workerMaxHp, clamp,
+  towerUpgradeList, carriedTotal, heldWorker, heldBuilding, heldChest, workerOccupancyStatus, workerOccupancyAt, workerMaxHp, clamp,
   mainBaseStanding, mainBaseStatus
 } from "../game/simulation.js";
 
@@ -151,26 +151,26 @@ function drawDelivery(x, y, name, cost, delivered, accent="#d4a443"){
   label(costLine(cost,delivered), x, y, 34, "#e8dcbc", 8.5);
 }
 
-const BUILD_JOB_ACCENT=css(PAL.jobBuild);
+const DELIVERY_WORK_ACCENT=css(PAL.jobDelivery);
 function workerDrawPosition(worker,held){
   return worker===held&&state.mouse.inside?state.mouse:worker;
 }
-function addBuilderLine(worker,held,sitePoint){
+function addDeliveryWorkerLine(worker,held,sitePoint){
   const at=workerDrawPosition(worker,held),p=project(at.x,at.y,18);
   if(p.depth>1)return;
   ctx.moveTo(p.x,p.y);ctx.lineTo(sitePoint.x,sitePoint.y);
 }
-/** Hover-only construction links — one line per assigned builder, manual or autonomous.
+/** Hover-only construction links — one line per assigned Delivery Worker, manual or autonomous.
  * One shared path keeps the transient work allocation-free. */
-function drawBuilderLines(){
+function drawDeliveryWorkerLines(){
   if(state.runMode!=="normal")return;
   const hovered=hoverTarget(),site=hovered?.kind==="building"&&!hovered.object.complete?hovered.object:null;
   if(!site)return;
   const sitePoint=project(site.x,site.y,12);if(sitePoint.depth>1)return;
   const held=heldWorker();ctx.save();ctx.beginPath();
-  for(const worker of state.workers)if(worker.job==="build"&&worker.jobTarget===site)addBuilderLine(worker,held,sitePoint);
-  if(held&&held.job==="build"&&held.jobTarget===site)addBuilderLine(held,held,sitePoint);
-  ctx.strokeStyle=BUILD_JOB_ACCENT;ctx.globalAlpha=.28;ctx.lineWidth=Math.max(1,barScale());ctx.lineCap="round";ctx.stroke();ctx.restore();
+  for(const worker of state.workers)if(worker.job==="deliver"&&worker.jobTarget===site)addDeliveryWorkerLine(worker,held,sitePoint);
+  if(held&&held.job==="deliver"&&held.jobTarget===site)addDeliveryWorkerLine(held,held,sitePoint);
+  ctx.strokeStyle=DELIVERY_WORK_ACCENT;ctx.globalAlpha=.28;ctx.lineWidth=Math.max(1,barScale());ctx.lineCap="round";ctx.stroke();ctx.restore();
 }
 
 export function drawOverlay(){
@@ -184,7 +184,7 @@ export function drawOverlay(){
   // state.clock.light still drives the scene (it is the normalised night phase) — only the
   // screen-space fill is gone.
   drawNightTelegraph();
-  drawBuilderLines();
+  drawDeliveryWorkerLines();
 
   // Health only. Swing progress lives in the action badge now (drawActionBadge),
   // so a node you are cutting shows its remaining yield here and the fill of the
@@ -237,9 +237,8 @@ export function drawOverlay(){
     // upgrade uses — the standing base is just another delivery target until it tops out.
     const base=mainBaseStatus(),levelText="main base · lv "+base.level+"/"+base.maxLevel;
     if(base.atMaxLevel)label(levelText+" · max",BASE.x,BASE.y,60,"#e8dcbc");
-    else drawDelivery(BASE.x,BASE.y,levelText+" → "+(base.level+1),base.cost,base.delivered,css(PAL.storage));
-    // The base is a durable haul post (MAIN_BASE.jobSlots), so it wears the SAME occupancy mark
-    // every station wears — the slot tray, read off the shared derived occupancy.
+    else drawDelivery(BASE.x,BASE.y,levelText+" → "+(base.level+1),base.cost,base.delivered,css(PAL.jobDelivery));
+    // Active Base Delivery Work wears the same derived occupancy mark as every other post.
     // It is not in `buildings`, so it cannot ride the loop below and says so here instead.
     if(occupancyVisible(BASE))drawOccupancy(BASE,30);
   }
@@ -249,7 +248,7 @@ export function drawOverlay(){
     // share one name / bar / tally stack instead of two invented formats.
     if(!b.complete){
       const buildName=b.plannedVariant?TOWER_VARIANTS[b.plannedVariant].name:BUILDING_TYPES[b.type].name;
-      drawDelivery(b.x, b.y, buildName, buildingCost(b), b.delivered);
+      drawDelivery(b.x, b.y, buildName, b.delivery.cost, b.delivery.delivered);
       if(occupancyVisible(b))drawOccupancy(b,74);
       if(b.starved) label("! starved", b.x, b.y, 22, "#e08a76");
       continue;
@@ -262,7 +261,7 @@ export function drawOverlay(){
     if(b.type==="captureYard"){const held=captureYardOccupancy(b);marks(b.x,b.y,48,58,[{frac:held/CAPTURE_YARD.capacity,fill:"#75c86d"}]);label(held+"/"+CAPTURE_YARD.capacity+" turned",b.x,b.y,70,"#a8e6b0");}
     if(b.orbs){marks(b.x,b.y,44,50,[{frac:b.orbs.remaining/DAMAGE_ORBS.duration,fill:"#8fd9ee"}]);label(Math.ceil(b.orbs.remaining)+"s",b.x,b.y,57,"#bcecff");}
     if(b.summoning){marks(b.x,b.y,48,58,[{frac:b.summoning.remaining/SUMMONING_CIRCLE.duration,fill:"#9870c9"},{frac:b.summoning.dust/SUMMONING_CIRCLE.dustCost,fill:"#c5a1e8"}]);label(b.summoning.dust+"/"+SUMMONING_CIRCLE.dustCost+" dust · "+Math.ceil(b.summoning.remaining)+"s",b.x,b.y,70,"#dec8f4");}
-    if(b.type==="consumableForge"){marks(b.x,b.y,48,58,[{frac:b.consumableForge.dust/CONSUMABLE_FORGE.dustCost,fill:css(PAL.dust)}]);label(b.consumableForge.dust+" / "+CONSUMABLE_FORGE.dustCost+" dust",b.x,b.y,70,css(PAL.dust));}
+    if(b.type==="consumableForge")drawDelivery(b.x,b.y,"consumable forge",b.delivery.cost,b.delivery.delivered,css(PAL.dust));
     if(b.activeUpgrade){
       const job = b.activeUpgrade;
       const up = towerUpgradeList().find(i=>i.id===job.id) || UPGRADES.find(i=>i.id===job.id);

@@ -99,13 +99,13 @@ Pre-Wave is entered once, at world load, and left exactly once, when the Main Ba
 
 ### Base Standing
 
-Whether a base exists at all, answered by `state.baseLevel > 0` (`mainBaseStanding()`) and by nothing else — not by the presence of a building record. Every base service reads it: storage deposits and hauling, the health target, enemy target selection, the hover action, the map centre's attack, and the rendered structure. While no base stands the map centre is bare reserved ground; an enemy with no other valid target idles rather than attacking an absent base. The showcase fixture world starts standing (level 1) with no construction record behind it.
+Whether a base exists at all, answered by `state.baseLevel > 0` (`mainBaseStanding()`) and by nothing else — not by the presence of a building record. Every base behavior reads it: Base Level Delivery Work, the health target, enemy target selection, the hover action, the map centre's attack, and the rendered structure. While no base stands the map centre is bare reserved ground; an enemy with no other valid target idles rather than attacking an absent base. The showcase fixture world starts standing (level 1) with no construction record behind it.
 
 ## Run Progression
 
 ### Base Level
 
-The run's **only** progression number: `state.baseLevel`, 0 before the Main Base stands and then the authored `level` of the `MAIN_BASE_LEVELS` entry it has reached (maximum 3, `MAIN_BASE.maxLevel`). There is no player level and no experience — `state.xp`, `state.level`, `LEVEL_CURVE` and `RESOURCE_XP` were deleted on 2026-08-22 along with the level-up draft they paid. Completing an ordinary building now grants the building and nothing else.
+The run's **only** progression number: `state.baseLevel`, 0 before the Main Base stands and then the authored `level` of the `MAIN_BASE_LEVELS` entry it has reached (maximum 30, `MAIN_BASE.maxLevel`). There is no player level and no experience — `state.xp`, `state.level`, `LEVEL_CURVE` and `RESOURCE_XP` were deleted on 2026-08-22 along with the level-up draft they paid. Completing an ordinary building now grants the building and nothing else.
 
 ### Reward Draft
 
@@ -121,11 +121,29 @@ A Reward Draft may contain fewer than three cards near exhaustion. Rarity still 
 
 Which authored Spawn Pools the night composer may choose from: `min(4, floor(nights begun / 2))`, so tier 0 covers waves 1-2, tier 1 waves 3-4, and tier 2 waves 5 and up. It rides **nights survived** — never the Base Level, the hand, or anything the player buys. Difficulty size stays with the Threat-Budget Curve; the tier only widens the roster.
 
+## Resource Delivery
+
+### Delivery Work
+
+An active resource recipe with shared progress and one completion result. Construction sites, the next Base Level, and each Consumable Forge batch are Delivery Work; the player and workers satisfy the same outstanding demand.
+
+### Delivery Worker
+
+A worker assigned to Delivery Work. It fetches only resources the current recipe still needs; it never moves unrelated resources to the Main Base for storage.
+
+### Delivery Source
+
+A place a Delivery Worker may obtain a needed resource: a loose drop, stored stock covered by the work, or a nearby wood or stone node it can harvest itself. A source is valid only while its resource remains outstanding demand.
+
+### Delivery Completion
+
+The result paid once when Delivery Work reaches its recipe: a finished construction site, a building-card Reward Draft for a Base Level, or a consumable Reward Draft for a Consumable Forge batch. Manual Delivery Workers stay assigned when the target starts another recipe; autonomous Delivery Workers return to free and may choose again.
+
 ## Worker Capacity
 
 ### Worker Limit
 
-The maximum number of workers that may be assigned to a **completed** building at once. It is authored per building as `jobSlots` on that building's definition, and absence means zero — a house, tower or obelisk holds nobody. Work camps and quarries author 2, the stockpile 2, the scout hut 2 (`SCOUT_HUT_SLOTS`), and the garrison 3 (`GARRISON.capacity`). The main base authors 2 on `MAIN_BASE.jobSlots` and deliberately **not** on its `BUILDING_TYPES.mainBase` row: that row is the construction *site*, while the completed base's post is the `BASE` anchor (see Base Standing), and a second `jobSlots` there would open a competing pool at the same coordinates. Resource nodes are not buildings and use the single global `RESOURCE_NODE_JOB_SLOTS` instead.
+The maximum number of workers that may be assigned to a **completed** building at once. It is authored per building as `jobSlots` on that building's definition, and absence means zero — a house, tower or obelisk holds nobody. Work camps and quarries author 2, the stockpile 2, the Consumable Forge 2, the scout hut 2 (`SCOUT_HUT_SLOTS`), and the garrison 3 (`GARRISON.capacity`). The Main Base authors 2 on `MAIN_BASE.jobSlots` and deliberately **not** on its `BUILDING_TYPES.mainBase` row: that row is the construction *site*, while a standing Base Level's Delivery Work post is the `BASE` anchor (see Base Standing), and a second `jobSlots` there would open a competing pool at the same coordinates. Resource nodes are not buildings and use the single global `RESOURCE_NODE_JOB_SLOTS` instead.
 
 Four rules hold for every Worker Limit, so no building may invent its own staffing machinery:
 
@@ -136,7 +154,7 @@ Four rules hold for every Worker Limit, so no building may invent its own staffi
 
 Worker Limit is **not** either of the two other capacity numbers, and the three must never be merged:
 
-- **Build capacity** is `buildSlots` — how many workers may staff a building *while it is still a construction site*. It is consumed before completion, is the number the buildCapacity buff grows, and drops to zero relevance the moment the building finishes and its Worker Limit takes over.
+- **Build capacity** is `buildSlots` — how many Delivery Workers may staff a building *while it is still a construction site*. It is consumed before completion, is the number the buildCapacity buff grows, and drops to zero relevance the moment the building finishes and its Worker Limit takes over.
 - **Population** is `HOUSE_SLOTS` — how many workers one completed house *creates and owns*. Population says where workers come from; Worker Limit says how many may stand somewhere. A house has population and no Worker Limit at all; a garrison has a Worker Limit and no population. Reassigning a worker never changes which house owns it.
 
 ## The Garrison
@@ -151,7 +169,7 @@ One of a completed Garrison's three posts (`GARRISON.capacity`, which is also th
 
 ### Manual Guard
 
-A guard with `autonomous:false`, created by the player right-dragging a worker onto a completed Garrison, or by a manual builder inheriting the post it just finished building. A Manual Guard is a standing order: it has no demobilization clock, dawn never releases it, and the Muster never re-posts it.
+A guard with `autonomous:false`, created by the player right-dragging a worker onto a completed Garrison, or by a manual Delivery Worker inheriting the post it just finished building. A Manual Guard is a standing order: it has no demobilization clock, dawn never releases it, and the Muster never re-posts it.
 
 ### Autonomous Guard
 

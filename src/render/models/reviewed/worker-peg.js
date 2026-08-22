@@ -48,7 +48,7 @@ import {SWATCH as S} from "../../palette.js";
 // Nearest for the old tan coat (0xbd9455) and the old olive coat (0xb09a55) was literally
 // green1 — the grass — which is the exact collision the doctrine forbids, so the coats went dark
 // (wood1 / green4) and hue keeps doing the job-coding. Values, top to bottom:
-//   skin stone0 .85 · build red0 .84 · haul blue2 .52 · guard grey0 .52 · carrier wood1 .50 ·
+//   skin stone0 .85 · delivery red0 .84 · haul blue2 .52 · guard grey0 .52 · carrier wood1 .50 ·
 //   gatherer green4 .45  — all ≥ .10 OKLab-L clear of the lit meadow (green1 .72).
 const C = {
   skin: S.stone0,          // warm cream — still 3+ value steps above every coat, but pulled
@@ -56,7 +56,7 @@ const C = {
   coat: S.wood1,           // tan carrier
   hoodTan: S.wood2,        // richer brown cowl for the tan units
   jobHaul: S.blue2,        // denim blue
-  jobBuild: S.red0,        // marigold
+  jobDelivery: S.red0,     // marigold
   jobGuard: S.grey0,       // chocolate, lifted a touch
   coatOlive: S.green4, hoodOlive: S.teal0,   // gatherer: olive cowl over olive, both under the meadow
   hat: S.wood1, strapDark: S.wood2,
@@ -739,10 +739,10 @@ MODELS["worker-courier"] = {
   anims: { idle, walk, carryLag },
 };
 
-// builder — marigold, dark leather cap, hammer hung off the belt as a clear T
+// Delivery Worker — marigold, dark leather cap, hammer hung off the belt as a clear T
 MODELS["worker-builder"] = {
   cam: CAM,
-  build: () => assemble(C.jobBuild, (body, parts) => {
+  build: () => assemble(C.jobDelivery, (body, parts) => {
     belt(body);                                   // the sheet's builder wears ONE belt, no sash
     const hammer = buildHammer();
     // Hung OUTSIDE the coat off the belt line: head just above the strap, haft dangling down the

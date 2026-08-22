@@ -72,7 +72,7 @@ const manifest = {
   workers:[
     {id:"guard",job:"guard",x:896,y:736,label:"worker · guard"},
     {id:"haul",job:"haul",x:992,y:736,label:"worker · hauler"},
-    {id:"build",job:"build",x:1088,y:736,label:"worker · builder"},
+    {id:"delivery",job:"deliver",x:1088,y:736,label:"worker · delivery"},
     {id:"harvestWood",job:"harvest",tool:"wood",x:1184,y:736,label:"worker · woodcutter"},
     {id:"harvestStone",job:"harvest",tool:"stone",x:1280,y:736,label:"worker · miner"},
     {id:"staffWood",job:"staff",tool:"wood",x:1376,y:736,label:"worker · lumber staff"},
@@ -165,7 +165,7 @@ function validateManifest(){
     }
   }
   for(const worker of manifest.workers){
-    if(!["free","guard","haul","build","harvest","staff"].includes(worker.job))fail("invalid worker job "+worker.job);
+    if(!["free","guard","haul","deliver","harvest","staff"].includes(worker.job))fail("invalid worker job "+worker.job);
     if(["harvest","staff"].includes(worker.job)&&!["wood","stone"].includes(worker.tool))fail("invalid worker tool "+worker.id);
   }
   for(const dummy of manifest.dummies)if(!(dummy.hp>0)||dummy.x!==dummy.homeX||dummy.y!==dummy.homeY)fail("invalid dummy "+dummy.id);

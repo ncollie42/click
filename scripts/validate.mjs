@@ -72,12 +72,12 @@ try{
     assert.deepEqual(Object.keys(BASE).filter(key=>!["x","y","r","footprint"].includes(key)),[],"BASE is spatial only — structure stats belong to MAIN_BASE");
     assert.deepEqual(["x","y","r","footprint"].filter(key=>key in MAIN_BASE),[],"MAIN_BASE must not restate the anchor's geometry");
 
-    // One frozen definition owning health, storage reach, both slot counts and the attack.
+    // One frozen definition owning health, both slot counts and the attack.
     assert.ok(Object.isFrozen(MAIN_BASE),"main base tuning must be immutable");
-    assert.deepEqual({...MAIN_BASE},{maxHp:100,storageRadius:600,buildSlots:2,jobSlots:2,
+    assert.deepEqual({...MAIN_BASE},{maxHp:100,buildSlots:2,jobSlots:2,
       range:95,damage:2,rate:.85,damageTargetType:data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY,
       cost:{wood:10},maxLevel:30});
-    assert.equal(MAIN_BASE.storageRadius,data.BASE_ZONE,"the base's storage reach is the zone already drawn, never a second number");
+    assert.equal(data.BASE_ZONE,undefined,"the Base must not retain a general-storage zone");
 
     // Map-centre attack balance is PRESERVED across the handover, not re-tuned: these are the exact
     // numbers the retired king fired with, and MAIN_BASE is now their only home.
@@ -111,8 +111,8 @@ try{
     assert.deepEqual(Object.keys(MAIN_BASE).filter(key=>/xp/i.test(key)),[],"the base's level list must not carry XP fields");
 
     // Worker Limit vs build capacity vs population — three different numbers.
-    assert.equal(MAIN_BASE.jobSlots,2,"the completed base holds two haulers (Worker Limit)");
-    assert.equal(MAIN_BASE.buildSlots,2,"the base SITE is staffed by two builders");
+    assert.equal(MAIN_BASE.jobSlots,2,"the completed base holds two Delivery Workers");
+    assert.equal(MAIN_BASE.buildSlots,2,"the base site holds two Delivery Workers");
     assert.equal(data.BUILDING_TYPES.house.jobSlots,undefined,"population is HOUSE_SLOTS on the house, never a Worker Limit");
 
     // The construction row REFERENCES the authored record — one base, one set of numbers.
@@ -353,7 +353,7 @@ try{
     // remains in the finite build pool, so a later base reward may grant one additional copy.
     {
       const forge=data.BUILDING_TYPES.consumableForge,forgeCard=cards.cardById.bpConsumableForge;
-      assert.equal(forge.footprint,data.FOOTPRINT_1x1);assert.deepEqual(forge.cost,{wood:5,stone:5});assert.equal(forge.buildSlots,2);assert.equal(forge.instant,undefined);assert.equal(forge.movable,undefined);
+      assert.equal(forge.footprint,data.FOOTPRINT_1x1);assert.deepEqual(forge.cost,{wood:5,stone:5});assert.equal(forge.buildSlots,2);assert.equal(forge.jobSlots,2);assert.equal(forge.instant,undefined);assert.equal(forge.movable,undefined);
       assert.equal(data.CONSUMABLE_FORGE.dustCost,5);assert.equal(Object.isFrozen(data.CONSUMABLE_FORGE),true);
       assert.equal(forgeCard.category,"build");assert.equal(forgeCard.rarity,"rare");assert.equal(forgeCard.charges,1);assert.equal(forgeCard.ref,"building:consumableForge");assert.equal(forgeCard.implemented,true);assert.equal(forgeCard.inPool,true);
       const modelRegistry=readFileSync(join(root,"src/render/models/buildings/index.js"),"utf8"),forgeModel=readFileSync(join(root,"src/render/models/buildings/consumable-forge.js"),"utf8");
@@ -457,7 +457,7 @@ try{
     const site=sim.buildings.find(building=>building.type==="mainBase");
     assert.ok(site&&!site.complete,"playing the opening card must leave one unfinished site");
     assert.deepEqual([site.x,site.y],[data.BASE.x,data.BASE.y],"the base site must sit on the authored anchor");
-    assert.deepEqual(site.cost,{...data.MAIN_BASE.cost},"the site must charge the authored level-1 recipe");
+    assert.deepEqual(site.delivery.cost,Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,data.MAIN_BASE.cost[kind]||0])),"the site must charge the authored level-1 recipe");
     assert.equal(sim.hoverTarget(),null,"the map centre must expose no base action before the base stands");
     assert.equal(sim.debugDealCard("bpMainBase"),true);
     assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpMainBase")),false,"a second main base must refuse");
@@ -484,23 +484,23 @@ try{
     assert.equal(loiterer.hp,loitererHp,"an unbuilt base must not defend the map centre");
     assert.equal(sim.state.gameOver,false);
     sim.debugClearEnemies();
-    // Nor is the unbuilt centre a POST: it offers no hauling slot to reserve, fill or draw.
-    assert.equal(sim.workerOccupancyStatus(data.BASE),null,"the bare anchor must offer no hauling slots");
+    // Nor is the unbuilt centre a post: its recipe belongs to the construction site.
+    assert.equal(sim.workerOccupancyStatus(data.BASE),null,"the bare anchor must offer no Delivery Work slots");
     assert.equal(sim.durablePostStatus(data.BASE),null,"the bare anchor must expose no vacancy");
     // Ten wood, delivered the ordinary way, ends the opening and starts a FULL day 1.
-    // Three manual builders are standing on the site as it finishes. The level-1 site is the ONE
-    // construction whose builders inherit a post on a DIFFERENT runtime object than the record they
+    // Three manual Delivery Workers are standing on the site as it finishes. The level-1 site is the
+    // one construction whose workers inherit a post on a different runtime object than the record they
     // finished — the BASE anchor — and the inheritance obeys the base's Worker Limit, so the third
-    // builder returns to free exactly like an over-capacity camp builder.
+    // finished. Inheritance obeys the Base Worker Limit, so the third worker returns to free.
     const emptyCarry=()=>Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0]));
-    const founders=[0,1,2].map(i=>({x:site.x+8*i,y:site.y+30,postX:site.x,postY:site.y+20,spawnSource:null,job:"build",jobTarget:site,autonomous:false,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:emptyCarry(),hp:data.WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,guardSafeTime:0}));
+    const founders=[0,1,2].map(i=>({x:site.x+8*i,y:site.y+30,postX:site.x,postY:site.y+20,spawnSource:null,job:"deliver",jobTarget:site,autonomous:false,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:emptyCarry(),hp:data.WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,guardSafeTime:0}));
     sim.state.workers.push(...founders);
     sim.state.carried.wood=data.MAIN_BASE.cost.wood;
     sim.setPointerWorld(site.x,site.y);sim.secondaryRelease();
     assert.equal(site.complete,true);assert.equal(sim.state.baseLevel,1);
-    assert.deepEqual(founders.map(w=>w.job),["haul","haul","free"],"the base site must hand exactly its Worker Limit of builders to the base haul post");
+    assert.deepEqual(founders.map(w=>w.job),["deliver","deliver","free"],"the base site must hand exactly its Worker Limit to Base Delivery Work");
     assert.deepEqual(founders.slice(0,2).map(w=>w.jobTarget),[data.BASE,data.BASE],"an inherited base post must name the BASE anchor, never the construction record");
-    assert.deepEqual(founders.slice(0,2).map(w=>w.autonomous),[false,false],"inheritance is a manual-builder privilege and stays manual");
+    assert.deepEqual(founders.slice(0,2).map(w=>w.autonomous),[false,false],"manual Delivery Work inheritance must stay manual");
     assert.equal(founders[2].jobTarget,null);
     assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots,"inheritance must fill the base's derived occupancy");
     sim.validateSimulationInvariants();
@@ -518,7 +518,7 @@ try{
       assert.equal(offer.every(id=>allowed.includes(cardCatalog.cardById[id].category)&&cardCatalog.cardById[id].inPool),true,"a "+kind+" reward dealt outside its pool");
       // Dawn buffs are scrubbed back off; base builds are cleared out of the hand.
       const index=Math.max(0,offer.findIndex(id=>cardCatalog.cardById[id].category==="buff"));
-      const id=offer[index],isBuff=cardCatalog.cardById[id].category==="buff",stacks=sim.buffStacks(id),held=sim.hand().length;
+      const id=offer[index],isBuff=cardCatalog.cardById[id].category==="buff",stacks=sim.buffStacks(id),held=sim.hand().length,heldCount=sim.hand().find(entry=>entry.id===id)?.count??0;
       const capacity=sim.state.capacity,baseMax=sim.state.baseMax,baseHp=sim.state.baseHp;
       assert.equal(sim.chooseDraft(index),true);
       if(isBuff){
@@ -526,7 +526,7 @@ try{
         assert.equal(sim.hand().length,held,"a drafted buff must never enter the hand");
         if(stacks)sim.state.draft.buffs[id]=stacks;else delete sim.state.draft.buffs[id];
       }else{
-        assert.equal(sim.hand().length,held+1,"a drafted build must land in the hand");
+        assert.equal(sim.hand().find(entry=>entry.id===id)?.count,heldCount+1,"a drafted build must land in the hand");
         sim.debugClearHand();
       }
       sim.state.capacity=capacity;sim.state.baseMax=baseMax;sim.state.baseHp=baseHp;
@@ -536,56 +536,55 @@ try{
     assert.equal(sim.draftPending(),null,"a completed base level owes exactly one pick");
     // A completed level-1 base asks for the authored level-2 recipe next, and nothing else.
     assert.deepEqual(sim.mainBaseStatus(),{level:1,maxLevel:30,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[1].cost,delivered:zero()});
-    // Worker hauling is storage, never a silent upgrade: a hauler arrives with exactly what the
-    // recipe wants and the recipe stays empty.
-    const hauler={x:data.BASE.x,y:data.BASE.y,postX:data.BASE.x,postY:data.BASE.y,spawnSource:null,job:"haul",jobTarget:data.BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...zero(),stone:10},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0};
-    sim.state.workers.push(hauler);sim.update(1/60);sim.state.workers.length=0;
-    assert.deepEqual(sim.mainBaseStatus().delivered,zero(),"a worker hauler funded a base level");
-    assert.equal(sim.state.stored.stone,10,"a worker hauler must deposit into storage");
-    assert.equal(sim.draftPending(),null,"a worker deposit dealt a reward");
-    sim.state.stored.stone=0;
-    // A PLAYER release pays the recipe first. Mixed loads split: the wood the recipe cannot use
-    // goes straight to storage, the stone banks as partial progress, and nothing completes.
-    sim.state.carried.stone=4;sim.state.carried.wood=7;
+    // Workers and the player write the same recipe. A manual worker stays assigned after a partial.
+    const deliveryWorker={x:data.BASE.x,y:data.BASE.y,postX:data.BASE.x,postY:data.BASE.y,spawnSource:null,job:"deliver",jobTarget:data.BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...zero(),stone:4},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0};
+    sim.state.workers.push(deliveryWorker);sim.update(1/60);
+    assert.deepEqual(sim.mainBaseStatus().delivered,{...zero(),stone:4},"a Delivery Worker did not fund the Base recipe");
+    assert.deepEqual([deliveryWorker.job,deliveryWorker.jobTarget,deliveryWorker.autonomous],["deliver",data.BASE,false]);
+    assert.equal(sim.draftPending(),null,"a partial worker delivery dealt a reward");
+    sim.state.workers.length=0;
+    // Mixed player loads commit only outstanding demand. Everything else becomes loose.
+    sim.state.carried.stone=2;sim.state.carried.wood=7;
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
-    assert.deepEqual(sim.mainBaseStatus().delivered,{...zero(),stone:4},"a partial base delivery was not banked");
-    assert.deepEqual({...sim.state.stored},{...zero(),wood:7},"resources the recipe cannot use must land in storage");
+    assert.deepEqual(sim.mainBaseStatus().delivered,{...zero(),stone:6},"player and worker progress did not share one recipe");
+    assert.equal(sim.resourceDrops.filter(item=>item.kind==="wood").length,7,"resources outside the recipe must stay loose");
     assert.deepEqual({...sim.state.carried},zero());
     assert.equal(sim.draftPending(),null,"a partial delivery paid a reward");
-    // One release, at most ONE level: 30 stone finishes level 2 with 10 and stores the other 24.
+    // One release completes at most one level; excess stays loose and cannot fund the next recipe.
     sim.state.carried.stone=30;
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
     assert.equal(sim.state.baseLevel,2,"an oversized release must complete exactly one level");
     assert.deepEqual(sim.mainBaseStatus(),{level:2,maxLevel:30,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[2].cost,delivered:zero()},"a completed level must clear its progress and charge the next recipe");
-    assert.deepEqual({...sim.state.stored},{...zero(),wood:7,stone:24},"the remainder of a level-completing release must land in storage");
+    assert.equal(sim.resourceDrops.filter(item=>item.kind==="stone").length,26,"the level-completing release must leave its remainder loose");
     takeRewardOffer("base");
-    // Repeating the release at a level that is already paid changes nothing but storage.
+    // Level 3 wants both resources. Partial progress remains shared.
     sim.state.carried.stone=5;
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
     assert.deepEqual(sim.mainBaseStatus().delivered,{...zero(),stone:5});
     assert.equal(sim.state.baseLevel,2);assert.equal(sim.draftPending(),null,"a repeated release duplicated a base reward");
-    // Level 3 wants BOTH resources. Later recipes remain authored rather than extrapolated.
-    sim.state.carried.wood=data.MAIN_BASE_LEVELS[2].cost.wood;sim.state.carried.stone=data.MAIN_BASE_LEVELS[2].cost.stone;
+    sim.state.carried.wood=data.MAIN_BASE_LEVELS[2].cost.wood;sim.state.carried.stone=5;
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
     assert.equal(sim.state.baseLevel,3);
     assert.deepEqual(sim.mainBaseStatus(),{level:3,maxLevel:30,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[3].cost,delivered:zero()});
-    assert.deepEqual({...sim.state.stored},{...zero(),wood:7,stone:24+5},"level 3 must consume exactly its recipe, five of it already banked");
+    assert.equal(sim.resourceDrops.filter(item=>item.kind==="stone").length,31,"already-paid recipe resources must remain loose");
     takeRewardOffer("base");
-    // At level 30 every deposit is storage, however large, and nothing is ever rewarded again.
-    sim.state.baseLevel=30;
+    // At level 30 there is no work: workers are rejected and player resources stay loose.
+    sim.state.baseLevel=30;sim.state.baseDelivery=null;
     assert.deepEqual(sim.mainBaseStatus(),{level:30,maxLevel:30,atMaxLevel:true,cost:null,delivered:zero()});
+    const rejected=deliveryWorker;rejected.job="free";rejected.jobTarget=null;rejected.autonomous=true;
+    assert.equal(sim.workerAssignmentAt(rejected,data.BASE.x,data.BASE.y),null,"a maxed Base accepted a worker");
+    const dropsBeforeMax=sim.resourceDrops.length;
     sim.state.carried.wood=40;sim.state.carried.stone=40;
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
-    assert.deepEqual({...sim.state.stored},{...zero(),wood:47,stone:69});
+    assert.equal(sim.resourceDrops.length,dropsBeforeMax+80,"a maxed Base swallowed player resources");
     assert.deepEqual(sim.mainBaseStatus().delivered,zero());
     assert.equal(sim.draftPending(),null,"a maxed base kept paying rewards");
     // A free-cost sweep cannot re-complete a standing base, so it cannot re-pay one either.
     sim.DBG.freeCosts=true;sim.debugSweepFreeCosts();sim.DBG.freeCosts=false;
     assert.equal(sim.state.baseLevel,30);assert.equal(sim.draftPending(),null,"the free-cost sweep duplicated a base reward");
-    sim.state.baseLevel=31;
+    sim.state.baseLevel=31;sim.state.baseDelivery=null;
     assert.throws(()=>sim.mainBaseStatus(),/illegal base level 31/,"a level past the authored table must crash");
-    sim.state.baseLevel=30;
-    for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;
+    sim.state.baseLevel=30;sim.state.baseDelivery=null;
     // Queue priority when several rewards are banked behind one live offer: base levels, then dawn,
     // then consumables. Start with a consumable on screen, then bank the other three kinds.
     assert.equal(sim.debugQueueDraft("consumable"),true);
@@ -790,9 +789,10 @@ try{
       import * as sim from "./src/game/simulation.js";
       import * as data from "./src/game/data.js";
       import {cellToWorld} from "./src/game/grid.js";
+      import {createDeliveryWork} from "./src/game/delivery-work.js";
       let seed=0x51a7;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       const counts=()=>({wood:0,stone:0,dust:0,coin:0,diamond:0});
-      const building=(type,x,y,complete=true,cost={wood:1,stone:0})=>({type,x,y,complete,cost,delivered:counts(),storage:counts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:null,pulse:0,starved:false});
+      const building=(type,x,y,complete=true,cost={wood:1,stone:0})=>({type,x,y,complete,delivery:complete?(type==="consumableForge"?createDeliveryWork({dust:data.CONSUMABLE_FORGE.dustCost}):null):createDeliveryWork(cost),storage:counts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:null,pulse:0,starved:false});
       const worker=(job,target,x,y)=>({x,y,postX:x,postY:y+20,spawnSource:null,job,jobTarget:target,autonomous:false,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:counts(),hp:data.WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,guardSafeTime:0});
       const freeWorker=(x,y)=>({...worker("free",null,x,y),postY:y,autonomous:true});
       const drop=(kind,x,y)=>({kind,x,y,groundY:y,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null});
@@ -801,7 +801,7 @@ try{
       // A pending draft offer freezes the whole world, so any scenario that crosses a real dawn
       // clears the reward it just earned before it measures anything else.
       const clearDraft=()=>sim.debugClearDraft();
-      const reset=()=>{sim.buildings.length=sim.resourceDrops.length=sim.chests.length=sim.state.workers.length=sim.state.enemies.length=sim.trees.length=sim.rocks.length=sim.diamonds.length=0;for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;sim.state.clock.phase="day";sim.state.clock.remaining=data.DAY_DURATION;sim.state.paused=sim.state.gameOver=false;sim.state.coinTimer=99999;clearDraft();Object.assign(sim.state.nightWave,{activePlan:null,threatBudget:0,spawnedThreat:0,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,activeNightNumber:null});sim.DBG.groundSourcing=sim.DBG.builderSelfSupply=true;sim.DBG.instantWorkers=false;sim.TUNE.builderSourceRadius=300;sim.TUNE.freeSearchRadius=200;sim.TUNE.fleeHpThreshold=1;};
+      const reset=()=>{sim.buildings.length=sim.resourceDrops.length=sim.chests.length=sim.state.workers.length=sim.state.enemies.length=sim.trees.length=sim.rocks.length=sim.diamonds.length=0;sim.state.clock.phase="day";sim.state.clock.remaining=data.DAY_DURATION;sim.state.paused=sim.state.gameOver=false;sim.state.coinTimer=99999;clearDraft();Object.assign(sim.state.nightWave,{activePlan:null,threatBudget:0,spawnedThreat:0,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,activeNightNumber:null});sim.DBG.deliveryGroundSourcing=sim.DBG.deliverySelfSupply=true;sim.DBG.instantWorkers=false;sim.TUNE.deliverySourceRadius=300;sim.TUNE.freeSearchRadius=200;sim.TUNE.fleeHpThreshold=1;};
       // Night without a wave: a positive spawn budget that is never due keeps the clearance check
       // from auto-dawning the moment the phase flips, so night behavior can be measured on its own.
       const holdNight=()=>{sim.state.clock.phase="night";sim.state.nightWave.remainingSpawns=1;sim.state.nightWave.nextSpawnAt=1e9;};
@@ -861,64 +861,71 @@ try{
         // Limit is MAIN_BASE.jobSlots and its runtime post is the BASE anchor, not this construction
         // record; authoring jobSlots on the row would open a second two-slot pool at the same
         // coordinates. The base's own occupancy is asserted against BASE further down.
-        assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2],["scoutHut",2],["garrison",3]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);
+        assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2],["scoutHut",2],["garrison",3],["consumableForge",2]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);
         assert.equal(data.BUILDING_TYPES.mainBase.jobSlots,undefined,"the base site row must not restate the completed base's Worker Limit");
         assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{mainBase:2,lumber:2,quarry:3,stockpile:2,house:2,scoutHut:2,rangeBeacon:2,warShrine:2,wardTotem:2,hasteTotem:2,obelisk:3,tower:3,captureYard:3,garrison:2,consumableForge:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0,fireballTarget:0});
-        assert.equal(sim.DBG.groundSourcing,true);assert.equal(sim.TUNE.builderSourceRadius,400);
+        assert.equal(sim.DBG.deliveryGroundSourcing,true);assert.equal(sim.TUNE.deliverySourceRadius,400);
         // Camps and quarries are pure WORK buildings: they grow nothing, ever. Their value is the
         // staffed-gather rate on wild nodes inside serviceRadius (covered by the staffing tests).
         reset();{const anchor=cellToWorld(20,20),camp=building("lumber",anchor.x,anchor.y),quarry=building("quarry",anchor.x+256,anchor.y);sim.buildings.push(camp,quarry);step(35*60);assert.equal(sim.trees.length,0,"a lumber camp must not grow trees");assert.equal(sim.rocks.length,0,"a quarry must not grow rocks");}
-        reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",104,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=false;step();assert.equal(builder.taskTarget,null);assert.ok(builder.carried.wood>0);assert.equal(loose.claimedBy,undefined);}
-        reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",130,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.taskTarget,loose);assert.equal(loose.claimedBy,builder);assert.equal(store.storage.wood,3);sim.DBG.groundSourcing=false;sim.TUNE.builderSourceRadius=60;step();assert.equal(builder.taskTarget,loose);}
-        reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=1;const builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.carried.wood,1);}
-        reset();{const site=building("tower",100,100,false,{wood:0,stone:0,dust:1}),store=building("stockpile",110,100),builder=worker("build",site,100,100);store.storage.dust=1;sim.buildings.push(site,store);sim.state.workers.push(builder);step();assert.equal(builder.carried.dust,1,"builders must haul variant materials");step();assert.equal(site.complete,true,"variant material did not finish the one tower build");assert.equal(sim.draftPending(),null,"an ordinary completion must pay no draft");}
-        reset();{const site=building("lumber",100,100,false),builder=worker("build",site,100,100);sim.buildings.push(site);sim.state.workers.push(builder);step();assert.equal(builder.starved,true);}
-        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step();assert.equal(builder.job,"build");assert.equal(builder.jobTarget,site);assert.equal(builder.selfSupply.node,tree);step(600);assert.equal(site.complete,true);assert.equal(site.delivered.wood,1);assert.equal(sim.draftPending(),null,"an ordinary completion must pay no draft");assert.equal(builder.job,"staff","manual builder must inherit the durable post it stood up");assert.equal(builder.jobTarget,site);assert.equal(builder.autonomous,false);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);}
-        reset();{const site=building("tower",100,100,false,{wood:1,stone:1}),tree={x:190,y:100,hp:3,max:3,stump:0,shake:0},rock={x:130,y:100,hp:3,max:3,depleted:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.rocks.push(rock);sim.state.workers.push(builder);step();assert.deepEqual(builder.selfSupply,{kind:"stone",node:rock},"nearest needed node must win across kinds");}
-        reset();{const site=building("tower",100,100,false,{wood:1,stone:1}),tree={x:130,y:100,hp:3,max:3,stump:0,shake:0},rock={x:190,y:100,hp:3,max:3,depleted:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.rocks.push(rock);sim.state.workers.push(builder);step();assert.deepEqual(builder.selfSupply,{kind:"wood",node:tree},"nearest needed node must win across kinds");}
-        reset();{const site=building("tower",100,100,false,{wood:2,stone:0}),tree={x:170,y:100,hp:6,max:6,stump:0,shake:0},a=worker("build",site,100,100),b=worker("build",site,102,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(a,b);step();assert.ok(a.selfSupply||b.selfSupply);assert.equal([a,b].filter(item=>item.selfSupply).length,1,"node/self-supply reservation duplicated");step(700);assert.equal(site.delivered.wood,site.cost.wood);assert.equal(site.complete,true,"builders must reselect without over-delivery");}
-        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step(90);assert.ok(builder.selfSupply);sim.setPointerWorld(builder.x,builder.y);sim.secondaryPress();assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);sim.pointerCancelled();}
-        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step(90);builder.hp=1;sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=builder.x+5;danger.y=builder.y;step();assert.equal(builder.fleeing,true);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);assert.equal(builder.job,"build");assert.equal(builder.jobTarget,site);}
-        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);sim.DBG.builderSelfSupply=false;step();assert.equal(builder.starved,true);assert.equal(builder.selfSupply,null);assert.equal(builder.x,100);assert.ok(builder.y>100&&builder.y<=builder.postY);}
-        reset();{const site=building("lumber",100,100,false),loose=drop("wood",105,100),builder=worker("build",site,100,100);sim.buildings.push(site);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.taskTarget,loose);}
-        reset();{const site=building("lumber",100,100,false,{wood:2,stone:0}),a=worker("build",site,100,100),b=worker("build",site,101,100),one=drop("wood",104,100),two=drop("wood",106,100);sim.buildings.push(site);sim.resourceDrops.push(one,two);sim.state.workers.push(a,b);sim.DBG.groundSourcing=true;step();assert.ok(a.taskTarget&&b.taskTarget);assert.notEqual(a.taskTarget,b.taskTarget);step(500);assert.ok(site.delivered.wood<=site.cost.wood);assert.equal(site.complete,true);assert.equal(a.job,"staff");assert.equal(a.jobTarget,site);}
-        reset();{const site=building("lumber",100,100,false),a=worker("build",site,100,100),b=worker("build",site,101,100),c=worker("build",site,102,100);a.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(a,b,c);step();assert.equal(site.complete,true);assert.equal(sim.workerOccupancyStatus(site).assigned,2);assert.deepEqual([a,b,c].map(item=>item.job).sort(),["free","staff","staff"],"the over-capacity manual builder must return to free, never guard");const spare=[a,b,c].find(item=>item.job==="free");assert.equal(spare.jobTarget,null);assert.equal(spare.autonomous,true);}
+        reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",104,100),builder=worker("deliver",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.deliveryGroundSourcing=false;step();assert.equal(builder.taskTarget,null);assert.ok(builder.carried.wood>0);assert.equal(loose.claimedBy,undefined);}
+        reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",130,100),builder=worker("deliver",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.deliveryGroundSourcing=true;step();assert.equal(builder.taskTarget,loose);assert.equal(loose.claimedBy,builder);assert.equal(store.storage.wood,3);sim.DBG.deliveryGroundSourcing=false;sim.TUNE.deliverySourceRadius=60;step();assert.equal(builder.taskTarget,loose);}
+        reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=1;const builder=worker("deliver",site,100,100);sim.buildings.push(site,store);sim.state.workers.push(builder);sim.DBG.deliveryGroundSourcing=true;step();assert.equal(builder.carried.wood,1);}
+        reset();{const site=building("tower",100,100,false,{dust:1,coin:1,diamond:1}),store=building("stockpile",110,100),builder=worker("deliver",site,100,100);store.storage.dust=store.storage.coin=store.storage.diamond=1;sim.buildings.push(site,store);sim.state.workers.push(builder);step();assert.deepEqual(builder.carried,{wood:0,stone:0,dust:1,coin:1,diamond:1},"Delivery Workers must fetch every recipe resource");step();assert.equal(site.complete,true,"non-basic materials did not finish the tower");assert.equal(sim.draftPending(),null,"an ordinary completion must pay no draft");}
+        // Forge batches use the same Delivery Work path and two-slot occupancy. Manual orders
+        // persist into the fresh batch; an autonomous sample ends after one completion.
+        reset();{const forge=building("consumableForge",100,100),manual=worker("deliver",forge,100,100),second=worker("deliver",forge,102,100),third=freeWorker(104,100);manual.carried.dust=5;sim.buildings.push(forge);sim.state.workers.push(manual,second,third);assert.deepEqual(sim.workerOccupancyStatus(forge),{target:forge,assigned:2,capacity:2});assert.equal(sim.workerAssignmentAt(third,forge.x,forge.y),null);step(60);assert.equal(sim.draftKind(),"consumable");assert.equal(forge.delivery.delivered.dust,0);assert.deepEqual([manual.job,manual.jobTarget,manual.autonomous],["deliver",forge,false],"manual Forge work must persist into the next batch");clearDraft();}
+        reset();{const forge=building("consumableForge",100,100),auto=worker("deliver",forge,100,100);auto.autonomous=true;auto.carried.dust=5;sim.buildings.push(forge);sim.state.workers.push(auto);step(60);assert.equal(sim.draftKind(),"consumable");assert.deepEqual([auto.job,auto.jobTarget,auto.autonomous],["free",null,true],"an autonomous Forge sample must end after one batch");clearDraft();}
+        reset();{const forge=building("consumableForge",300,300),idle=freeWorker(320,300);sim.buildings.push(forge);sim.state.workers.push(idle);sweep();assert.deepEqual([idle.job,idle.jobTarget,idle.autonomous],["deliver",forge,true],"a free worker must sample completed Forge Delivery Work");}
+        reset();{const site=building("lumber",100,100,false),builder=worker("deliver",site,100,100);sim.buildings.push(site);sim.state.workers.push(builder);step();assert.equal(builder.starved,true);}
+        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("deliver",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step();assert.equal(builder.job,"deliver");assert.equal(builder.jobTarget,site);assert.equal(builder.selfSupply.node,tree);step(600);assert.equal(site.complete,true);assert.equal(site.delivery,null,"completed construction must release its Delivery Work");assert.equal(sim.draftPending(),null,"an ordinary completion must pay no draft");assert.equal(builder.job,"staff","manual Delivery Worker must inherit the durable post it stood up");assert.equal(builder.jobTarget,site);assert.equal(builder.autonomous,false);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);}
+        reset();{const site=building("tower",100,100,false,{wood:1,stone:1}),tree={x:190,y:100,hp:3,max:3,stump:0,shake:0},rock={x:130,y:100,hp:3,max:3,depleted:0,shake:0},builder=worker("deliver",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.rocks.push(rock);sim.state.workers.push(builder);step();assert.deepEqual(builder.selfSupply,{kind:"stone",node:rock},"nearest needed node must win across kinds");}
+        reset();{const site=building("tower",100,100,false,{wood:1,stone:1}),tree={x:130,y:100,hp:3,max:3,stump:0,shake:0},rock={x:190,y:100,hp:3,max:3,depleted:0,shake:0},builder=worker("deliver",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.rocks.push(rock);sim.state.workers.push(builder);step();assert.deepEqual(builder.selfSupply,{kind:"wood",node:tree},"nearest needed node must win across kinds");}
+        reset();{const site=building("tower",100,100,false,{wood:2,stone:0}),tree={x:170,y:100,hp:6,max:6,stump:0,shake:0},a=worker("deliver",site,100,100),b=worker("deliver",site,102,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(a,b);step();assert.ok(a.selfSupply||b.selfSupply);assert.equal([a,b].filter(item=>item.selfSupply).length,1,"node/self-supply reservation duplicated");step(700);assert.equal(site.delivery,null);assert.equal(site.complete,true,"Delivery Workers must reselect without over-delivery");}
+        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("deliver",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step(90);assert.ok(builder.selfSupply);sim.setPointerWorld(builder.x,builder.y);sim.secondaryPress();assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);sim.pointerCancelled();}
+        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("deliver",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step(90);builder.hp=1;sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=builder.x+5;danger.y=builder.y;step();assert.equal(builder.fleeing,true);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);assert.equal(builder.job,"deliver");assert.equal(builder.jobTarget,site);}
+        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("deliver",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);sim.DBG.deliverySelfSupply=false;step();assert.equal(builder.starved,true);assert.equal(builder.selfSupply,null);assert.equal(builder.x,100);assert.ok(builder.y>100&&builder.y<=builder.postY);}
+        reset();{const site=building("lumber",100,100,false),loose=drop("wood",105,100),builder=worker("deliver",site,100,100);sim.buildings.push(site);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.deliveryGroundSourcing=true;step();assert.equal(builder.taskTarget,loose);}
+        reset();{const site=building("lumber",100,100,false,{wood:2,stone:0}),a=worker("deliver",site,100,100),b=worker("deliver",site,101,100),one=drop("wood",104,100),two=drop("wood",106,100);sim.buildings.push(site);sim.resourceDrops.push(one,two);sim.state.workers.push(a,b);sim.DBG.deliveryGroundSourcing=true;step();assert.ok(a.taskTarget&&b.taskTarget);assert.notEqual(a.taskTarget,b.taskTarget);step(500);assert.equal(site.delivery,null);assert.equal(site.complete,true);assert.equal(a.job,"staff");assert.equal(a.jobTarget,site);}
+        reset();{const site=building("lumber",100,100,false),a=worker("deliver",site,100,100),b=worker("deliver",site,101,100),c=worker("deliver",site,102,100);a.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(a,b,c);step();assert.equal(site.complete,true);assert.equal(sim.workerOccupancyStatus(site).assigned,2);assert.deepEqual([a,b,c].map(item=>item.job).sort(),["free","staff","staff"],"the over-capacity manual builder must return to free, never guard");const spare=[a,b,c].find(item=>item.job==="free");assert.equal(spare.jobTarget,null);assert.equal(spare.autonomous,true);}
         // Camp/quarry slots ARE auto-filled: a newborn spawns free, then the next sweep claims the
         // nearest vacant camp slot as autonomous staff. Stockpile posts stay manual-only.
         reset();{const house=building("house",500,500),near=building("lumber",560,500),far=building("stockpile",700,500);house.spawnTimer=0;sim.buildings.push(house,near,far);sim.DBG.instantWorkers=true;step();const born=sim.state.workers[0];assert.equal(born.job,"free");assert.equal(born.jobTarget,null);assert.equal(born.autonomous,true);sweep();assert.equal(sim.durablePostStatus(near).assigned,Math.min(sim.state.workers.length,data.BUILDING_TYPES.lumber.jobSlots),"idle workers must claim vacant camp slots");assert.equal(born.job,"staff");assert.equal(born.jobTarget,near);assert.equal(born.autonomous,true);assert.equal(sim.durablePostStatus(far).assigned,0,"the scheduler must never staff a stockpile");}
         reset();{sim.trees.length=sim.rocks.length=sim.diamonds.length=0;const first=building("lumber",300,300),second=building("quarry",600,300),staff=worker("staff",first,first.x,first.y+16);staff.postX=first.x;staff.postY=first.y+16;sim.buildings.push(first,second);sim.state.workers.push(staff);step();assert.equal(sim.durablePostStatus(first).arrived,1);sim.setPointerWorld(staff.x,staff.y);sim.secondaryPress();sim.setPointerWorld(second.x,second.y);sim.secondaryRelease();assert.equal(staff.jobTarget,second);assert.equal(sim.durablePostStatus(first).assigned,0);assert.equal(sim.durablePostStatus(second).arrived,0);step();assert.equal(sim.durablePostStatus(second).arrived,0);step(600);assert.equal(sim.durablePostStatus(second).arrived,1);}
-        reset();{const site=building("lumber",300,300,false),builder=worker("build",site,site.x,site.y);builder.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(builder);step();assert.equal(site.complete,true);assert.equal(builder.jobTarget,site);assert.equal(sim.durablePostStatus(site).arrived,0);step(20);assert.equal(sim.durablePostStatus(site).arrived,1);}
+        reset();{const site=building("lumber",300,300,false),builder=worker("deliver",site,site.x,site.y);builder.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(builder);step();assert.equal(site.complete,true);assert.equal(builder.jobTarget,site);assert.equal(sim.durablePostStatus(site).arrived,0);step(20);assert.equal(sim.durablePostStatus(site).arrived,1);}
         reset();{const house=building("house",500,500);house.spawnTimer=0;sim.buildings.push(house);sim.DBG.instantWorkers=true;step();const born=sim.state.workers[0];assert.equal(born.job,"free");assert.equal(born.jobTarget,null);assert.equal(born.autonomous,true);assert.equal(born.spawnSource,house);assert.equal(born.postX,house.x);assert.equal(born.postY,house.y+23);step(5);assert.equal(sim.state.workers.length,data.HOUSE_SLOTS,"a completed house must fill exactly its authored slots");assert.equal(sim.state.workers.every(item=>item.job==="free"&&item.autonomous),true);}
         reset();{const house=building("house",500,500),camp=building("lumber",550,500);house.spawnTimer=0;const staff=worker("staff",camp,camp.x,camp.y+16);staff.spawnSource=house;staff.postX=camp.x;staff.postY=camp.y+16;sim.buildings.push(house,camp);sim.state.workers.push(staff);sim.setPointerWorld(staff.x,staff.y);sim.secondaryPress();assert.equal(sim.heldWorker(),staff);assert.equal(sim.durablePostStatus(camp).assigned,1,"a held staffer must keep its slot reserved");sim.DBG.instantWorkers=true;sweep();assert.equal(staff.jobTarget,camp,"lifting a staffer must not void its posting");assert.ok(sim.durablePostStatus(camp).assigned<=data.BUILDING_TYPES.lumber.jobSlots,"newborns may only fill OPEN slots, never the held worker's");sim.pointerCancelled();assert.ok(sim.durablePostStatus(camp).assigned<=data.BUILDING_TYPES.lumber.jobSlots,"returning the held staffer must not overfill the post");}
         reset();{sim.trees.length=sim.rocks.length=sim.diamonds.length=0;const tree={x:200,y:200,hp:3,max:3,stump:0};sim.trees.push(tree);const first=worker("harvest",{node:tree,kind:"wood"},200,200),held=freeWorker(210,200);sim.state.workers.push(first,held);assert.deepEqual(sim.workerOccupancyStatus(tree),{target:tree,assigned:1,capacity:1});assert.equal(sim.workerAssignmentAt(held,tree.x,tree.y),null);sim.setPointerWorld(first.x,first.y);sim.secondaryPress();assert.equal(sim.workerOccupancyStatus(tree).assigned,1);assert.ok(sim.workerAssignmentAt(first,tree.x,tree.y));sim.pointerCancelled();}
         reset();{sim.trees.length=sim.rocks.length=sim.diamonds.length=0;const one={x:200,y:200,hp:3,max:3,stump:0},two={x:240,y:200,hp:3,max:3,stump:0};sim.trees.push(one,two);const a=worker("harvest",{node:one,kind:"wood"},200,200),b=worker("harvest",{node:null,kind:"wood"},220,200);sim.state.workers.push(a,b);step();assert.equal(b.jobTarget.node,two);assert.equal(sim.workerOccupancyStatus(one).assigned,1);assert.equal(sim.workerOccupancyStatus(two).assigned,1);}
         reset();{const camp=building("lumber",300,300),a=worker("staff",camp,300,316),b=worker("staff",camp,301,316),held=freeWorker(310,300);sim.buildings.push(camp);sim.state.workers.push(a,b,held);assert.equal(sim.workerOccupancyStatus(camp).assigned,2);assert.equal(sim.workerAssignmentAt(held,camp.x,camp.y),null);sim.setPointerWorld(a.x,a.y);sim.secondaryPress();assert.equal(sim.workerOccupancyStatus(camp).assigned,2);assert.ok(sim.workerAssignmentAt(a,camp.x,camp.y));sim.pointerCancelled();}
-        reset();{const site=building("tower",300,300,false),a=worker("build",site,300,320),b=worker("build",site,301,320),c=worker("build",site,302,320),held=freeWorker(310,300);sim.buildings.push(site);sim.state.workers.push(a,b,c,held);assert.deepEqual(sim.workerOccupancyStatus(site),{target:site,assigned:3,capacity:3});assert.equal(sim.workerAssignmentAt(held,site.x,site.y),null);sim.setPointerWorld(a.x,a.y);sim.secondaryPress();assert.equal(sim.workerOccupancyStatus(site).assigned,3);assert.ok(sim.workerAssignmentAt(a,site.x,site.y));sim.pointerCancelled();assert.equal(sim.debugApplyBuff("buildCapacity"),true);assert.equal(sim.workerOccupancyStatus(site).capacity,4);assert.ok(sim.workerAssignmentAt(held,site.x,site.y));delete sim.state.draft.buffs.buildCapacity;}
+        reset();{const site=building("tower",300,300,false),a=worker("deliver",site,300,320),b=worker("deliver",site,301,320),c=worker("deliver",site,302,320),held=freeWorker(310,300);sim.buildings.push(site);sim.state.workers.push(a,b,c,held);assert.deepEqual(sim.workerOccupancyStatus(site),{target:site,assigned:3,capacity:3});assert.equal(sim.workerAssignmentAt(held,site.x,site.y),null);sim.setPointerWorld(a.x,a.y);sim.secondaryPress();assert.equal(sim.workerOccupancyStatus(site).assigned,3);assert.ok(sim.workerAssignmentAt(a,site.x,site.y));sim.pointerCancelled();assert.equal(sim.debugApplyBuff("buildCapacity"),true);assert.equal(sim.workerOccupancyStatus(site).capacity,4);assert.ok(sim.workerAssignmentAt(held,site.x,site.y));delete sim.state.draft.buffs.buildCapacity;}
         reset();{sim.trees.length=sim.rocks.length=sim.diamonds.length=0;const tree={x:200,y:200,hp:3,max:3,stump:0},camp=building("lumber",232,200),far=building("quarry",264,200);sim.trees.push(tree);sim.buildings.push(far,camp);assert.equal(sim.workerOccupancyAt(camp.x,camp.y).target,camp);assert.equal(sim.workerOccupancyAt(far.x,far.y).target,far);tree.stump=1;sim.buildings.length=0;assert.equal(sim.workerOccupancyAt(tree.x,tree.y),null);}
         // ── the free-worker scheduler: bounded autonomous job selection ──
         assert.equal(sim.TUNE.freeSearchRadius,200);
         // Same-tier strict priority: a blueprint outranks a nearer covered drop and a nearby node.
-        reset();{const site=building("lumber",300,300,false,{wood:99,stone:0}),store=building("stockpile",360,300),tree={x:270,y:300,hp:9,max:9,stump:0,shake:0},loose=drop("wood",310,330),idle=freeWorker(300,340);sim.buildings.push(site,store);sim.trees.push(tree);sim.resourceDrops.push(loose);sim.state.workers.push(idle);sweep();assert.equal(idle.job,"build","construction must outrank hauling and gathering in one tier");assert.equal(idle.jobTarget,site);assert.equal(idle.autonomous,true);}
+        reset();{const site=building("lumber",300,300,false,{wood:99,stone:0}),store=building("stockpile",360,300),tree={x:270,y:300,hp:9,max:9,stump:0,shake:0},loose=drop("wood",310,330),idle=freeWorker(300,340);sim.buildings.push(site,store);sim.trees.push(tree);sim.resourceDrops.push(loose);sim.state.workers.push(idle);sweep();assert.equal(idle.job,"deliver","construction must outrank hauling and gathering in one tier");assert.equal(idle.jobTarget,site);assert.equal(idle.autonomous,true);}
+        // Delivery target type has no priority: nearest outstanding work wins.
+        reset();{const forge=building("consumableForge",350,300),site=building("lumber",500,300,false,{wood:99}),idle=freeWorker(300,300);sim.buildings.push(site,forge);sim.state.workers.push(idle);sweep();assert.deepEqual([idle.job,idle.jobTarget],["deliver",forge],"the scheduler prioritized construction over a nearer Forge recipe");}
         // Tier precedence: a haulable drop in the local tier beats a blueprint in the expanded tier.
         reset();{const site=building("lumber",580,300,false,{wood:99,stone:0}),store=building("stockpile",300,300),loose=drop("wood",320,300),idle=freeWorker(400,300);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(idle);sweep();assert.equal(idle.job,"haul","local hauling must beat expanded construction");assert.equal(idle.jobTarget,store);assert.equal(loose.claimedBy,idle,"the chosen drop must be reserved at assignment");assert.equal(idle.autonomous,true);}
         // Local gathering beats expanded construction: one tier is evaluated completely before expanding.
         reset();{const site=building("lumber",540,300,false,{wood:99,stone:0}),tree={x:440,y:300,hp:9,max:9,stump:0,shake:0},idle=freeWorker(340,300);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(idle);sweep();assert.equal(idle.job,"harvest","a local node must beat an expanded blueprint");assert.equal(idle.jobTarget.node,tree);assert.equal(idle.autonomous,true);}
         // The expanded tier is bounded by the tunable search radius and reaches past the local leash.
-        reset();{const site=building("lumber",540,300,false,{wood:99,stone:0}),idle=freeWorker(340,300);sim.buildings.push(site);sim.state.workers.push(idle);sim.TUNE.freeSearchRadius=180;sweep();assert.equal(idle.job,"free","work beyond the expanded radius must stay out of reach");sim.TUNE.freeSearchRadius=200;sweep();assert.equal(idle.job,"build");assert.equal(idle.jobTarget,site);}
+        reset();{const site=building("lumber",540,300,false,{wood:99,stone:0}),idle=freeWorker(340,300);sim.buildings.push(site);sim.state.workers.push(idle);sim.TUNE.freeSearchRadius=180;sweep();assert.equal(idle.job,"free","work beyond the expanded radius must stay out of reach");sim.TUNE.freeSearchRadius=200;sweep();assert.equal(idle.job,"deliver");assert.equal(idle.jobTarget,site);}
         // Nearest candidate wins; an exact-distance tie keeps stable collection order.
         reset();{const near={x:400,y:300,hp:9,max:9,stump:0,shake:0},far={x:410,y:300,hp:9,max:9,stump:0,shake:0},idle=freeWorker(300,300);sim.trees.push(far,near);sim.state.workers.push(idle);sweep();assert.equal(idle.jobTarget.node,near,"the nearest viable node must win");}
         reset();{const first={x:400,y:300,hp:9,max:9,stump:0,shake:0},second={x:200,y:300,hp:9,max:9,stump:0,shake:0},idle=freeWorker(300,300);sim.trees.push(first,second);sim.state.workers.push(idle);sweep();assert.equal(idle.jobTarget.node,first,"an exact-distance tie must keep collection order");}
         // Multiple free workers in one sweep spread across sites by proximity, honoring build capacity.
-        reset();{const first=building("lumber",300,300,false,{wood:99,stone:0}),second=building("lumber",500,300,false,{wood:99,stone:0}),a=freeWorker(310,300),b=freeWorker(320,300),c=freeWorker(490,300);sim.buildings.push(first,second);sim.state.workers.push(c,b,a);sweep();assert.equal(sim.workerOccupancyStatus(first).assigned,2);assert.equal(sim.workerOccupancyStatus(second).assigned,1);assert.equal(c.jobTarget,second);assert.equal([a,b,c].every(item=>item.job==="build"&&item.autonomous),true);}
+        reset();{const first=building("lumber",300,300,false,{wood:99,stone:0}),second=building("lumber",500,300,false,{wood:99,stone:0}),a=freeWorker(310,300),b=freeWorker(320,300),c=freeWorker(490,300);sim.buildings.push(first,second);sim.state.workers.push(c,b,a);sweep();assert.equal(sim.workerOccupancyStatus(first).assigned,2);assert.equal(sim.workerOccupancyStatus(second).assigned,1);assert.equal(c.jobTarget,second);assert.equal([a,b,c].every(item=>item.job==="deliver"&&item.autonomous),true);}
         // An autonomous builder joins a manually assigned one and full slots turn later workers away.
-        reset();{const site=building("lumber",300,300,false,{wood:99,stone:0}),manual=worker("build",site,300,320),near=freeWorker(310,300),far=freeWorker(330,300);sim.buildings.push(site);sim.state.workers.push(manual,far,near);sweep();assert.equal(sim.workerOccupancyStatus(site).assigned,2);assert.equal([near,far].filter(item=>item.job==="build").length,1,"build slots must cap autonomous joiners");assert.equal([near,far].filter(item=>item.job==="free").length,1);assert.equal(manual.job,"build");assert.equal(manual.autonomous,false);}
+        reset();{const site=building("lumber",300,300,false,{wood:99,stone:0}),manual=worker("deliver",site,300,320),near=freeWorker(310,300),far=freeWorker(330,300);sim.buildings.push(site);sim.state.workers.push(manual,far,near);sweep();assert.equal(sim.workerOccupancyStatus(site).assigned,2);assert.equal([near,far].filter(item=>item.job==="deliver").length,1,"build slots must cap autonomous joiners");assert.equal([near,far].filter(item=>item.job==="free").length,1);assert.equal(manual.job,"deliver");assert.equal(manual.autonomous,false);}
         // Autonomous construction releases to free (no manual-style inheritance), then the ordinary
         // sweep re-posts the worker into the vacant slot it just stood up — as AUTONOMOUS staff.
-        reset();{const site=building("lumber",300,300,false),auto=worker("build",site,300,300);auto.autonomous=true;auto.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(auto);step(20);assert.equal(site.complete,true);sweep();assert.equal(auto.job,"staff","the sweep must post the freed builder to the vacant camp slot");assert.equal(auto.jobTarget,site);assert.equal(auto.autonomous,true,"scheduler staffing must stay autonomous, unlike manual inheritance");assert.equal(sim.durablePostStatus(site).assigned,1);}
+        reset();{const site=building("lumber",300,300,false),auto=worker("deliver",site,300,300);auto.autonomous=true;auto.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(auto);step(20);assert.equal(site.complete,true);sweep();assert.equal(auto.job,"staff","the sweep must post the freed builder to the vacant camp slot");assert.equal(auto.jobTarget,site);assert.equal(auto.autonomous,true,"scheduler staffing must stay autonomous, unlike manual inheritance");assert.equal(sim.durablePostStatus(site).assigned,1);}
         // Autonomous hauling honors its reservation, collects a batch, deposits, then returns free.
         reset();{const store=building("stockpile",300,300),hauler=freeWorker(320,300),dust=drop("dust",321,300);sim.buildings.push(store);sim.resourceDrops.push(dust,drop("wood",330,300),drop("wood",340,300),drop("stone",350,300));sim.state.workers.push(hauler);sweep();assert.equal(hauler.job,"haul");assert.ok(hauler.taskTarget);assert.notEqual(hauler.taskTarget,dust,"workers must skip loose dust even when it is nearest");step(900);assert.equal(store.storage.wood,2);assert.equal(store.storage.stone,1);assert.equal(store.storage.dust,0);assert.equal(hauler.job,"free","a deposited batch must end the autonomous haul");assert.deepEqual(sim.resourceDrops,[dust],"loose dust must remain for the player");}
-        // Manual builders of a post-less building (a tower has no durable job) also resolve to free.
-        reset();{const site=building("tower",300,300,false,{wood:1,stone:0}),a=worker("build",site,300,300),b=worker("build",site,301,300);a.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(a,b);step(20);assert.equal(site.complete,true);assert.deepEqual([a.job,b.job],["free","free"],"completing a post-less building must free its builders, not mint guards");}
+        // Manual Delivery Workers on a post-less building resolve to free.
+        reset();{const site=building("tower",300,300,false,{wood:1,stone:0}),a=worker("deliver",site,300,300),b=worker("deliver",site,301,300);a.carried.wood=1;sim.buildings.push(site);sim.state.workers.push(a,b);step(20);assert.equal(site.complete,true);assert.deepEqual([a.job,b.job],["free","free"],"completing a post-less building must free its Delivery Workers");}
 	        // One autonomous strike: the worker hits once, leaves the physical drop, and is free again.
 	        reset();{const tree={x:200,y:200,hp:5,max:5,stump:0,shake:0};sim.trees.push(tree);const gatherer=worker("harvest",{node:tree,kind:"wood"},200,220);gatherer.autonomous=true;gatherer.hitCooldown=0;sim.state.workers.push(gatherer);step();assert.equal(tree.hp,4);assert.equal(sim.resourceDrops.length,1);assert.equal(gatherer.job,"free","autonomous gathering is exactly one strike");}
 	        reset();{const priorSeed=seed;assert.equal(sim.debugApplyBuff("workerResourceDamage"),true);const tree={x:200,y:200,hp:5,max:5,stump:0,shake:0};sim.trees.push(tree);const gatherer=worker("harvest",{node:tree,kind:"wood"},200,220);gatherer.autonomous=true;gatherer.hitCooldown=0;sim.state.workers.push(gatherer);step();assert.equal(tree.hp,3,"worker resource damage must gain one flat damage");assert.equal(sim.resourceDrops.length,1,"worker damage must not multiply resource yield");delete sim.state.draft.buffs.workerResourceDamage;seed=priorSeed;}
@@ -929,13 +936,13 @@ try{
         // Lifting a worker releases its live drop reservation immediately.
         reset();{const store=building("stockpile",300,300),hauler=worker("haul",store,310,300),loose=drop("wood",330,300);hauler.autonomous=true;hauler.taskTarget=loose;loose.claimedBy=hauler;sim.buildings.push(store);sim.resourceDrops.push(loose);sim.state.workers.push(hauler);sim.setPointerWorld(hauler.x,hauler.y);sim.secondaryPress();assert.equal(sim.heldWorker(),hauler);assert.equal(loose.claimedBy,undefined,"a held worker may not keep a drop reserved");sim.pointerCancelled();}
         // A free worker in combat entanglement is not schedulable; a clean one beside it is.
-        reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),combat=freeWorker(240,300),retaliating=freeWorker(320,340),returning=freeWorker(330,300),clean=freeWorker(340,300);sim.buildings.push(site);sim.state.workers.push(combat,retaliating,returning,clean);sim.spawnEnemy("healer");const pest=sim.state.enemies[0];pest.x=combat.x+data.WORKER_MELEE-4;pest.y=combat.y;combat.combatTarget=pest;retaliating.retaliationTarget=pest;returning.returnAfterCombat=true;returning.postY=600;sweep();assert.equal(clean.job,"build");assert.equal(combat.job,"free","a fighting worker must not be scheduled");assert.equal(retaliating.job,"free","a retaliating worker must not be scheduled");assert.equal(returning.job,"free","a worker returning from combat must not be scheduled");sim.state.enemies.length=0;}
+        reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),combat=freeWorker(240,300),retaliating=freeWorker(320,340),returning=freeWorker(330,300),clean=freeWorker(340,300);sim.buildings.push(site);sim.state.workers.push(combat,retaliating,returning,clean);sim.spawnEnemy("healer");const pest=sim.state.enemies[0];pest.x=combat.x+data.WORKER_MELEE-4;pest.y=combat.y;combat.combatTarget=pest;retaliating.retaliationTarget=pest;returning.returnAfterCombat=true;returning.postY=600;sweep();assert.equal(clean.job,"deliver");assert.equal(combat.job,"free","a fighting worker must not be scheduled");assert.equal(retaliating.job,"free","a retaliating worker must not be scheduled");assert.equal(returning.job,"free","a worker returning from combat must not be scheduled");sim.state.enemies.length=0;}
         // Paused simulated time freezes the search cadence entirely.
-        reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),idle=freeWorker(310,300);sim.buildings.push(site);sim.state.workers.push(idle);sim.togglePause();const elapsedBefore=sim.state.clock.elapsed;step(60);assert.equal(sim.state.clock.elapsed,elapsedBefore);assert.equal(idle.job,"free","the scheduler must not run under pause");sim.togglePause();sweep();assert.equal(idle.job,"build");}
+        reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),idle=freeWorker(310,300);sim.buildings.push(site);sim.state.workers.push(idle);sim.togglePause();const elapsedBefore=sim.state.clock.elapsed;step(60);assert.equal(sim.state.clock.elapsed,elapsedBefore);assert.equal(idle.job,"free","the scheduler must not run under pause");sim.togglePause();sweep();assert.equal(idle.job,"deliver");}
         // Losing the objective mid-job frees the worker: a razed site and a vanished storage both resolve.
-        reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),builder=worker("build",site,310,300),store=building("stockpile",600,300),hauler=worker("haul",store,610,300),loose=drop("wood",650,300);builder.autonomous=true;hauler.autonomous=true;hauler.taskTarget=loose;loose.claimedBy=hauler;sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder,hauler);step();assert.equal(builder.job,"build");assert.equal(hauler.job,"haul");sim.buildings.splice(sim.buildings.indexOf(site),1);sim.buildings.splice(sim.buildings.indexOf(store),1);step();assert.equal(builder.job,"free");assert.equal(hauler.job,"free","a hauler whose destination vanished must return to free");assert.equal(loose.claimedBy,undefined,"a freed hauler may not keep its reservation");}
+        reset();{const site=building("tower",300,300,false,{wood:99,stone:0}),builder=worker("deliver",site,310,300),store=building("stockpile",600,300),hauler=worker("haul",store,610,300),loose=drop("wood",650,300);builder.autonomous=true;hauler.autonomous=true;hauler.taskTarget=loose;loose.claimedBy=hauler;sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder,hauler);step();assert.equal(builder.job,"deliver");assert.equal(hauler.job,"haul");sim.buildings.splice(sim.buildings.indexOf(site),1);sim.buildings.splice(sim.buildings.indexOf(store),1);step();assert.equal(builder.job,"free");assert.equal(hauler.job,"free","a hauler whose destination vanished must return to free");assert.equal(loose.claimedBy,undefined,"a freed hauler may not keep its reservation");}
         // Fleeing interrupts the objective but never the assignment: claims release, the job survives.
-        reset();{const tower=building("tower",120,100),site=building("lumber",300,300,false,{wood:99,stone:0}),builder=worker("build",site,200,100),claimed=drop("wood",202,100);tower.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:10,maxHp:10};builder.autonomous=true;builder.hp=1;builder.carried.dust=1;builder.taskTarget=claimed;builder.retaliationTarget={x:205,y:100};claimed.claimedBy=builder;sim.buildings.push(tower,site);sim.resourceDrops.push(claimed);sim.state.workers.push(builder);sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=210;danger.y=100;const prior={job:builder.job,jobTarget:builder.jobTarget,carried:{...builder.carried}};step();assert.equal(builder.fleeing,true);assert.equal(builder.taskTarget,null);assert.equal(claimed.claimedBy,undefined);assert.equal(builder.job,prior.job);assert.equal(builder.jobTarget,prior.jobTarget);assert.deepEqual(builder.carried,prior.carried);assert.equal(builder.combatTarget,null);assert.equal(builder.retaliationTarget,null);const fledX=builder.x;step(10);assert.ok(builder.x<fledX);danger.x=700;danger.y=700;step(179);assert.equal(builder.fleeing,true);danger.x=builder.x+data.WORKER_LEASH+5;danger.y=builder.y;step();assert.equal(builder.fleeing,true,"danger inside recovery radius must reset safe time without causing fight/flee oscillation");assert.equal(builder.combatTarget,null);danger.x=700;danger.y=700;step(179);assert.equal(builder.fleeing,true);step(2);assert.equal(builder.fleeing,false);assert.equal(builder.job,prior.job);assert.equal(builder.jobTarget,prior.jobTarget);assert.deepEqual(builder.carried,prior.carried);assert.equal(builder.hp,1);}
+        reset();{const tower=building("tower",120,100),site=building("lumber",300,300,false,{wood:99,stone:0}),builder=worker("deliver",site,200,100),claimed=drop("wood",202,100);tower.tower={variant:"basic",cooldown:0,flash:0,hitFlash:0,hp:10,maxHp:10};builder.autonomous=true;builder.hp=1;builder.carried.dust=1;builder.taskTarget=claimed;builder.retaliationTarget={x:205,y:100};claimed.claimedBy=builder;sim.buildings.push(tower,site);sim.resourceDrops.push(claimed);sim.state.workers.push(builder);sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=210;danger.y=100;const prior={job:builder.job,jobTarget:builder.jobTarget,carried:{...builder.carried}};step();assert.equal(builder.fleeing,true);assert.equal(builder.taskTarget,null);assert.equal(claimed.claimedBy,undefined);assert.equal(builder.job,prior.job);assert.equal(builder.jobTarget,prior.jobTarget);assert.deepEqual(builder.carried,prior.carried);assert.equal(builder.combatTarget,null);assert.equal(builder.retaliationTarget,null);const fledX=builder.x;step(10);assert.ok(builder.x<fledX);danger.x=700;danger.y=700;step(179);assert.equal(builder.fleeing,true);danger.x=builder.x+data.WORKER_LEASH+5;danger.y=builder.y;step();assert.equal(builder.fleeing,true,"danger inside recovery radius must reset safe time without causing fight/flee oscillation");assert.equal(builder.combatTarget,null);danger.x=700;danger.y=700;step(179);assert.equal(builder.fleeing,true);step(2);assert.equal(builder.fleeing,false);assert.equal(builder.job,prior.job);assert.equal(builder.jobTarget,prior.jobTarget);assert.deepEqual(builder.carried,prior.carried);assert.equal(builder.hp,1);}
         reset();{const lowStation=building("garrison",200,100),low=worker("guard",lowStation,200,100);low.hp=1;sim.buildings.push(lowStation);sim.state.workers.push(low);sim.spawnEnemy("healer");const danger=sim.state.enemies[0];danger.x=205;danger.y=100;step();assert.equal(low.fleeing,true);sim.setPointerWorld(low.x,low.y);sim.secondaryPress();assert.equal(sim.heldWorker(),low);sim.setPointerWorld(500,500);sim.secondaryRelease();assert.equal(low.fleeing,false);assert.equal(low.fleeSafeTime,0);assert.deepEqual([low.x,low.y],[500,500]);assert.equal(low.job,"free","open ground must REPOSITION the worker as free, never mint a guard");assert.equal(low.jobTarget,null);assert.equal(low.autonomous,true);assert.equal(sim.durablePostStatus(lowStation).assigned,0,"leaving the garrison must release its reserved slot");}
 	        reset();{const healthyStation=building("garrison",200,100),healthy=worker("guard",healthyStation,200,100);healthy.hp=sim.TUNE.fleeHpThreshold+1;healthy.attackCooldown=0;sim.buildings.push(healthyStation);sim.state.workers.push(healthy);sim.spawnEnemy("healer");const enemy=sim.state.enemies[0];enemy.x=healthy.x;enemy.y=healthy.y;const hpBefore=enemy.hp;step();assert.equal(healthy.fleeing,false);assert.equal(healthy.combatTarget,enemy);assert.equal(enemy.hp,hpBefore-data.WORKER_DAMAGE);assert.equal(healthy.attackCooldown,data.WORKER_ATTACK_RATE);}
 	        reset();{const priorSeed=seed;assert.equal(sim.debugApplyBuff("workerCombatDamage"),true);const healthyStation=building("garrison",200,100),healthy=worker("guard",healthyStation,200,100);healthy.hp=sim.TUNE.fleeHpThreshold+1;healthy.attackCooldown=0;sim.buildings.push(healthyStation);sim.state.workers.push(healthy);sim.spawnEnemy("healer");const enemy=sim.state.enemies[0];enemy.x=healthy.x;enemy.y=healthy.y;const hpBefore=enemy.hp;step();assert.equal(enemy.hp,hpBefore-data.WORKER_DAMAGE-data.CARD_BUFFS.workerCombatDamage,"worker combat damage must gain one flat damage");delete sim.state.draft.buffs.workerCombatDamage;seed=priorSeed;}
@@ -1080,12 +1087,12 @@ try{
         // Manual assignments are standing orders: the muster never overrides one.
         reset();{
           const station=building("garrison",400,400),site=building("lumber",380,300,false,{wood:99,stone:0}),store=building("stockpile",420,300),camp=building("quarry",360,300),other=building("garrison",700,400);
-          const b=worker("build",site,380,300),h=worker("haul",store,420,300),g=worker("harvest",{node:null,kind:"wood"},400,300),s=worker("staff",camp,360,300),m=worker("guard",other,700,300);
+          const b=worker("deliver",site,380,300),h=worker("haul",store,420,300),g=worker("harvest",{node:null,kind:"wood"},400,300),s=worker("staff",camp,360,300),m=worker("guard",other,700,300);
           sim.buildings.push(station,site,store,camp,other);sim.state.workers.push(b,h,g,s,m);
           sim.spawnEnemy("raider");sim.state.enemies[0].x=400;sim.state.enemies[0].y=180;
           sim.spawnEnemy("raider");sim.state.enemies[1].x=700;sim.state.enemies[1].y=180;
           step();
-          assert.deepEqual([b.job,h.job,g.job,s.job,m.job],["build","haul","harvest","staff","guard"],"a manual assignment must survive the muster untouched");
+          assert.deepEqual([b.job,h.job,g.job,s.job,m.job],["deliver","haul","harvest","staff","guard"],"a manual assignment must survive the muster untouched");
           assert.equal(m.jobTarget,other,"a manual guard is never re-posted by the muster");
           assert.equal(sim.durablePostStatus(station).assigned,0,"no manual worker may be drafted into the garrison");
           sim.state.enemies.length=0;
@@ -1357,7 +1364,7 @@ try{
         }
         // Debug healing tops every worker up to its OWN effective maximum.
         reset();{
-          const station=building("garrison",400,400),guard=post(worker("guard",station,400,300),station),plain=worker("haul",data.BASE,data.BASE.x,data.BASE.y+5);
+          const station=building("garrison",400,400),guard=post(worker("guard",station,400,300),station),plain=freeWorker(500,500);
           sim.buildings.push(station);sim.state.workers.push(guard,plain);
           step(200);guard.hp=2;plain.hp=1;
           sim.debugHealAll();
@@ -1451,7 +1458,7 @@ try{
         }
         // ── the garrison end to end ─────────────────────────────────────────────────────────
         // One station, one continuous run of the whole feature: the drafted build card lands a
-        // SITE at the authored cost, manual builders carry that cost and inherit the posts they
+        // SITE at the authored cost, manual Delivery Workers carry that cost and inherit the posts they
         // stood up, a hostile musters the reserve into the remaining slot, arrival (never the
         // order) fortifies, a night posting holds and dawn stands only the autonomous guard down.
         // The three failure cases close on the way through: a full station rejects a drop, a dead
@@ -1469,16 +1476,16 @@ try{
           const station=sim.buildings.at(-1);
           assert.equal(station.type,"garrison");
           assert.equal(station.complete,false,"a build card lands a site, never a finished garrison");
-          assert.deepEqual(station.cost,{...data.BUILDING_TYPES.garrison.cost},"the site must charge the authored 6 wood + 6 stone");
+          assert.deepEqual(station.delivery.cost,{...counts(),...data.BUILDING_TYPES.garrison.cost},"the site must charge the authored 6 wood + 6 stone");
           assert.equal(sim.hand().some(entry=>entry.id==="bpGarrison"),false,"the single-charge build must leave the hand as its site lands");
           assert.equal(sim.workerOccupancyStatus(station).capacity,data.BUILDING_TYPES.garrison.buildSlots,"the site offers exactly its authored build slots");
-          // 2 · construction — two manual builders carry the cost from covering storage.
+          // 2 · construction — two manual Delivery Workers carry the cost from covering storage.
           const store=building("stockpile",anchor.x+64,anchor.y);store.storage.wood=6;store.storage.stone=6;
           sim.buildings.push(store);
-          const alpha=worker("build",station,anchor.x-12,anchor.y),beta=worker("build",station,anchor.x+12,anchor.y);
+          const alpha=worker("deliver",station,anchor.x-12,anchor.y),beta=worker("deliver",station,anchor.x+12,anchor.y);
           sim.state.workers.push(alpha,beta);
           for(let i=0;i<3600&&!station.complete;i++)step();
-          assert.equal(station.complete,true,"the builders never delivered the authored cost");
+          assert.equal(station.complete,true,"the Delivery Workers never delivered the authored cost");
           // An ordinary completion pays no draft since XP was deleted, but the bench clears the
           // ledger anyway so a stray queued reward can never freeze the postings measured below.
           clearDraft();
@@ -1486,9 +1493,9 @@ try{
           // meeting a dusk they were never measuring.
           sim.state.clock.remaining=data.DAY_DURATION;
           // 3 · manual guards — completion inheritance fills both slots as standing orders.
-          assert.deepEqual([alpha.job,beta.job],["guard","guard"],"a manual builder must inherit the garrison post it stood up");
+          assert.deepEqual([alpha.job,beta.job],["guard","guard"],"a manual Delivery Worker must inherit the garrison post it stood up");
           assert.deepEqual([alpha.autonomous,beta.autonomous],[false,false],"an inherited post is a manual assignment");
-          assert.equal(sim.durablePostStatus(station).assigned,data.BUILDING_TYPES.garrison.buildSlots,"inheritance fills one post per builder");
+          assert.equal(sim.durablePostStatus(station).assigned,data.BUILDING_TYPES.garrison.buildSlots,"inheritance fills one post per Delivery Worker");
           step(120);
           assert.equal(sim.durablePostStatus(station).arrived,data.BUILDING_TYPES.garrison.buildSlots,"both inherited guards must reach the post");
           assert.equal(sim.workerMaxHp(alpha),data.GARRISON.maxHp);assert.equal(alpha.hp,data.GARRISON.maxHp,"arrival grants the fortified pool");
@@ -1572,9 +1579,9 @@ try{
           sim.validateSimulationInvariants();
         }
         // Manual jobs persist through idleness and node loss instead of resolving to free.
-        reset();{const baseHauler=worker("haul",data.BASE,data.BASE.x,data.BASE.y+5),harvester=worker("harvest",{node:null,kind:"wood"},400,400);sim.state.workers.push(baseHauler,harvester);sweep();step(60);assert.equal(baseHauler.job,"haul","a manual hauler waits at its storage instead of going free");assert.equal(baseHauler.jobTarget,data.BASE);assert.equal(harvester.job,"harvest","a manual harvester keeps its job while no node is available");}
+        reset();{const baseWorker=worker("deliver",data.BASE,data.BASE.x,data.BASE.y+5),harvester=worker("harvest",{node:null,kind:"wood"},400,400);sim.state.workers.push(baseWorker,harvester);sweep();step(60);assert.equal(baseWorker.job,"deliver","a manual Delivery Worker must wait for Base demand");assert.equal(baseWorker.jobTarget,data.BASE);assert.equal(harvester.job,"harvest","a manual harvester keeps its job while no node is available");}
         // The scheduler respects in-flight reservations owned by other workers.
-        reset();{const store=building("stockpile",300,300),site=building("tower",700,700,false,{wood:99,stone:0}),owner=worker("build",site,700,700),claimed=drop("wood",310,300),idle=freeWorker(320,300);owner.taskTarget=claimed;claimed.claimedBy=owner;sim.buildings.push(store,site);sim.resourceDrops.push(claimed);sim.state.workers.push(owner,idle);sweep();assert.equal(claimed.claimedBy,owner,"a claimed drop must not be re-reserved");assert.equal(idle.job,"free","the only candidate was claimed, so the worker stays free");}
+        reset();{const store=building("stockpile",300,300),site=building("tower",700,700,false,{wood:99,stone:0}),owner=worker("deliver",site,700,700),claimed=drop("wood",310,300),idle=freeWorker(320,300);owner.taskTarget=claimed;claimed.claimedBy=owner;sim.buildings.push(store,site);sim.resourceDrops.push(claimed);sim.state.workers.push(owner,idle);sweep();assert.equal(claimed.claimedBy,owner,"a claimed drop must not be re-reserved");assert.equal(idle.job,"free","the only candidate was claimed, so the worker stays free");}
         // A full stockpile is no hauling destination: capacity is checked before the drop is chosen.
         reset();{const store=building("stockpile",300,300),one=worker("haul",store,600,600),two=worker("haul",store,610,610),loose=drop("wood",310,300),idle=freeWorker(320,300);one.carried.wood=two.carried.wood=data.WORKER_CARRY;one.returning=two.returning=true;one.postX=two.postX=store.x;one.postY=two.postY=store.y+18;sim.buildings.push(store);sim.resourceDrops.push(loose);sim.state.workers.push(one,two,idle);sweep();assert.equal(idle.job,"free","a staffed-out stockpile must not accept autonomous haulers");assert.equal(loose.claimedBy,undefined);}
         // Sustained autonomous economy: several free workers against competing blueprints, bounded
@@ -1601,7 +1608,7 @@ try{
           assert.equal(siteB.complete,true,"free workers must finish the competing quarry blueprint");
           assert.equal(sim.trees.some(t=>t.stump>0)||sim.rocks.some(r=>r.depleted>0),true,"the bounded nodes must have been worked");
           assert.ok(sim.state.workers.length>=data.HOUSE_SLOTS-1&&sim.state.workers.length<=data.HOUSE_SLOTS,"death/replacement must keep the house population");
-          assert.equal(sim.state.workers.every(item=>["free","build","haul","harvest","staff"].includes(item.job)),true,"with no garrison standing, an autonomous run may never mint guards");
+          assert.equal(sim.state.workers.every(item=>["free","deliver","haul","harvest","staff"].includes(item.job)),true,"with no garrison standing, an autonomous run may never mint guards");
         }
         // ── the base defends its own ground ──
         // The map centre's attack moved off the retired king onto the completed base. BALANCE is
@@ -1663,17 +1670,17 @@ try{
           assert.equal(sim.state.gameOver,true,"losing the base must end the run");
           sim.state.gameOver=false;sim.state.baseHp=sim.state.baseMax;sim.state.enemies.length=0;
         }
-        // ── the base's Worker Limit (CONTEXT.md) ──
-        // Two haulers, occupancy DERIVED from the workers naming BASE — held ones included — and
+        // ── the Base Delivery Worker Limit (CONTEXT.md) ──
+        // Two workers, occupancy derived from workers naming BASE — held ones included — and
         // reserved the instant a posting is named, never after the walk.
         reset();{
-          const post=[0,1,2].map(i=>freeWorker(data.BASE.x-260+i*90,data.BASE.y+260));
+          const post=[0,1,2].map(i=>freeWorker(data.BASE.x-120+i*40,data.BASE.y+100));
           sim.state.workers.push(...post);
           const [first,second,third]=post;
           const dropOnBase=w=>{sim.setPointerWorld(w.x,w.y);sim.secondaryPress();sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();};
           assert.deepEqual(sim.workerOccupancyStatus(data.BASE),{target:data.BASE,assigned:0,capacity:data.MAIN_BASE.jobSlots});
           dropOnBase(first);
-          assert.deepEqual([first.job,first.jobTarget,first.autonomous],["haul",data.BASE,false],"dropping a worker on the standing base must post it as a hauler");
+          assert.deepEqual([first.job,first.jobTarget,first.autonomous],["deliver",data.BASE,false],"dropping a worker on the standing Base must post it to Delivery Work");
           assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,1,"a base posting must reserve its slot immediately, before the walk");
           dropOnBase(second);
           assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots);
@@ -1684,29 +1691,41 @@ try{
           assert.equal(third.job,"free","a refused drop must leave the worker unassigned");
           assert.deepEqual({x:third.x,y:third.y},origin,"a refused drop must restore the worker's pickup origin");
           assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots);
-          // A HELD hauler keeps its slot: its reservation cannot be handed to the worker on the ground.
+          // A held Delivery Worker keeps its slot.
           sim.setPointerWorld(first.x,first.y);sim.secondaryPress();
           assert.equal(sim.heldWorker(),first);
-          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots,"lifting a base hauler must keep its slot reserved");
-          assert.equal(sim.workerAssignmentAt(third,data.BASE.x,data.BASE.y),null,"a held hauler's slot must not be handed to another worker");
+          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots,"lifting a Base worker must keep its slot reserved");
+          assert.equal(sim.workerAssignmentAt(third,data.BASE.x,data.BASE.y),null,"a held worker's slot must not be handed to another worker");
           sim.pointerCancelled();
-          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots,"returning a held hauler must not overfill the base");
+          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots,"returning a held worker must not overfill the Base");
           // The slot tray the overlay draws is the same derived count.
           assert.deepEqual([sim.durablePostStatus(data.BASE).capacity,sim.durablePostStatus(data.BASE).assigned],[data.MAIN_BASE.jobSlots,data.MAIN_BASE.jobSlots]);
           assert.equal(sim.workerOccupancyAt(data.BASE.x,data.BASE.y).target,data.BASE,"the base must answer the hovered-occupancy probe");
-          // Autonomous hauling obeys the same limit: a full base is not a destination, so a loose
-          // drop inside base coverage may not mint a third hauler. Three drops for two posted
-          // haulers, so at least one is provably still unclaimed when the sweep runs.
-          for(const dx of [-40,0,40])sim.resourceDrops.push(drop("wood",third.x+dx,data.BASE.y+150));
+          // Autonomous Delivery Work obeys the same capacity.
           sweep();
-          assert.ok(sim.resourceDrops.some(item=>!item.claimedBy),"the capacity test needs an unclaimed drop in base coverage");
-          assert.equal(third.job,"free","a full base must be excluded from autonomous hauling destinations");
+          assert.equal(third.job,"free","a full Base must be excluded from autonomous Delivery Work");
           assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots);
           // Free a slot and the scheduler takes it through the ordinary path.
           sim.state.workers.splice(sim.state.workers.indexOf(first),1);
           sweep();
-          assert.deepEqual([third.job,third.jobTarget,third.autonomous],["haul",data.BASE,true],"a vacant base slot must be claimable by the free-worker scheduler");
+          assert.deepEqual([third.job,third.jobTarget,third.autonomous],["deliver",data.BASE,true],"a vacant Base slot must be sampled by the free-worker scheduler");
           sim.validateSimulationInvariants();
+        }
+        reset();{
+          const before=sim.state.baseLevel,manual=worker("deliver",data.BASE,data.BASE.x,data.BASE.y);
+          for(const kind of data.RESOURCE_KINDS)manual.carried[kind]=sim.mainBaseStatus().cost[kind]||0;
+          sim.state.workers.push(manual);step(60);
+          assert.equal(sim.state.baseLevel,before+1,"a manual Delivery Worker did not complete the Base recipe");
+          assert.deepEqual([manual.job,manual.jobTarget,manual.autonomous],["deliver",data.BASE,false],"manual Base work must persist into the next level");
+          clearDraft();
+        }
+        reset();{
+          const before=sim.state.baseLevel,auto=worker("deliver",data.BASE,data.BASE.x,data.BASE.y);auto.autonomous=true;
+          for(const kind of data.RESOURCE_KINDS)auto.carried[kind]=sim.mainBaseStatus().cost[kind]||0;
+          sim.state.workers.push(auto);step(60);
+          assert.equal(sim.state.baseLevel,before+1,"an autonomous Delivery Worker did not complete the Base recipe");
+          assert.deepEqual([auto.job,auto.jobTarget,auto.autonomous],["free",null,true],"an autonomous Base sample must end after one level");
+          clearDraft();sim.validateSimulationInvariants();
         }
         console.log(JSON.stringify({checks:120}));
       }finally{Math.random=old;}
@@ -1723,7 +1742,7 @@ try{
       import {BASE,RESOURCE_KINDS} from "./src/game/data.js";
       import {cardById} from "./src/game/cards.js";
       const counts=()=>Object.fromEntries(RESOURCE_KINDS.map(kind=>[kind,0]));
-      const worker=(load)=>({x:BASE.x,y:BASE.y,postX:BASE.x,postY:BASE.y,spawnSource:null,job:"haul",jobTarget:BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...counts(),...load},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0});
+      const worker=(load)=>({x:BASE.x,y:BASE.y,postX:BASE.x,postY:BASE.y,spawnSource:null,job:"deliver",jobTarget:BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...counts(),...load},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0});
       const CATEGORIES={base:["build"],dawn:["buff"],consumable:["consumable"]};
       // Draining must not disturb the wave checks below, so the two schedule-bending cards are avoided.
       const skip=new Set(["calmNight","longDay"]);
@@ -1731,10 +1750,10 @@ try{
       sim.initializeRunMode("normal");sim.debugRaiseMainBase();assert.equal(sim.waveTier(),0);
       assert.equal(sim.draftPending(),null,"a free-cost base must pay no draft");assert.equal(sim.chooseDraft(0),false);
       assert.equal(sim.debugQueueDraft("nonsense"),false,"only the authored reward kinds may be queued");
-      // Base deposits are storage and nothing else: neither the manual drop nor the hauler deposit
-      // may deal a reward (the base stands at level 1 here, so its recipe is charged by release).
-      sim.state.carried.wood=5;sim.setPointerWorld(BASE.x,BASE.y);sim.secondaryRelease();assert.equal(sim.state.carried.wood,0);assert.equal(sim.state.stored.wood,5);assert.equal(sim.draftPending(),null,"a base deposit dealt a draft");
-      const hauler=worker({diamond:1});sim.state.workers.push(hauler);sim.update(1/60);assert.equal(hauler.carried.diamond,0);assert.equal(sim.state.stored.diamond,1);assert.equal(sim.draftPending(),null,"a hauler deposit dealt a draft");
+      // The Base accepts only current demand. Unrelated player resources stay loose; partial worker
+      // delivery advances shared progress but pays no reward.
+      sim.state.carried.wood=5;sim.setPointerWorld(BASE.x,BASE.y);sim.secondaryRelease();assert.equal(sim.state.carried.wood,0);assert.equal(sim.resourceDrops.filter(item=>item.kind==="wood").length,5);assert.equal(sim.draftPending(),null,"unrelated resources dealt a Base reward");
+      const deliveryWorker=worker({stone:1});sim.state.workers.push(deliveryWorker);sim.update(1/60);assert.equal(deliveryWorker.carried.stone,0);assert.equal(sim.mainBaseStatus().delivered.stone,1);assert.equal(sim.draftPending(),null,"a partial worker delivery dealt a reward");
       sim.state.workers.length=0;
       // A base level deals ONE build-only offer; a second queued reward waits behind it.
       assert.equal(sim.debugQueueDraft("base"),true);assert.equal(sim.debugQueueDraft("base"),true);
@@ -1747,13 +1766,13 @@ try{
       // Reroll: coins buy a fresh same-kind offer that never repeats the shown three; broke = refused.
       assert.equal(sim.rerollDraft(),false,"a reroll without coins must be refused");
       assert.equal(sim.draftPending(),firstOffer,"a refused reroll must keep the offer");
-      sim.state.stored.coin=1;assert.deepEqual(sim.rerollState(),{cost:1,coins:1});
+      sim.state.carried.coin=1;assert.deepEqual(sim.rerollState(),{cost:1,coins:1});
       assert.equal(sim.rerollDraft(),true,"a funded reroll must be accepted");
       const rerolled=sim.draftPending();
       assert.notEqual(rerolled,firstOffer);assert.equal(rerolled.length,3);
       assert.equal(rerolled.every(id=>!firstOffer.includes(id)),true,"a paid reroll must not repeat the shown cards");
       assert.equal(rerolled.every(id=>cardById[id].inPool&&CATEGORIES.base.includes(cardById[id].category)),true,"a reroll must stay in the offer's pool");
-      assert.equal(sim.state.stored.coin,0,"the reroll must spend the coin");
+      assert.equal(sim.state.carried.coin,0,"the reroll must spend the held coin");
       assert.equal(sim.chooseDraft(Math.max(0,rerolled.findIndex(id=>!skip.has(id)))),true);assert.notEqual(sim.draftPending(),rerolled,"the queued base reward must replace the consumed offer");
       assert.equal(drain()>0,true);assert.equal(sim.draftPending(),null);assert.equal(sim.state.draftPaused,false);
       for(let i=0;i<60;i++)sim.update(1/60);assert.ok(sim.state.clock.elapsed>frozen,"the world stayed frozen after the draft was consumed");
@@ -2029,9 +2048,9 @@ try{
 
         // 3 · an untargeted consumable applies on play and leaves the hand
         assert.equal(sim.debugDealCard("woodBundle"),true);
-        const woodBefore=sim.state.stored.wood,copies=held("woodBundle").count,eventsBeforePlay=handEvents;
+        const woodBefore=sim.resourceDrops.filter(item=>item.kind==="wood").length,copies=held("woodBundle").count,eventsBeforePlay=handEvents;
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="woodBundle")),"applied");
-        assert.equal(sim.state.stored.wood,woodBefore+data.CARD_CONSUMABLES.woodBundle,"woodBundle did not deliver");
+        assert.equal(sim.resourceDrops.filter(item=>item.kind==="wood").length,woodBefore+data.CARD_CONSUMABLES.woodBundle,"woodBundle did not create loose resources");
         assert.equal(held("woodBundle")?.count??0,copies-1,"playing a card must thin its stack");
         assert.ok(handEvents>eventsBeforePlay,"spending a card must raise handChanged()");
 
@@ -2086,7 +2105,7 @@ try{
 
         // 6 · a fancy-tower card lands one CONSTRUCTION SITE. Its one displayed cost is exactly the
         //     basic chassis plus variant materials, and completing it directly produces that variant.
-        clearGround();for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;
+        clearGround();
         assert.equal(sim.DBG.freeCosts,false);
         assert.equal(sim.debugDealCard("bpSniper"),true);
         // the cancel path first: the card comes back to hand with its charge unspent
@@ -2094,7 +2113,7 @@ try{
         assert.equal(sim.state.buildMode,"tower","a build card must arm the tower footprint");
         assert.equal(sim.cancelBuildMode(),true);
         assert.equal(sim.state.cardTargeting,null);assert.equal(held("bpSniper")?.charges,1,"a cancelled build must keep its charge");
-        const storedBeforeBlueprint=JSON.stringify(sim.state.stored);
+        const dropsBeforeBlueprint=sim.resourceDrops.length;
         assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpSniper")),"targeting");
         const sniperAnchor=place(300,300);
         const sniper=sim.buildings.at(-1);
@@ -2103,10 +2122,10 @@ try{
         assert.equal(sniper.complete,false,"a build card must land a site, not a finished tower");
         assert.equal(sniper.tower,null);assert.equal(sniper.activeUpgrade,null,"an unfinished tower exposed an upgrade job");
         assert.equal(sniper.plannedVariant,"sniper","the site was not promised to the card's variant");
-        assert.deepEqual(sniper.delivered,counts(),"a fresh site has been delivered nothing");
+        assert.deepEqual(sniper.delivery.delivered,counts(),"a fresh site has been delivered nothing");
         const sniperCost=Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,(data.BUILDING_TYPES.tower.cost[kind]||0)+(data.TOWER_VARIANTS.sniper.cost[kind]||0)]));
-        assert.deepEqual(sniper.cost,sniperCost,"the site must combine chassis and variant materials");
-        assert.equal(JSON.stringify(sim.state.stored),storedBeforeBlueprint,"placing a site must not touch storage");
+        assert.deepEqual(sniper.delivery.cost,sniperCost,"the site must combine chassis and variant materials");
+        assert.equal(sim.resourceDrops.length,dropsBeforeBlueprint,"placing a site must not touch loose resources");
         assert.equal(held("bpSniper"),null,"the build must leave the hand as its site lands");
         assert.equal(sim.state.buildMode,null);assert.equal(sim.state.cardTargeting,null);
         sim.validateSimulationInvariants();
@@ -2123,7 +2142,7 @@ try{
         assert.equal(sniper.tower.maxHp,sniperMaxHp);
         assert.equal(sniper.tower.hp,sniperMaxHp,"a finished variant tower must include the run's tower-hp stacks at full health");
         assert.deepEqual(sim.state.carried,counts(),"the delivery spent exactly the authored costs");
-        assert.equal(JSON.stringify(sim.state.stored),storedBeforeBlueprint,"deliveries come from the hand, never from storage");
+        assert.equal(sim.resourceDrops.length,dropsBeforeBlueprint,"an exact delivery must not create loose excess");
 
         // 7 · the obelisk build drops an obelisk SITE at its authored cost, card spent
         clearGround();
@@ -2134,8 +2153,8 @@ try{
         const obelisk=sim.buildings.at(-1);
         assert.equal(obelisk.type,"obelisk");assert.equal(obelisk.complete,false,"the obelisk card must land a site to fill");
         assert.equal(obelisk.plannedVariant,null,"only a tower card designates a variant");
-        assert.deepEqual(obelisk.delivered,counts());
-        assert.deepEqual(obelisk.cost,data.BUILDING_TYPES.obelisk.cost,"a card must not rewrite an authored cost");
+        assert.deepEqual(obelisk.delivery.delivered,counts());
+        assert.deepEqual(obelisk.delivery.cost,{...counts(),...data.BUILDING_TYPES.obelisk.cost},"a card must preserve the authored recipe");
         assert.equal(held("bpObelisk"),null,"the card is spent when the site is placed");
         deliver(obelisk,data.BUILDING_TYPES.obelisk.cost);
         assert.equal(obelisk.complete,true,"the authored obelisk cost did not finish the site");
@@ -2175,12 +2194,12 @@ try{
           };
           const first=houseAt(300,300);
           assert.equal(first.type,"house");
-          assert.deepEqual(first.cost,{...data.STARTING_HOUSE_COST},"the first house card must charge only the starting house cost");
-          deliver(first,first.cost);assert.equal(first.complete,true);
+          assert.deepEqual(first.delivery.cost,{...counts(),...data.STARTING_HOUSE_COST},"the first house card must charge only the starting house cost");
+          deliver(first,first.delivery.cost);assert.equal(first.complete,true);
           const second=houseAt(500,300);
-          assert.deepEqual(second.cost,{wood:data.HOUSE_COST.wood+data.HOUSE_COST_ESCALATION.wood,stone:data.HOUSE_COST.stone+data.HOUSE_COST_ESCALATION.stone},"the second house card must charge the escalated cost");
-          assert.deepEqual(second.cost,sim.nextHouseCost(),"the site's snapshot must be nextHouseCost() at the moment it landed");
-          deliver(second,second.cost);assert.equal(second.complete,true);
+          assert.deepEqual(second.delivery.cost,{...counts(),wood:data.HOUSE_COST.wood+data.HOUSE_COST_ESCALATION.wood,stone:data.HOUSE_COST.stone+data.HOUSE_COST_ESCALATION.stone},"the second house card must charge the escalated cost");
+          assert.deepEqual(second.delivery.cost,{...counts(),...sim.nextHouseCost()},"the site's snapshot must be nextHouseCost() at the moment it landed");
+          deliver(second,second.delivery.cost);assert.equal(second.complete,true);
           assert.equal(sim.buildings.filter(item=>item.type==="house"&&item.complete).length,2);
         }
 
@@ -2208,7 +2227,7 @@ try{
   assert.match(progressionHtml,/wave-clear estimate/);assert.match(progressionHtml,/gameplay dawn occurs only after all\s+scheduled wave enemies are defeated/);
   const viewPanel=html.slice(html.indexOf('<section id="viewPanel"'),html.indexOf('<!-- Empty showcase roots'));
   assert.equal(/<p class="hint">/.test(viewPanel),false);
-  const expectedSubtabs={visibility:["scan","readability"],input:["hand","click","projectiles"],overlays:["damage","bars","badge"],gameplay:["economy","builders","time","combat","population","cards"]};
+  const expectedSubtabs={visibility:["scan","readability"],input:["hand","click","projectiles"],overlays:["damage","bars","badge"],gameplay:["economy","delivery","time","combat","population","cards"]};
   for(const [pane,expected] of Object.entries(expectedSubtabs)){
     const body=viewPanel.match(new RegExp(`<section class="pane" data-tab="${pane}">([\\s\\S]*?)</section>`))?.[1];
     assert.ok(body,`missing view pane: ${pane}`);
@@ -2238,7 +2257,7 @@ try{
     assert.ok(debuggerSource.includes("function buildCardDealer()"),"the dealer grid must be generated from the registry");
     assert.ok(debuggerSource.includes('bindBtn("vClearHand"'),"clear hand is unbound");
   }
-  assert.match(html,/id="vGroundSourcing" checked/);assert.match(html,/id="vBuilderSelfSupply" checked/);assert.match(html,/id="vBuilderRadius" min="60" max="1000" step="10" value="400"/);assert.match(html,/id="vFreeSearchRadius" min="100" max="1000" step="20" value="500"/,"markup default must agree with TUNE.freeSearchRadius");assert.ok(debuggerSource.includes('bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });'));assert.ok(debuggerSource.includes('bindV("vFreeSearchRadius", v => { TUNE.freeSearchRadius = v; }, v => v + "px")'));assert.ok(overlay.includes("workerOccupancyStatus(target)"));assert.ok(overlay.includes("workerOccupancyAt(state.mouse.x,state.mouse.y)"));assert.ok(overlay.includes("drawWorkerSlots(target,height,status)"));assert.ok(overlay.includes("state.workers.length>0||!!heldWorker()"));assert.match(overlay,/hollow circles are vacancies/);assert.ok(!overlay.includes("! vacant"),"the '! vacant' nag was removed by owner request — the worker-slot tray is the ONLY occupancy readout");assert.ok(overlay.includes("const BUILD_JOB_ACCENT=css(PAL.jobBuild)"));assert.ok(overlay.includes("function drawBuilderLines()"),"the blueprint builder-link visualization must survive the free-worker rework");assert.ok(overlay.includes('hovered?.kind==="building"&&!hovered.object.complete'));assert.ok(overlay.includes('worker.job==="build"&&worker.jobTarget===site'));assert.equal(overlay.match(/if\(state\.runMode!=="normal"\)return/g)?.length,1);
+  assert.match(html,/id="vGroundSourcing" checked/);assert.match(html,/id="vDeliverySelfSupply" checked/);assert.match(html,/id="vDeliveryRadius" min="60" max="1000" step="10" value="400"/);assert.match(html,/id="vFreeSearchRadius" min="100" max="1000" step="20" value="500"/,"markup default must agree with TUNE.freeSearchRadius");assert.ok(debuggerSource.includes('bindV("vDeliverySelfSupply", v => { DBG.deliverySelfSupply = v; });'));assert.ok(debuggerSource.includes('bindV("vGroundSourcing", v => { DBG.deliveryGroundSourcing = v; });'));assert.ok(debuggerSource.includes('bindV("vDeliveryRadius", v => { TUNE.deliverySourceRadius = v; }, v => v + "px")'));assert.ok(debuggerSource.includes('bindV("vFreeSearchRadius", v => { TUNE.freeSearchRadius = v; }, v => v + "px")'));assert.ok(overlay.includes("workerOccupancyStatus(target)"));assert.ok(overlay.includes("workerOccupancyAt(state.mouse.x,state.mouse.y)"));assert.ok(overlay.includes("drawWorkerSlots(target,height,status)"));assert.ok(overlay.includes("state.workers.length>0||!!heldWorker()"));assert.match(overlay,/hollow circles are vacancies/);assert.ok(!overlay.includes("! vacant"),"the '! vacant' nag was removed by owner request — the worker-slot tray is the ONLY occupancy readout");assert.ok(overlay.includes("const DELIVERY_WORK_ACCENT=css(PAL.jobDelivery)"));assert.ok(overlay.includes("function drawDeliveryWorkerLines()"),"the Delivery Worker link visualization must survive the free-worker rework");assert.ok(overlay.includes('hovered?.kind==="building"&&!hovered.object.complete'));assert.ok(overlay.includes('worker.job==="deliver"&&worker.jobTarget===site'));assert.equal(overlay.match(/if\(state\.runMode!=="normal"\)return/g)?.length,1);
   // The guard-recruitment era is fully retired: no markup control, no debug flag, no loan-marker
   // coupling and no stale terminology may survive outside intentionally historical documentation.
   {
@@ -2404,7 +2423,7 @@ try{
     // luminance 1 and takes value from its own PLANE ramp, so a cap swatch's own L never reaches the
     // screen (archerCap red1 would fail this gate and renders as a dark orange fin regardless).
     // The BODY roles are listed because they are what a grayscale frame reads as the creature.
-    const ACTOR_ROLES=["skin","coat","jobHaul","jobBuild","jobGuard",
+    const ACTOR_ROLES=["skin","coat","jobHaul","jobDelivery","jobGuard",
                        "raider","archer","healer","brute","bomber",
                        "timber","roof","masonry","coin","diamond",
                        "chestTimber","chestFrame","chestLatch"];
@@ -2421,7 +2440,7 @@ try{
     return {roles:Object.keys(PAL).length,files:scanned,actors:ACTOR_ROLES.length};
   })();
 
-  console.log(`validate ok | syntax ${jsFiles.length} | palette ${paletteResult.roles} roles on 32 swatches, 0 off-palette in ${paletteResult.files} model files, ${paletteResult.actors} actors clear of the ground band | main base ${mainBaseResult.levels} authored levels, ${mainBaseResult.jobSlots} hauler limit | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+draftResult.checks+chestResult.checks+handResult.checks} checks | wave threat ${tierOneResult.threat}/${draftResult.waveThreat} after ${draftResult.nights} nights | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | labels ${showcaseResult.labels}`);
+  console.log(`validate ok | syntax ${jsFiles.length} | palette ${paletteResult.roles} roles on 32 swatches, 0 off-palette in ${paletteResult.files} model files, ${paletteResult.actors} actors clear of the ground band | main base ${mainBaseResult.levels} authored levels, ${mainBaseResult.jobSlots} Delivery Worker limit | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+draftResult.checks+chestResult.checks+handResult.checks} checks | wave threat ${tierOneResult.threat}/${draftResult.waveThreat} after ${draftResult.nights} nights | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

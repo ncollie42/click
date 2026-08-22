@@ -137,7 +137,7 @@ export const PAL = {
   skin:       S.stone0,   // was skin0: L .78 sat inside the meadow's value band
   coat:       S.wood1,    // fallback worker coat — dark brown reads BELOW the clearing
   jobHaul:    S.blue2,
-  jobBuild:   S.red0,     // gold, the builder's hi-vis
+  jobDelivery:S.red0,     // gold, the Delivery Work coat
   jobGuard:   S.stone3,
   hat:        S.wood2,
   blade:      S.stone0,   // metal0 never self-lands under the warm sun (palette-snap); stone0 does
@@ -309,7 +309,7 @@ export const TONES = {
  *      tier 2  red1 / red2     veteran: the whole seam one step hotter
  *      tier 3  red0 / red1     elite: gold-hot core, orange walls
  *  Monotone in heat, four of the ramp's four steps used, nothing off-palette in between. red0 is
- *  also the coin and the builder's hi-vis, which is a real collision - it is spent here on a
+ *  also the coin and Delivery Work coat, which is a real collision - it is spent here on a
  *  hairline crack rather than a mass, and only on the rarest enemy in the game.
  *
  *  THE BODY IS NEVER TINTED. It was, for one build on Aug 22, and that is the mistake this file's
@@ -343,7 +343,7 @@ export const css = n => "#" + n.toString(16).padStart(6,"0");
 
 export const DROP_COLOR = {wood:PAL.wood, stone:PAL.stone, dust:PAL.dust,
                     coin:PAL.coin, diamond:PAL.diamond};
-export const JOB_COAT = {haul:PAL.jobHaul, build:PAL.jobBuild, guard:PAL.jobGuard};
+export const JOB_COAT = {haul:PAL.jobHaul, deliver:PAL.jobDelivery, guard:PAL.jobGuard};
 /** Tower roof accent per variant; anything unlisted falls back to timberDark. */
 export const TOWER_TOP = {
   pulse:PAL.arcane,     shock:PAL.towShock,   laser:PAL.towLaser,

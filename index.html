@@ -38,7 +38,7 @@
              perf       — frame-stage timings, entity/scene census, and isolation switches.
              Contextual subgroup order: visibility scan/readability; input
              hand/click/projectiles; overlays damage/bars/badge; gameplay
-             economy/builders/time/combat/population/cards; perf frame/load/isolate. Camera and
+             economy/delivery/time/combat/population/cards; perf frame/load/isolate. Camera and
              selectors intentionally have no subgroups.
              Ownership is one-way and exclusive: non-gameplay panes only read diagnostics or write
              their own presentation bag (selectors -> IND / SEL_PREVIEW,
@@ -202,7 +202,7 @@
         <section class="pane" data-tab="gameplay">
           <div class="vSubpane" data-subtab="economy">
           <label class="chk"><input autocomplete="off" type="checkbox" id="vFreeCosts"><span>free costs</span></label>
-          <div class="row"><span>progress</span><span id="vProgressReadout">base lv 0/3 · tier 0</span></div>
+          <div class="row"><span>progress</span><span id="vProgressReadout">base lv 0/30 · tier 0</span></div>
           <div class="btnrow">
             <button id="vDealBaseDraft" type="button">deal base draft</button>
             <button id="vDealDawnDraft" type="button">deal dawn buff</button>
@@ -214,11 +214,11 @@
             <button id="vGrantDiamond" type="button">+25 diamond</button>
           </div>
           </div>
-          <div class="vSubpane" data-subtab="builders">
+          <div class="vSubpane" data-subtab="delivery">
           <label class="chk"><input autocomplete="off" type="checkbox" id="vGroundSourcing" checked><span>ground sourcing</span></label>
-          <label class="chk"><input autocomplete="off" type="checkbox" id="vBuilderSelfSupply" checked><span>starved builders self-supply</span></label>
-          <label><span class="row"><span>builder source radius</span><span id="o_vBuilderRadius"></span></span>
-            <input autocomplete="off" type="range" id="vBuilderRadius" min="60" max="1000" step="10" value="400"></label>
+          <label class="chk"><input autocomplete="off" type="checkbox" id="vDeliverySelfSupply" checked><span>starved Delivery Workers self-supply</span></label>
+          <label><span class="row"><span>delivery source radius</span><span id="o_vDeliveryRadius"></span></span>
+            <input autocomplete="off" type="range" id="vDeliveryRadius" min="60" max="1000" step="10" value="400"></label>
           <label><span class="row"><span>free worker search radius</span><span id="o_vFreeSearchRadius"></span></span>
             <input autocomplete="off" type="range" id="vFreeSearchRadius" min="100" max="1000" step="20" value="500"></label>
           </div>

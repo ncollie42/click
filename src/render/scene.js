@@ -36,7 +36,7 @@ import {
   outlineMat, outlineMatPx, adoptOutlineShell, releaseOutlineShell
 } from "./models.js";
 import {
-  VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,
+  VIEW_W,VIEW_H,W,H,BASE,
   CELL,GRID_COLS,GRID_ROWS,FOG,NIGHT_OVERLAY_ALPHA,
   FOOTPRINT_1x1,FOOTPRINT_3x3,
   RESOURCE_KINDS,
@@ -1309,7 +1309,7 @@ const syncControlledEnemies=makeLayer(unit=>makeEnemy(unit.type),(g,unit)=>{
 // lifted unit rides the cursor as the real mesh, per the held-object contract below.
 const workerStore = new Map();
 const workerModelKey = w =>
-  (w.job==="haul" ? "worker-courier" : w.job==="build" ? "worker-builder" :
+  (w.job==="haul" ? "worker-courier" : w.job==="deliver" ? "worker-builder" :
    w.job==="guard" ? "worker-guard" : w.job==="free" ? "worker-gatherer" :
    "worker-gatherer") + (workerLoad(w)>0 ? "+carry" : "");   // free wears the plain gatherer coat
 const yawWrap = a => Math.atan2(Math.sin(a), Math.cos(a));
@@ -1979,47 +1979,6 @@ function setScaleBall(on){
   if(scaleBall) scaleBall.visible = on;
 }
 
-// ─────────────────────────────────────────────────────────── the base pile
-// state.stored is just counts (storeAtBase credits it, builders withdraw), and the design rule is
-// that resources stay PHYSICAL: the banked stock is shown as an actual pile at the base's south
-// edge, not a number. Same rebuild-on-signature trick as the cursor hand above. The display caps
-// at PILE_MAX items so a late-game bank cannot flood the scene with meshes.
-const basePile = new THREE.Group();
-basePile.position.set(gx(BASE.x), GROUND_Y, gz(BASE.y + BASE.r + 26));
-scene.add(basePile);
-const pileItems = [];
-let pileSig = "";
-const PILE_MAX = 80;
-
-function syncBasePile(){
-  const want = [];
-  for(const kind of RESOURCE_KINDS)
-    for(let i=0;i<state.stored[kind] && want.length<PILE_MAX;i++) want.push(kind);
-
-  const sig = want.join(",");
-  if(sig !== pileSig){
-    const grew = want.length > pileItems.length;
-    for(const it of pileItems){ basePile.remove(it.mesh); disposeGroup(it.mesh); }
-    pileItems.length = 0;
-    // Golden-angle spiral, kinds grouped by the ordered fill above so each resource clusters into
-    // its own wedge; a little seeded height/spin jitter keeps it a pile rather than a lattice.
-    want.forEach((kind,i)=>{
-      const mesh = makeDrop(kind);
-      basePile.add(mesh);
-      const a = i*2.399, r = .35 + .25*Math.sqrt(i);
-      mesh.position.set(Math.cos(a)*r, .1 + (i%3)*.12, Math.sin(a)*r);
-      mesh.rotation.y = a*1.7;
-      mesh.scale.setScalar(.8);
-      pileItems.push({mesh, pop:(grew && i===want.length-1) ? 1 : 0});
-    });
-    pileSig = sig;
-  }
-
-  basePile.visible = pileItems.length>0 && mainBaseStanding();
-  for(const it of pileItems)
-    if(it.pop>0){ it.pop = Math.max(0, it.pop-.05); it.mesh.scale.setScalar(.8*(1 + it.pop*.9)); }
-}
-
 // ─────────────────────────────────────────────────────────── previews (ghosts)
 const ghostBuild = {key:null, g:null};
 function showGhostBuilding(type, x, y, ok, lift=0){
@@ -2548,8 +2507,6 @@ function drawZones(){
       {color:cursor.color, opacity:cursor.opacity, pulse:indicatorPulse(t, cursor.pulse)});
   } else cursorGlide.live = false;   // off screen: the next appearance teleports rather than flies in
 
-  if(mainBaseStanding() && m.inside && distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16) ring(BASE.x,BASE.y,BASE_ZONE);
-
   // Coverage rings for the hovered building, hung off the SAME resolution the corners used so the two
   // can never name different buildings. The radius comes from indicatorRadius(), the resolver the
   // placement preview also reads — a tower reads its OWN variant's range through it, so an upgraded
@@ -2567,7 +2524,8 @@ function drawZones(){
     if(taunt) showRadiusRing(hovered.x, hovered.y, taunt, {color:css(PAL.taunt), opacity:indicatorRingOpacity(t)});
   }
   if(heldWorker()){
-    if(mainBaseStanding()) ring(BASE.x,BASE.y,BASE_ZONE,css(PAL.storage),.4);
+    const baseAssignment=workerAssignmentAt(heldWorker(),BASE.x,BASE.y);
+    if(baseAssignment?.target===BASE)ring(BASE.x,BASE.y,TUNE.deliverySourceRadius,css(PAL.jobDelivery),.4);
     for(const s of buildings) if(s.complete && s.type==="stockpile")
       ring(s.x,s.y,storageServiceRadius(s),css(PAL.storage),.4);
   }
@@ -2717,7 +2675,7 @@ export function drawScene(){
   const visibleEnemies=state.enemies.filter(revealed);
   syncEnemies(heldEnemy()?[...visibleEnemies,heldEnemy()]:visibleEnemies);syncFriendlyBrutes(friendlyBrutes);syncControlledEnemies(controlledEnemies);syncWorkers();
   syncDummies(damageDummies);syncShowcaseProps(showcaseProps);
-  syncBuildings(); syncParticles(); syncHand(); syncBasePile();
+  syncBuildings(); syncParticles(); syncHand();
 
   // Sim-px outline shells track the view panel's weight slider through the world-unit material.
   outlineMatPx.uniforms.thickness.value = outlineMat.uniforms.thickness.value / S;

@@ -22,7 +22,7 @@ export const W=1536*MAP_TILES,H=1024*MAP_TILES;
 // ── the base anchor ─────────────────────────────────────────────────────────
 // Authored anchor, radius and reserved footprint. Not run state: base HEALTH is
 // state.baseHp/baseMax in simulation.js, and nothing ever writes x/y/r/footprint.
-// BASE is SPACE ONLY. Everything the built structure decides — health, storage reach, slots,
+// BASE is SPACE ONLY. Everything the built structure decides — health, Delivery Work slots,
 // attack, authored levels — lives in MAIN_BASE / MAIN_BASE_LEVELS further down, just above BUILDING_TYPES.
 // The split is deliberate: the base becomes player-built, but WHERE it stands never moves, so the
 // map-centre anchor and its 3x3 reservation exist from world load whether a base stands on it or not.
@@ -30,7 +30,6 @@ export const W=1536*MAP_TILES,H=1024*MAP_TILES;
 // exactly like a placed building - no keep-out circle, no special case in canPlace().
 // `footprint` is attached below, once FOOTPRINT_3x3 exists; nothing else ever writes this object.
 export const BASE = {x:W/2,y:H/2,r:43};
-export const BASE_ZONE=600;
 // Buildable world = the map inset by this much on every side. Read by canPlace() in simulation.js.
 export const BUILD_MARGIN=45;
 
@@ -232,13 +231,11 @@ export const MAIN_BASE_LEVELS=Object.freeze([
 
 // What the built structure owns, so no other module restates a base number:
 //   maxHp         health of the standing base (state.baseHp/baseMax), the pool the baseHp card grows.
-//   storageRadius the base's storage service reach — the circle BASE_ZONE already draws, kept as
-//                 one number so "base storage covers this drop" has a single definition.
 //   buildSlots    construction staffing of the base SITE, exactly like a BUILDING_TYPES row.
 //   jobSlots      Worker Limit of the COMPLETED base (CONTEXT.md "Worker Limit"): at most two
-//                 haulers may be posted to it. THE authority — deliberately not restated as a
-//                 BUILDING_TYPES.mainBase field, because the completed base's post is the BASE
-//                 anchor, not the leftover construction record (see that row's note below).
+//                 Delivery Workers may fulfill its active level. THE authority — deliberately not
+//                 restated as a BUILDING_TYPES.mainBase field, because the standing Base's post is
+//                 the BASE anchor, not the leftover construction record (see that row's note below).
 //   range/damage/rate/damageTargetType  the base's own attack, fired by updateBaseAttack() in
 //                 simulation.js. 95 / 2 / .85 are the numbers the retired king used to fire with:
 //                 handing the map centre's defence to the base changed WHO shoots, never how hard.
@@ -247,7 +244,7 @@ export const MAIN_BASE_LEVELS=Object.freeze([
 //                 never two literals that can drift apart.
 //   maxLevel      derived from the authored list so the "no extrapolation" rule has a number.
 export const MAIN_BASE=Object.freeze({
-  maxHp:100,storageRadius:BASE_ZONE,buildSlots:2,jobSlots:2,
+  maxHp:100,buildSlots:2,jobSlots:2,
   range:95,damage:2,rate:.85,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,
   cost:MAIN_BASE_LEVELS[0].cost,maxLevel:MAIN_BASE_LEVELS.length
 });
@@ -266,7 +263,7 @@ export const BUILDING_TYPES = {
   // base can travel the ordinary card → site → delivery → completion path with no special case.
   // Deliberately NO jobSlots, permanently. This row describes the SITE. The completed base's
   // Worker Limit is MAIN_BASE.jobSlots, and its runtime post is the BASE anchor — the same object
-  // storage, hover and enemy targeting already use — not this record, which is ordinary
+  // Delivery Work, hover and enemy targeting use — not this record, which is ordinary
   // construction that headless harnesses routinely clear. Authoring jobSlots here would create a
   // second, competing two-slot pool at the same coordinates. simulation.js reads MAIN_BASE.jobSlots
   // in workerOccupancyStatus(BASE); builtJobAssignment() maps this record onto BASE for inheritance.
@@ -295,7 +292,9 @@ export const BUILDING_TYPES = {
   // The garrison's jobSlots ARE its guard slots, so the count is read from GARRISON.capacity rather
   // than restated here. Guard stats, radii and the muster timing all live in that record.
   garrison:{name:"garrison",resource:null,cost:{wood:6,stone:6},buildSlots:2,jobSlots:GARRISON.capacity,footprint:FOOTPRINT_1x1},
-  consumableForge:{name:"consumable forge",resource:null,cost:{wood:5,stone:5},buildSlots:2,footprint:FOOTPRINT_1x1},
+  // Construction and each completed 5-dust batch are the same Delivery Work. buildSlots caps the
+  // site; jobSlots caps the persistent Forge post after completion.
+  consumableForge:{name:"consumable forge",resource:null,cost:{wood:5,stone:5},buildSlots:2,jobSlots:2,footprint:FOOTPRINT_1x1},
   blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:135,damage:3,innerDamage:5,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,instant:true,footprint:FOOTPRINT_1x1},
   spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},buildSlots:0,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,cooldown:.55,instant:true,stack:true,footprint:FOOTPRINT_1x1},
   landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:65,damage:8,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,instant:true,stack:true,footprint:FOOTPRINT_1x1},

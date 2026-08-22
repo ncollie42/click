@@ -163,7 +163,7 @@ export const CARDS=[
    type:"spell", tags:["click","aoe"], features:["physical space"], charges:1, ref:"concept:screenClick", model:null, implemented:true, inPool:true,
    notes:"each target enters the ordinary click-hit pipeline, including crit, chain lightning, free hit, and future click effects"},
   {id:"resourceRecall", category:"consumable", rarity:"rare", text:"send every loose resource back to the base",
-   type:"spell", features:["resources"], charges:1, ref:"concept:resourceRecall", model:null, implemented:true, inPool:true, notes:"releases worker claims and deposits recalled drops into base storage"},
+   type:"spell", features:["resources"], charges:1, ref:"concept:resourceRecall", model:null, implemented:true, inPool:true, notes:"releases worker claims and gathers recalled resources as loose drops beside the base"},
   {id:"touchOfDeath", category:"consumable", rarity:"legendary", text:"deal 999 damage to every on-screen enemy",
    type:"spell", tags:["aoe"], features:["physical space"], charges:1, ref:"concept:touchOfDeath", model:null, implemented:true, inPool:true, notes:"direct spell damage; not a click hit"},
   {id:"damageOrbs", category:"consumable", rarity:"rare", text:"place 1 to 3 orbiting damage orbs for 30 seconds",
@@ -184,11 +184,11 @@ export const CARDS=[
   {id:"rushBuild",    category:"consumable", rarity:"epic",   text:"instantly finish one build",
    features:["physical space"], ref:"concept:rushBuild", model:null, implemented:false, inPool:false, notes:""},
   {id:"woodBundle",   category:"consumable", rarity:"common", text:"+20 wood, delivered now",
-   features:["resources"], ref:"concept:bundle", model:null, implemented:true, inPool:false, notes:"disabled: a stored-resource payout bypasses harvesting and construction-delivery pacing"},
+   features:["resources"], ref:"concept:bundle", model:null, implemented:true, inPool:false, notes:"disabled: a loose-resource payout bypasses harvesting pacing"},
   {id:"stoneBundle",  category:"consumable", rarity:"common", text:"+15 stone, delivered now",
-   features:["resources"], ref:"concept:bundle", model:null, implemented:true, inPool:false, notes:"disabled: a stored-resource payout bypasses harvesting and construction-delivery pacing"},
+   features:["resources"], ref:"concept:bundle", model:null, implemented:true, inPool:false, notes:"disabled: a loose-resource payout bypasses harvesting pacing"},
   {id:"dustBundle",   category:"consumable", rarity:"epic",   text:"+3 dust, delivered now",
-   features:["resources"], ref:"concept:bundle", model:null, implemented:true, inPool:false, notes:"disabled: a stored-resource payout bypasses harvesting and construction-delivery pacing"},
+   features:["resources"], ref:"concept:bundle", model:null, implemented:true, inPool:false, notes:"disabled: a loose-resource payout bypasses harvesting pacing"},
   {id:"tempWorker",   category:"consumable", rarity:"rare",   text:"a spectral worker helps until dusk",
    features:["day/night","workers"], ref:"concept:tempWorker", model:null, implemented:false, inPool:false, notes:""},
   {id:"calmNight",    category:"consumable", rarity:"epic",   text:"the next wave is 25% smaller",
@@ -294,7 +294,7 @@ export const CARDS=[
   {id:"bpConsumableForge", category:"build", rarity:"rare", text:"start building a consumable forge; every 5 delivered dust drafts a consumable",
    features:["resources","physical space"], charges:1, ref:"building:consumableForge", model:null,
    implemented:true, inPool:true,
-   notes:"persistent 1x1 forge at 5 wood + 5 stone; manual dust deposits retain their remainder and each full 5-dust batch queues one consumable draft"},
+   notes:"persistent 1x1 forge at 5 wood + 5 stone; player or worker dust delivery retains partial progress and each full 5-dust batch queues one consumable draft"},
 
   // ── C · builds — workers (don't exist yet) ────────────────────────────
   // Unimplemented and unrelated to the garrison: a barracks would PRODUCE warriors of its own, where

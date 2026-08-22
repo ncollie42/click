@@ -142,10 +142,10 @@ export function syncBuildHud(){
 function updatePrompt(){
   const box=document.getElementById("prompt"),label=box.querySelector("span"),target=hoverTarget();
   box.classList.toggle("on",!!target);
-  // A release at the base pays its next authored level before storage, so the prompt names that
-  // level while one is still owed and falls back to plain storage at the authored maximum.
+  // Base, construction, and Forge expose the same Delivery Work language. A maximum Base has no
+  // hover target because it accepts no resources.
   const base=target?.kind==="base"?mainBaseStatus():null;
-  if(target)label.textContent=base?(base.atMaxLevel?"deposit at base":"deliver toward base lv "+(base.level+1)):target.kind==="stockpile"?"store in stockpile":target.kind==="consumableForge"?"deliver dust to the Consumable Forge":target.kind==="upgrade"?"deposit toward upgrade":"deliver to build";
+  if(target)label.textContent=base?"deliver toward base lv "+(base.level+1):target.kind==="stockpile"?"store in stockpile":target.kind==="consumableForge"?"deliver dust to the Consumable Forge":target.kind==="upgrade"?"deposit toward upgrade":"deliver to build";
 }
 
 // ── audio ───────────────────────────────────────────────────────────────────
