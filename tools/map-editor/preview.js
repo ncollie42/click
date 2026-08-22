@@ -8,8 +8,8 @@ import * as THREE from "three";
 import {buildModuleCatalog, SHAPE_GEOMETRY, rotateShapePoint} from "../../src/game/terrain-modules.js";
 import {solveTerrainWfc} from "../../src/game/terrain-wfc.js";
 import {buildObjectModel, disposeGroup, S} from "./object-catalog.js";
-import {makeGrassTuftGeometry} from "../../src/render/models.js";
 import {PAL} from "../../src/render/palette.js";
+import {SUN_AZIMUTH_DEG, SUN_ELEVATION_DEG, SUN_INTENSITY, HEMI_INTENSITY} from "../../src/render/rig.js";
 import {resolveAuthoredMapScatter} from "../../src/game/authored-map.js";
 import {createWaterModes} from "./water-modes.js";
 import {configurePipelines, renderFrame, resizePipeline} from "../../src/render/pipelines/index.js";
@@ -28,45 +28,86 @@ export const RAISED_SALT = 0x5a15ed;
 const GROUND_CATALOG = buildModuleCatalog({layer: "ground"});
 const RAISED_CATALOG = buildModuleCatalog({layer: "raised"});
 
-const MATERIAL_COLORS = Object.freeze({
-  "ground:top:base": 0x8fb26a,
-  "ground:top:meadow": 0x8fb26a, "ground:top:mottled": 0x84a660, "ground:top:scrub": 0x9fbd75,
-  "ground:wall:sand": 0xcbb47e, "ground:wall:pebble": 0xb2a06f,
-  "raised:top:base": 0xa2bf77,
-  "raised:top:plateau": 0xa2bf77, "raised:top:rocky": 0x92ac71,
-  "raised:wall:cliff": 0x8b8067, "raised:wall:striated": 0x9c8f72,
+// ── cell colours: the SHARED palette, no editor-local hexes (palette.js LAW, Aug 21) ──────────
+// Tops reproduce the game's terrain tint law verbatim (src/render/scene.js tintFor): PAL.grass
+// lerped toward a region colour per WFC variant, then raised cells lifted 12% toward white.
+// The weights are duplicated here because scene.js CANNOT be imported outside the game page (it
+// grabs document.getElementById("scene") at module load) — if tintFor's weights move, move these.
+// Known gap, deliberate: the editor does not run material-light-mods, so tone targets (TONES.meadow),
+// the toon ramp and cloud shade are absent — this shows albedo × plain rig, the game's ground
+// FAMILY at the game's light, not a frame-exact match.
+const REGION_TINT = Object.freeze({          // full-tile variant -> [region colour, lerp weight]
+  meadow:  null,                             // the plain meadow: PAL.grass untouched
+  mottled: [PAL.regionForest, .16],
+  scrub:   [PAL.regionOpen,   .2],
+  plateau: null,
+  rocky:   [PAL.regionRocky,  .18],
 });
+// Edge (non-full) modules keep the coast tint; the game leans them harder on the ground layer.
+const COAST_TINT = Object.freeze({ground: .28, raised: .16});
+// Shore/cliff faces. The game skirts ALL of these with one shoreMat (PAL.cliff); the editor keeps
+// the per-variant read for authoring, sourced from the stone + sand roles.
+const WALL_COLOR = Object.freeze({
+  sand: PAL.dirt, pebble: PAL.rubble,          // cream1 / grey0
+  cliff: PAL.cliff, striated: PAL.rockDark,    // stone3 / stone2
+});
+const WHITE = 0xffffff;
+/** `${layer}:${part}:${variant}` -> the THREE.Color that key renders as. Throws on unknown keys. */
+function cellColor(key){
+  const [layer, part, variant] = key.split(":");
+  if(part === "wall"){
+    const hex = WALL_COLOR[variant];
+    if(hex === undefined) throw new Error(`preview: no wall colour for ${key}`);
+    return new THREE.Color(hex);
+  }
+  const color = new THREE.Color(PAL.grass);
+  if(variant === "base"){
+    const weight = COAST_TINT[layer];
+    if(weight === undefined) throw new Error(`preview: no coast tint for layer ${layer}`);
+    color.lerp(new THREE.Color(PAL.cliff), weight);
+  }else{
+    if(!(variant in REGION_TINT)) throw new Error(`preview: no top colour for ${key}`);
+    const rule = REGION_TINT[variant];
+    if(rule) color.lerp(new THREE.Color(rule[0]), rule[1]);
+  }
+  if(layer === "raised") color.lerp(new THREE.Color(WHITE), .12);
+  return color;
+}
 
 export function createTerrainPreview({canvas}){
   const renderer = new THREE.WebGLRenderer({canvas, antialias: true, preserveDrawingBuffer: true});
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
+  // Plain PCF + a blur radius, exactly like the game (scene.js): PCFSoftShadowMap IGNORES
+  // shadow.radius, so the editor used to draw a different skirt than the thing it previews.
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  // NO tone mapping — the game renders straight (scene.js has no toneMapping), and the rig
+  // intensities below are solved against that. ACES here also made the offscreen pixel pipeline
+  // disagree with the "current" pipeline, since three skips tone mapping into render targets.
+  renderer.toneMapping = THREE.NoToneMapping;
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x2b3a4a);
+  scene.background = new THREE.Color(PAL.sky);
   // FOV matches the game camera (src/render/scene.js persp) so framing agrees.
   const camera = new THREE.PerspectiveCamera(38, 1, .1, 4000);
 
-  scene.add(new THREE.HemisphereLight(0xfff6e0, 0x5a6a75, 1.05));
-  const sun = new THREE.DirectionalLight(0xfff2d8, 1.5);
+  // Light rig = rig.js, the ONE source the game scene, the model bake and the tone solves read.
+  scene.add(new THREE.HemisphereLight(PAL.skyLight, PAL.bounce, HEMI_INTENSITY));
+  const sun = new THREE.DirectionalLight(PAL.sunDay, SUN_INTENSITY);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.radius = 3;   // matches scene.js's crisp pixel-art skirt
   scene.add(sun, sun.target);
 
   const materialCache = new Map();
   function materialFor(key){
-    if(!materialCache.has(key)){
-      const color = MATERIAL_COLORS[key];
-      if(color === undefined) throw new Error(`preview: no material color for ${key}`);
-      materialCache.set(key, new THREE.MeshLambertMaterial({color, flatShading: true}));
-    }
+    if(!materialCache.has(key))
+      materialCache.set(key, new THREE.MeshLambertMaterial({color: cellColor(key), flatShading: true}));
     return materialCache.get(key);
   }
   // Water is owned by the mode system (see water-modes.js): mode 0 reproduces
   // the game's flat plane; 1-5 are candidate shader treatments swappable live.
   const water = createWaterModes({renderer, surfaceY: WATER_SURFACE, tileOf: doc => doc.cellSize * S, floorYOf: () => shoreBottom});
-  const contradictionMaterial = new THREE.MeshBasicMaterial({color: 0xe03a2a, transparent: true, opacity: .55, depthTest: false});
+  // Editor-only chrome, but still a palette role: PAL.bad is the shared "blocked/wrong" red.
+  const contradictionMaterial = new THREE.MeshBasicMaterial({color: PAL.bad, transparent: true, opacity: .55, depthTest: false});
 
   // Everything rebuild() creates, torn down symmetrically before the next build.
   const built = {meshes: [], geometries: [], materials: [], objectModels: []};
@@ -150,38 +191,17 @@ export function createTerrainPreview({canvas}){
 
   function buildObjects(doc, scatter){
     for(const object of doc.objects) placeObjectModel(doc, object, `object:${object.kind}:${object.cx},${object.cy}`);
-    // The game always spawns the main base at the map's center cell; preview it
-    // unless the author already placed an explicit base there.
+    // The map's center cell is the base ANCHOR — the game reserves its 3x3 footprint there and
+    // the player builds the base on it (nothing stands at run start). Preview the cube on that
+    // reservation unless the author already placed an explicit base there.
     const baseCx = Math.floor(doc.width / 2), baseCy = Math.floor(doc.height / 2);
     if(!doc.objects.some(object => object.kind === "base" && object.cx === baseCx && object.cy === baseCy))
       placeObjectModel(doc, {kind: "base", cx: baseCx, cy: baseCy}, "baseMarker");
     for(const cell of scatter.trees) placeObjectModel(doc, cell, `generated:tree:${cell.cx},${cell.cy}`);
     for(const cell of scatter.rocks) placeObjectModel(doc, cell, `generated:rock:${cell.cx},${cell.cy}`);
-    if(scatter.grass.length > 0){
-      const tile = doc.cellSize * S;
-      const geometry = makeGrassTuftGeometry();
-      const material = new THREE.MeshLambertMaterial({color: 0xffffff, flatShading: true, side: THREE.DoubleSide});
-      const mesh = new THREE.InstancedMesh(geometry, material, scatter.grass.length);
-      const matrix = new THREE.Matrix4(), position = new THREE.Vector3(), rotation = new THREE.Quaternion(), scale = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
-      scatter.grass.forEach((cell, index) => {
-        const variant = cell.variant % PAL.grassTuft.length, size = .8 + variant * .07;
-        const raised = doc.raised[cell.cy * doc.width + cell.cx] === 1;
-        position.set((cell.cx + .5) * tile, (raised ? RAISED_TOP : GROUND_TOP) + .025, (cell.cy + .5) * tile);
-        rotation.setFromAxisAngle(up, ((cell.cx * doc.cellSize * 13 + cell.cy * doc.cellSize * 7) % 628) / 100);
-        scale.set(size, size, size);
-        matrix.compose(position, rotation, scale);
-        mesh.setMatrixAt(index, matrix);
-        mesh.setColorAt(index, new THREE.Color(PAL.grassTuft[variant]));
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.name = "generated:grass";
-      mesh.castShadow = mesh.receiveShadow = true;
-      scene.add(mesh);
-      built.meshes.push(mesh);
-      built.geometries.push(geometry);
-      built.materials.push(material);
-    }
+    // scatter.grass = the simulation's cut-grass cells. They have NO model: the legacy tuft
+    // instancer was deleted Aug 22 in both hosts. The meadow (createGrass, below) is the grass
+    // the editor previews; the count still reports so authors can see the scatter resolved.
     return {explicitObjects: doc.objects.length, generatedTrees: scatter.trees.length, generatedRocks: scatter.rocks.length, generatedGrass: scatter.grass.length};
   }
 
@@ -245,8 +265,7 @@ export function createTerrainPreview({canvas}){
     if(meadow){ scene.remove(meadow.mesh); meadow.dispose(); meadow = null; }
     if(!meadowOn || !doc) return;
     const tile = doc.cellSize * S;
-    const groundC = new THREE.Color(MATERIAL_COLORS["ground:top:base"]);
-    const raisedC = new THREE.Color(MATERIAL_COLORS["raised:top:base"]);
+    const groundC = cellColor("ground:top:base"), raisedC = cellColor("raised:top:base");
     const SKIP = {skip: true}, UP = [0, 1, 0];
     const sample = (x, z) => {
       const cx = Math.floor(x / tile), cy = Math.floor(z / tile);
@@ -277,9 +296,16 @@ export function createTerrainPreview({canvas}){
       const scatter = resolveAuthoredMapScatter(doc);
       resourceCounts = buildObjects(doc, scatter);
       const tile = doc.cellSize * S;
-      sun.position.set(doc.width * tile * .35, Math.max(doc.width, doc.height) * tile * .8, doc.height * tile * .1);
-      sun.target.position.set(doc.width * tile / 2, 0, doc.height * tile / 2);
+      // Sun POSE from rig.js (az 0 = +X/screen-right, el up), the same direction the game and the
+      // model bake use — only the direction matters for a directional light, so the distance just
+      // has to clear the map for the shadow camera. The old hand-placed offset lit the editor from
+      // a different quarter than the game, which made every authored slope read wrong.
       const span = Math.max(doc.width, doc.height) * tile * .75;
+      const cx = doc.width * tile / 2, cz = doc.height * tile / 2;
+      const saz = THREE.MathUtils.degToRad(SUN_AZIMUTH_DEG), sel = THREE.MathUtils.degToRad(SUN_ELEVATION_DEG);
+      const horizontal = Math.cos(sel) * span * 2;
+      sun.position.set(cx + Math.cos(saz) * horizontal, Math.sin(sel) * span * 2, cz + Math.sin(saz) * horizontal);
+      sun.target.position.set(cx, 0, cz);
       sun.shadow.camera.left = sun.shadow.camera.bottom = -span;
       sun.shadow.camera.right = sun.shadow.camera.top = span;
       sun.shadow.camera.far = span * 6;
@@ -352,9 +378,8 @@ export function createTerrainPreview({canvas}){
       // Same registry as the game: F9 toggles current/pixel, R opens the slider panel.
       // The "current" pipeline reproduces the old direct draw exactly (it calls waterPrePass()
       // with no size, which is the old water.update(camera) — waves + pre-pass — then renders).
-      // Caveat, deliberate: this renderer tone-maps (ACES); three skips tone mapping into
-      // offscreen targets, so the experimental pipelines render the editor slightly differently
-      // than "current". The game itself has no tone mapping, so only the editor sees the gap.
+      // The old ACES-vs-offscreen mismatch between "current" and the pixel pipeline is gone:
+      // this renderer no longer tone-maps, matching the game (see the renderer setup above).
       renderFrame();
     },
     dispose(){

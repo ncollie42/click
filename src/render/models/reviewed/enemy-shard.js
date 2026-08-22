@@ -42,8 +42,9 @@
 //   · PLANE re-targeted to the sheet's near-black regime +10% for our brighter ground
 //     (viewer ground luma ~174 vs the sheet's ~139). Rendered: flanks 40–46, tops 66–72,
 //     undersides 20. Sheet, for comparison: flanks 39–47, tops 55–64, undersides 18–21.
-//   · TINT_BODY was 0x9990cc — a 22-point blue lift on every body pixel. The sheet's rock
+//   · the body tint was 0x9990cc — a 22-point blue lift on every body pixel. The sheet's rock
 //     is NEUTRAL charcoal (52,52,51). Now cool-compensated so it RENDERS neutral (44,44,44).
+//     (v15 replaced neutral with crimson; the VALUE reasoning below still governs.)
 //   · SEAM_RGB down from (216,134,255) to the sheet's own crack core (188,126,231): the
 //     seam no longer has to out-glow a bright top plane, it has to glow against a dark one.
 //   · SOCKET_DISP 12 → 15 and RIM_DISP 14 → 10, both re-seated under the new floor.
@@ -75,7 +76,26 @@
 //    with a real recoil pitch · brute debris as shard volumes with one violet facet each ·
 //    raider rear cluster shrunk (no second head), stray floating geometry removed, lunge
 //    arcs nose-up with a broken faceted trail.
+//
+// v15 — RED IS WHAT THE CREATURE DOES, NOT WHAT IT IS (Aug 22). Geometry, the PLANE value ramp, the
+// crack system, the sockets and the FX grammar are byte-for-byte v14. What changed is WHICH FAMILY
+// each register belongs to.
+//
+// A first cut of v15 put the BODY on the red ramp (crimson red3 everywhere) and was rejected by the
+// owner: "taking it too literal — enemies are red, keep them DARK within the palette; make the
+// purple accent red, or just make the damage they do red." That is the correct reading of the
+// palette's own law. RED IS RESERVED for threat/damage; a silhouette is not damage. So:
+//   BODY   PAL.<archetype>    = shade1, the navy floor of the shadow bridge. Unlit rock.
+//   TOPS   PAL.enemyLit       = stone3, neutral-cool. The value ramp still does the modelling.
+//   CAP    PAL.<archetype>Cap = shade2, except the archer's fin (red1) and the bomber's fuse (red0):
+//                               one warm note each, and no more.
+//   SEAMS  PAL.enemySeam / enemySeamDeep = red2 over red3. This is where the reserve is spent —
+//                               the violet the cast wore since v13 is gone from every register.
+//   THROWN PAL.enemyAbility / enemyAbilityDim = red1 over red2, one step above the seam, off-body.
+// Variant tier now brightens the SEAM (tintSeams below), never the body. And the damage these
+// creatures deal is red at the receiving end too — see scene.js/overlay.js hit flashes.
 import * as THREE from "three";
+import {PAL, SWATCH as S} from "../../palette.js";
 
 // ════════════════════════════════════════════════════════════════════════════
 // FIX 1 · DISPLAY-REFERRED AUTHORING
@@ -106,13 +126,36 @@ function tintOf(hex) { const c = new THREE.Color(hex); const l = lumOf(c); retur
 // bounce (0x6a7a55): a neutral albedo renders warm brown (measured 51,48,41). So the
 // albedo is cool-compensated — it is not the colour the rock reads as, it is the colour
 // that makes the rock READ neutral once the rig has coloured it.
-const TINT_BODY = tintOf(0x969bb0);         // cool-compensated → renders neutral charcoal
-const TINT_RIM = tintOf(0x8b8a9c);          // crack rims: near-neutral, never violet
-const TINT_VIOLET = tintOf(0xc07cff);       // the villain colour
-const TINT_WARM = tintOf(0xfff2e2);         // eye white
+// Aug 22 palette migration: every hue vector is a shared swatch now (palette.js SWATCH/PAL).
+// Only the HUE survives tintOf() — luminance is normalised away and comes from the display value
+// passed to dispColor() / the PLANE ramp — so swapping in a swatch changes which family the cast
+// belongs to, not its measured value ramp. That is exactly why v15 could move the whole cast into
+// the red reserve without re-deriving a single calibrated number.
+/** A swatch as the DISPLAY sRGB triple dispRGB() wants. The seam registers are authored as display
+ *  targets, so "the seam is red2" is true on the screen, not just in the source. */
+const rgbOf = hex => [hex >> 16 & 255, hex >> 8 & 255, hex & 255];
+const scaled = (rgb, k) => rgb.map(v => v * k);
+const TINT_RIM = tintOf(S.shade2);          // crack rims: near-black. Darker than the shade1 body.
+const TINT_SEAM = tintOf(PAL.enemySeam);    // the threat colour (was arcane0 through v14)
+const TINT_WARM = tintOf(S.cream0);         // eye white
+
+// ── PER-ARCHETYPE INK (v15) ─────────────────────────────────────────────────
+// `body` paints flanks and undersides, `lit` the +Y shelves and tops (hue-shift: lighter goes
+// warmer), `cap` every mesh under a capMark()ed sub-tree. Read straight off palette.js so the five
+// enemy PAL roles that had no reader finally have one — retint the cast THERE, not here.
+const inkOf = a => ({body: tintOf(PAL[a]), lit: tintOf(PAL.enemyLit), cap: tintOf(PAL[a + "Cap"])});
+const INK = {
+  raider: inkOf("raider"), archer: inkOf("archer"), healer: inkOf("healer"),
+  brute: inkOf("brute"), bomber: inkOf("bomber"),
+};
+// Construction-time bake only. finish() re-paints every toned mesh in WORLD space with the
+// archetype's own ink, so nothing that survives to the screen is inked with this.
+const INK_PROVISIONAL = INK.raider;
+/** Mark a sub-tree as this creature's CAP accent — shadeWorld inks it with ink.cap. */
+function capMark(o) { o.traverse(c => { c.userData.capInk = true; }); return o; }
 
 // a THREE.Color that RENDERS at `disp` sRGB with hue `tint` (unlit / MeshBasic path)
-function dispColor(disp, tint = TINT_BODY) {
+function dispColor(disp, tint) {
   const L = dispToLin(disp);
   return new THREE.Color().setRGB(L * tint[0], L * tint[1], L * tint[2], THREE.LinearSRGBColorSpace);
 }
@@ -129,8 +172,8 @@ const shadedMat = (opt = {}) => new THREE.MeshLambertMaterial({ vertexColors: tr
 // ── the viewer's light rig, solved for luminance ────────────────────────────
 const SUN = new THREE.Vector3(120, 220, 80).normalize();
 const FILL = new THREE.Vector3(-140, 60, -100).normalize();
-const L_SKY = lumOf(new THREE.Color(0xfff6e0)), L_GND = lumOf(new THREE.Color(0x6a7a55));
-const L_SUN = lumOf(new THREE.Color(0xfff2d8)) * 1.6, L_FILL = lumOf(new THREE.Color(0xcfd8ee)) * 0.4;
+const L_SKY = lumOf(new THREE.Color(0xfff6e0)), L_GND = lumOf(new THREE.Color(0x6a7a55));   // palette-exempt: viewer LIGHTS, not albedo
+const L_SUN = lumOf(new THREE.Color(0xfff2d8)) * 1.6, L_FILL = lumOf(new THREE.Color(0xcfd8ee)) * 0.4;   // palette-exempt: viewer LIGHTS
 function irrLum(n) {
   return 1.15 * (L_GND + (L_SKY - L_GND) * (0.5 + 0.5 * n.y))
     + L_SUN * Math.max(0, n.dot(SUN)) + L_FILL * Math.max(0, n.dot(FILL));
@@ -178,8 +221,12 @@ function noShadow(mesh) {
 }
 function rng(seed) { let s = seed % 2147483647; if (s <= 0) s += 2147483646; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
 
-// bake per-face colour from a normal supplied in an arbitrary frame
-function paintFaces(geo, tone, m3) {
+// bake per-face colour from a normal supplied in an arbitrary frame.
+// `ink` picks the HUE per facet — sun-facing shelves and tops (planeDisp >= PLANE.upper) take
+// ink.lit, everything else ink.body. planeDisp is called a second time here rather than threaded out
+// of toneAlbedo: this runs once per facet at build time, and keeping the two functions independent
+// is worth more than the arithmetic.
+function paintFaces(geo, tone, m3, ink) {
   const g = geo.index ? geo.toNonIndexed() : geo;
   const pos = g.attributes.position;
   const colors = g.attributes.color ? g.attributes.color.array : new Float32Array(pos.count * 3);
@@ -189,10 +236,11 @@ function paintFaces(geo, tone, m3) {
     n.crossVectors(b.clone().sub(a), c.clone().sub(a)).normalize();
     if (m3) n.applyMatrix3(m3).normalize();
     const v = toneAlbedo(n, tone);
+    const t = planeDisp(n) >= PLANE.upper ? ink.lit : ink.body;
     for (let k = 0; k < 3; k++) {
-      colors[(i + k) * 3 + 0] = Math.min(1, v * TINT_BODY[0]);
-      colors[(i + k) * 3 + 1] = Math.min(1, v * TINT_BODY[1]);
-      colors[(i + k) * 3 + 2] = Math.min(1, v * TINT_BODY[2]);
+      colors[(i + k) * 3 + 0] = Math.min(1, v * t[0]);
+      colors[(i + k) * 3 + 1] = Math.min(1, v * t[1]);
+      colors[(i + k) * 3 + 2] = Math.min(1, v * t[2]);
     }
   }
   if (!g.attributes.color) g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -200,18 +248,22 @@ function paintFaces(geo, tone, m3) {
   g.computeVertexNormals();
   return g;
 }
-const shadePlanes = (geo, tone = T.mid) => paintFaces(geo, tone, null);
+const shadePlanes = (geo, tone = T.mid) => paintFaces(geo, tone, null, INK_PROVISIONAL);
 
 // FIX 1 · re-bake every shaded mesh with its WORLD normal once the tree is assembled.
 // A horn rotated to lie along the back was being shaded as if it stood upright; this is
 // what let the whole cast collapse into one value no matter what the ramp said.
-function shadeWorld(root) {
+// v15 · this pass is also where the archetype's INK lands, which is why nothing before finish()
+// needs to know which creature it is building. A capMark()ed mesh takes ink.cap on EVERY facet
+// (a cap is one accent, not a second value ramp).
+function shadeWorld(root, ink) {
   root.updateMatrixWorld(true);
   const m3 = new THREE.Matrix3();
+  const capInk = {body: ink.cap, lit: ink.cap};
   root.traverse(o => {
     if (o.isMesh && o.userData.tone !== undefined) {
       m3.getNormalMatrix(o.matrixWorld);
-      paintFaces(o.geometry, o.userData.tone, m3);
+      paintFaces(o.geometry, o.userData.tone, m3, o.userData.capInk ? capInk : ink);
     }
   });
 }
@@ -309,7 +361,11 @@ const RIM_DISP = 10;                          // darker than PLANE.under (20) ×
 // doesn't any more — it has to glow against a 39-sRGB flank, which is the entire trick.
 // So the core comes DOWN and gets more saturated: deep violet, green channel well under
 // half of blue. Emissive-floor-only construction is unchanged.
-const SEAM_RGB = [188, 126, 231], SEAM_RGB_COOL = [132, 68, 190];
+// v15 · the seam is RED. The measurements above are v13.1 history: they solved a VIOLET core
+// against a charcoal flank, and the geometry of that argument (a flat two-step, core brighter than
+// the walls, nothing on the seam catching sun) is what survives. The hues come from the palette now
+// and are authored as display targets, so a seam floor renders red2 and its cool half red3 exactly.
+const SEAM_RGB = rgbOf(PAL.enemySeam), SEAM_RGB_COOL = rgbOf(PAL.enemySeamDeep);
 // v14 · TWO VIOLET REGISTERS, and the difference is the whole read.
 // CRACK violet is a property of the rock: it sits in a trench, it never leaves the body.
 // ABILITY violet is the thing the creature THROWS — bolts, motes, the charge flash —
@@ -323,14 +379,14 @@ const SEAM_RGB = [188, 126, 231], SEAM_RGB_COOL = [132, 68, 190];
 //   ability dim authored (168, 74,236) -> renders (179, 87,239)  luma 118  S 0.636
 // Brighter AND more saturated, with the near-zero authored green buying back the
 // saturation the matrix takes away. Off-body is the third separator.
-const ABILITY_RGB = [216, 8, 254], ABILITY_DIM = [168, 74, 236];
+const ABILITY_RGB = rgbOf(PAL.enemyAbility), ABILITY_DIM = rgbOf(PAL.enemyAbilityDim);
 const LIP = dispColor(RIM_DISP, TINT_RIM);
 const HOT = dispRGB(...SEAM_RGB), COOL = dispRGB(...SEAM_RGB_COOL);
 // v14 · the spill: a dim violet falloff facet flanking the floor on ONE side. 24 is
 // under PLANE.sideDark (28) and under the darkest body plane a crack ever borders, so
 // it reads as glow bleeding into the fracture's shadow — never as a lit facet.
 const SPILL_DISP = 24;
-const SPILL = dispColor(SPILL_DISP, tintOf(0xb070ff));
+const SPILL = dispColor(SPILL_DISP, tintOf(PAL.enemySeamDeep));
 const SURFACE_EPS = 0.012;                    // sub-pixel: "on the plane", not above it
 const CRACK_W = 1.15;                         // one dial for the whole cast's seam weight
 // v14 · the floor is the only part of the seam that glows, and at 1.4·0.66·w it was a
@@ -450,7 +506,7 @@ function trench(host, surf, ctrl, opt = {}) {
   // wide any more is the floor — the walls now carry most of the trench's width.
   const depth = opt.depth ?? Math.max(0.34, w * 0.42);
   const geo = host.geometry;
-  const S = [];
+  const SAMP = [];
   for (const [u, v, t] of polySamples(ctrl, samples)) {
     const f = surfFrame(surf, u, v);
     const dir = f.p.clone().sub(f.o);
@@ -460,7 +516,7 @@ function trench(host, surf, ctrl, opt = {}) {
       const hit = rayHit(geo, f.o, dir);
       if (hit > 0 && isFinite(hit)) p = f.o.clone().addScaledVector(dir, hit);
     }
-    S.push({ p, n: f.n, t });
+    SAMP.push({ p, n: f.n, t });
   }
   const rimV = [], floV = [], floC = [], spiV = [];
   const tri = (arr, a, b, c) => { arr.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z); };
@@ -471,8 +527,8 @@ function trench(host, surf, ctrl, opt = {}) {
     for (let k = 0; k < 6; k++) floC.push(col.r, col.g, col.b);
   };
 
-  const rails = S.map((s, i) => {
-    const prev = S[Math.max(0, i - 1)].p, next = S[Math.min(S.length - 1, i + 1)].p;
+  const rails = SAMP.map((s, i) => {
+    const prev = SAMP[Math.max(0, i - 1)].p, next = SAMP[Math.min(SAMP.length - 1, i + 1)].p;
     const tang = next.clone().sub(prev);
     if (tang.lengthSq() < 1e-9) tang.set(0, 1, 0);
     const side = new THREE.Vector3().crossVectors(s.n, tang.normalize()).normalize();
@@ -664,7 +720,10 @@ function eyeCluster(parent, o) {
 // ── ground FX primitives (flat, faceted, unlit — same rules as bodies) ──────
 // FIX 4 · GROUND-PLANE VIOLET = THREAT, EXCLUSIVELY. Only the brute's slam annulus is
 // allowed on the ground; contact shadows are neutral dark and nothing else lands there.
-const C = { shadow: 0x151810, ringHot: 0xbb70f7, ringDim: 0x4d1c96 };
+// v15 · the thump annulus was the one place the cast put VIOLET on the ground, sold as "violet =
+// threat". It is the same claim the seams make, so it moves to the same family: a red ring under a
+// brute is the damage it is about to deal, drawn where the damage lands.
+const C = { shadow: S.shade2, ringHot: PAL.enemySeam, ringDim: PAL.enemySeamDeep };
 function softShadow(parent, rx, rz, opacity = 0.34, x = 0, z = 0) {
   const m = noShadow(new THREE.Mesh(new THREE.CircleGeometry(1, 12),
     unlit(C.shadow, { transparent: true, opacity, depthWrite: false })));
@@ -733,7 +792,7 @@ function flareSeams(root, k) {
   });
 }
 // finish a build: bake world-space shading, then snapshot the rest pose
-function finish(root) { shadeWorld(root); snapshotRest(root); return root; }
+function finish(root, ink) { shadeWorld(root, ink); snapshotRest(root); return root; }
 
 // ════════════════════════════════════════════════════════════════════════════
 // RAIDER — a LONG HORIZONTAL WEDGE, 42 long × 14.5 high. FIX 8: the rear spike
@@ -816,6 +875,7 @@ function buildRaider() {
     h.position.set(s * 5.2, 9.4, 3.4); h.rotation.set(-0.55, 0, s * 1.05);
     horns.add(h);
   }
+  capMark(horns);            // v15 CAP · the dorsal ridge is the raider's read
   body.add(horns);
 
   // FIX 2 — trench systems on the hull's flanks and one on the skull. Short arcs,
@@ -864,7 +924,8 @@ function buildRaider() {
     // The tail of the ramp is therefore DEEP and heavily saturated: blended half-and-half
     // with the ground it still lands violet instead of grey.
     const cols = [dispRGB(...SEAM_RGB), dispRGB(...SEAM_RGB_COOL),
-      dispRGB(118, 56, 176), dispRGB(88, 42, 136), dispRGB(66, 32, 104)];
+      dispRGB(...scaled(SEAM_RGB_COOL, 0.72)), dispRGB(...scaled(SEAM_RGB_COOL, 0.52)),
+      dispRGB(...scaled(SEAM_RGB_COOL, 0.36))];
     for (let i = 0; i < 4; i++) {
       const t0 = i / 4, t1 = t0 + 0.20;                   // 0.05 gap between plates
       const w0 = 5.2 * (1 - t0) * (1 - t0) + 0.6, w1 = 5.2 * (1 - t1) * (1 - t1) + 0.6;
@@ -882,7 +943,7 @@ function buildRaider() {
   root.add(trail);
 
   softShadow(root, 9.5, 5.6, 0.32, 0, -1.0);
-  return finish(root);
+  return finish(root, INK.raider);
 }
 
 const trailOpacity = (g, o) => g.getObjectByName("trail").children
@@ -1032,11 +1093,13 @@ function buildArcher() {
       q.name = "quill" + i;
       quills.add(q);
     });
+  capMark(quills);           // v15 CAP · the swept fin, with the crown shard below
   body.add(quills);
 
   // crown shard so the tip reads as a point, not a cut cone
   const crownSpike = spike(2.4, 12.5, T.crown, 76);
   crownSpike.name = "crownSpike"; crownSpike.position.set(0.2, 52.5, -0.4); crownSpike.rotation.x = -0.16;
+  capMark(crownSpike);
   body.add(crownSpike);
 
   // v14 · seams live WITHIN one tier wall each — a plate cracks, the stack doesn't.
@@ -1092,7 +1155,7 @@ function buildArcher() {
   // resting archer never advertises a shot it isn't taking. It charges to the full
   // ability register only in the frames before release.
   const apCore = noShadow(new THREE.Mesh(new THREE.CircleGeometry(1.6, 7),
-    unlit(dispRGB(96, 46, 150), apOff)));
+    unlit(dispRGB(...scaled(SEAM_RGB_COOL, 0.70)), apOff)));   // recess: under the seam it sits in
   apCore.name = "muzzleCore"; apCore.position.z = -0.55;   // sunk INSIDE the ring
   muzzle.add(apRing, apCore);
   const flash = noShadow(new THREE.Mesh(jitterWelded(new THREE.OctahedronGeometry(3.4), 0.4, 80),
@@ -1120,7 +1183,7 @@ function buildArcher() {
     }
     const rg = new THREE.BufferGeometry();
     rg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(v), 3));
-    const ribbon = noShadow(new THREE.Mesh(rg, unlitAt(92, TINT_VIOLET,
+    const ribbon = noShadow(new THREE.Mesh(rg, unlitAt(92, TINT_SEAM,
       { transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })));
     ribbon.name = "boltRibbon";
     bolt.add(head, tailC, ribbon);
@@ -1129,7 +1192,7 @@ function buildArcher() {
   body.add(muzzle);
 
   softShadow(root, 11.5, 9.0, 0.34, 0, -0.5);
-  return finish(root);
+  return finish(root, INK.archer);
 }
 
 const boltOpacity = (g, o) => g.getObjectByName("bolt").children
@@ -1263,6 +1326,7 @@ function buildHealer() {
   // the crown spike — the fissures radiate from under it
   const crown = spike(2.2, 6.4, T.crown, 27);
   crown.name = "crown"; crown.position.y = 24.4;
+  capMark(crown);            // v15 CAP · bone crown, the healer's one light note
   body.add(crown);
   const crest = noShadow(new THREE.Mesh(new THREE.OctahedronGeometry(1.9),
     unlit(dispRGB(...SEAM_RGB))));
@@ -1323,7 +1387,7 @@ function buildHealer() {
   // creature under nothing at all. Re-anchored under the body, and the hover moves it
   // with the drift so it stays anchored.
   softShadow(root, 5.2, 3.4, 0.20, 0, 0);
-  return finish(root);
+  return finish(root, INK.healer);
 }
 
 const healerAnims = {
@@ -1404,6 +1468,7 @@ function buildBrute() {
   const head = plate(7.4, 1.06, 0.88, 1.0, T.crown, 35); head.position.set(-1.0, 12.4, 12.0); head.rotation.x = 0.20; head.name = "head";
   const brow = plate(6.6, 1.02, 0.30, 0.62, T.crown, 40, 0);
   brow.position.set(-1.0, 17.0, 13.6); brow.rotation.x = -0.28; brow.name = "brow";
+  capMark(brow);             // v15 CAP · the overhanging brow, blacker than the head under it
   body.add(hump, shoulderR, chest, haunchL, haunchR, arms, head, brow);
   body.rotation.x = 0.05;
 
@@ -1461,7 +1526,7 @@ function buildBrute() {
   // a violet facet, and dimmer than a seam core: the annulus is what ties the effect
   // to the creature, the clods just have to be soil.
   const chips = new THREE.Group(); chips.name = "chips";
-  const TINT_DIRT = tintOf(0x9c8a70);
+  const TINT_DIRT = tintOf(S.wood0);
   for (let i = 0; i < 8; i++) {
     const rand = rng(200 + i * 7);
     const a = (i / 8) * Math.PI * 2 + 0.2;
@@ -1471,7 +1536,7 @@ function buildBrute() {
     const faces = pos.count / 3;
     const litFace = i % 4 === 1 ? Math.floor(rand() * faces) : -1;
     const rock = [dispColor(70, TINT_DIRT), dispColor(50, TINT_DIRT), dispColor(32, TINT_DIRT)];
-    const glow = dispColor(120, TINT_VIOLET);   // dimmer than a seam core (147)
+    const glow = dispColor(120, TINT_SEAM);   // dimmer than a seam core (147)
     for (let f = 0; f < faces; f++) {
       const c = f === litFace ? glow : rock[f % 3];
       for (let k = 0; k < 3; k++) {
@@ -1492,7 +1557,7 @@ function buildBrute() {
 
   annulusRing(root, "groundRing");
   softShadow(root, 18, 13, 0.36);
-  return finish(root);
+  return finish(root, INK.brute);
 }
 
 const bruteAnims = {
@@ -1572,7 +1637,7 @@ const bruteAnims = {
 // ════════════════════════════════════════════════════════════════════════════
 // Rest ember sits BELOW the dim ability register: a banked coal, not a lit charge —
 // the arm blink jumping to full ABILITY_RGB is the contrast that sells the fuse.
-const EMBER_HOT = dispRGB(...ABILITY_RGB), EMBER_REST = dispRGB(112, 48, 162);
+const EMBER_HOT = dispRGB(...ABILITY_RGB), EMBER_REST = dispRGB(...scaled(ABILITY_DIM, 0.55));
 function buildBomber() {
   const root = new THREE.Group();
   const body = new THREE.Group(); body.name = "body";
@@ -1594,6 +1659,7 @@ function buildBomber() {
     jitterWelded(new THREE.IcosahedronGeometry(1.25, 0), 0.14, 87), unlit(EMBER_REST.clone())));
   ember.name = "fuseEmber"; ember.position.set(0, 8.9, 0);
   fuse.add(stub, ember);
+  capMark(stub);             // v15 CAP · the fuse stub reads gold; the ember above it is FX
   body.add(fuse);
 
   // Four SHORT claws, roots inside the hull (raider's law: no anim can detach them).
@@ -1632,7 +1698,7 @@ function buildBomber() {
   eyeCluster(body, { p: [0, 11.8, 7.2], rx: -0.16, size: 0.50, gap: 1.4, tilt: 0.45, slit: 0.95 });
 
   softShadow(root, 8.8, 7.6, 0.32);
-  return finish(root);
+  return finish(root, INK.bomber);
 }
 
 const bomberAnims = {
@@ -1703,6 +1769,33 @@ const bomberAnims = {
 };
 
 // ── exports ─────────────────────────────────────────────────────────────────
+/** VARIANT TIER hook (models/units/enemy.js). Repaint the emissive seam FLOOR to `[hotHex, coolHex]`
+ *  — two SWATCHes read as display targets, so the crack's hot core renders the first one exactly and
+ *  its walls the second. Both steps are named by the caller (palette.js ENEMY_VARIANT_TINT) rather
+ *  than derived from one: dimming a swatch arithmetically walks off the palette (red1 x 0.66 is
+ *  brown). Nothing else moves — body, rims, spill, eyes and the ability register belong to the
+ *  archetype, not the tier.
+ *
+ *  WHY THE GEOMETRY AND NOT THE MATERIAL: the floor is ONE mesh per trench whose two flat steps live
+ *  in its colour attribute (trench() writes HOT or COOL per quad; the material's colour is the
+ *  multiplier flareSeams() drives). So the two steps are told apart here by comparing against the
+ *  authored HOT — which is exact, because trench() copies those two Colors and never interpolates.
+ *  Run AFTER build(); flare and rest-pose restore both keep working, since neither reads vertices. */
+export function tintSeams(root, [hotHex, coolHex]){
+  const hot = dispRGB(...rgbOf(hotHex)), cool = dispRGB(...rgbOf(coolHex));
+  root.traverse(o => {
+    if(o.name !== "seam") return;
+    const c = o.geometry.getAttribute("color");
+    if(!c) return;
+    for(let i = 0; i < c.count; i++){
+      const t = Math.abs(c.getX(i) - HOT.r) < 1e-4 && Math.abs(c.getZ(i) - HOT.b) < 1e-4 ? hot : cool;
+      c.setXYZ(i, t.r, t.g, t.b);
+    }
+    c.needsUpdate = true;
+  });
+  return root;
+}
+
 export const MODELS = {
   "enemy-raider": { build: buildRaider, anims: raiderAnims, cam: { dist: 120, height: 16, target: 9 } },
   "enemy-archer": { build: buildArcher, anims: archerAnims, cam: { dist: 215, height: 46, target: 32 } },

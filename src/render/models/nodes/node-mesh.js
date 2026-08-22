@@ -2,7 +2,8 @@
 // on the game's rig — relit, fused to ONE mesh, scaled to world units — plus TREE_MODELS, kept so
 // the gauntlet trees can be re-adopted in one edit (nodes/tree.js is the primitive tree today).
 import {S, isOutline, bakeStatic} from "../kit.js";
-import {GAME_TARGET, relightForGame} from "../game-rig.js";
+import {GAME_TARGET, relightForGame, shadeToFamily} from "../game-rig.js";
+import {TONES} from "../../palette.js";
 import {MODELS as NODE_MODELS, withGameTarget} from "../reviewed/resource-nodes.js";
 
 // ── the resource nodes ──────────────────────────────────────────────────────
@@ -29,8 +30,10 @@ import {MODELS as NODE_MODELS, withGameTarget} from "../reviewed/resource-nodes.
 // a third of this world's trees are already in flower and the cast has the tree for it. The
 // module also exports "tree-green-c" — swap it in here if the owner wants three greens instead.
 export const TREE_MODELS = ["tree-green-a", "tree-green-b", "tree-blossom"];
-/** Build one node model on the game's path: relit, fused to a single mesh, scaled to world units. */
-export function nodeMesh(name){
+/** Build one node model on the game's path: relit, fused to a single mesh, scaled to world units.
+ *  `shadow` is the palette family the model shades INTO under cloud/cast shadow (game-rig.js
+ *  shadeToFamily); every caller today is mineral, so the stone shadow is the default. */
+export function nodeMesh(name, shadow = TONES.stone.shadow){
   const inner = withGameTarget(GAME_TARGET, () => NODE_MODELS[name].build());
   relightForGame(inner);
   bakeStatic(inner, {requireShadow:false, shell:false});
@@ -49,5 +52,6 @@ export function nodeMesh(name){
   mesh.removeFromParent();
   mesh.scale.setScalar(S);
   mesh.castShadow = mesh.receiveShadow = true;
+  shadeToFamily(mesh, shadow);
   return mesh;
 }

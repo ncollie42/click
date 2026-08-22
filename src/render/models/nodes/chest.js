@@ -1,7 +1,8 @@
 // Owns: the chest (reviewed cast). Contract: userData.body, lid (hinge group), latch, wearMats.
 import * as THREE from "three";
 import {S, isOutline, bakeStatic, disposeGroup} from "../kit.js";
-import {GAME_TARGET, relightForGame} from "../game-rig.js";
+import {GAME_TARGET, relightForGame, shadeToFamily} from "../game-rig.js";
+import {TONES} from "../../palette.js";
 import {adoptModel} from "../adopt.js";
 import {MODELS as NODE_MODELS, withGameTarget} from "../reviewed/resource-nodes.js";
 
@@ -21,6 +22,8 @@ export function makeChest(){
   // liner) is rigid and becomes one mesh.
   const body = bakeStatic(inner, {extraKeep:[lid, latch], requireShadow:false, shell:false});
   bakeStatic(lid, {requireShadow:false, shell:false});
+  // Timber family: in cloud shade the chest reads TONES.wood.shadow, not hemi grey-brown.
+  shadeToFamily(inner, TONES.wood.shadow);
   adoptModel(inner);
   inner.scale.setScalar(S);
   g.add(inner);

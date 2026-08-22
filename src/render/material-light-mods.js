@@ -18,9 +18,14 @@
 //      as a second lighting model. setToneTargets() solves two per-channel tints so that a flat
 //      sun-lit face renders EXACTLY the lit swatch and a fully shaded face (hemi only) EXACTLY the
 //      shadow swatch; cloud penumbra / shadow-map edges blend linearly between them. Terrain and
-//      grass use it (palette.js TONES); everything else keeps the plain rig (tints = 1). Night
-//      still scales the sun term, fog/emissives/baked models are untouched — the Aug 22 for/against
-//      review chose this over a three-tone branch for exactly those reasons.
+//      grass use it (palette.js TONES); everything else keeps the plain rig (tints = 1). The Aug 22
+//      for/against review chose this over a three-tone branch because it stays inside the rig.
+//   4. NIGHT TIER (uLmNight, Aug 22): every toned material carries a SECOND solved pair, against the
+//      night rig (rig.js TONE_RIG_NIGHT) and the night swatches (palette.js TONES_NIGHT). The shader
+//      lerps day→night pair by the shared uLmNight, so the palette swap rides the SAME 0..1 clock
+//      as the sun dim and is continuous through dusk. A material with no night tier gets its day
+//      pair copied into the night slots, so uLmNight can never change it. Cost: two vec3 uniforms
+//      per material and one mix() per light — no per-frame CPU re-solve.
 //
 // WIRING (both hosts do the same): call initLightMods(THREE, ramp) once, applyLightingMods(scene)
 // every frame BEFORE the render (new materials are patched before their first compile), and
@@ -53,6 +58,7 @@ export function initLightMods(THREE, {rampSteps, rampLevels}){
     uLmCloudHeight: {value: 60},
     uLmSunDir: {value: new THREE.Vector3(0, 1, 0)},
     uToonOn: {value: 0},
+    uLmNight: {value: 0},      // 0 = day tone pair, 1 = night pair (scene.js drives it from the clock)
     uToonRamp: {value: makeGradientMap(THREE, {steps: rampSteps, levels: rampLevels})},
   };
   seen = new WeakSet();
@@ -81,10 +87,15 @@ const VERT_BODY = `
 const FRAG_DECL = `
 varying vec3 vLmWorld;
 ${CLOUD_UNIFORMS_GLSL}
-uniform float uCloudShade, uToonOn, uLmCloudHeight, uLmCloudMax;
+uniform float uCloudShade, uToonOn, uLmCloudHeight, uLmCloudMax, uLmNight;
 uniform vec3 uLmSunDir;
-uniform vec3 uLmDirectTint, uLmShadeTint;   // per material (setToneTargets); (1,1,1) = stock
+uniform vec3 uLmDirectTint, uLmShadeTint;     // per material (setToneTargets); (1,1,1) = stock
+uniform vec3 uLmDirectTintN, uLmShadeTintN;   // the night pair; == the day pair when untiered
 uniform sampler2D uToonRamp;
+// The tone pair actually in force this frame. Linear in uLmNight on purpose: the sun intensity and
+// colour lerp on the same 0..1, so dusk is one continuous slide between two exact solves.
+vec3 lmDirectTint(){ return mix(uLmDirectTint, uLmDirectTintN, uLmNight); }
+vec3 lmShadeTint(){ return mix(uLmShadeTint, uLmShadeTintN, uLmNight); }
 ${CLOUD_FIELD_GLSL}
 // Project along the SUN to the cloud plane, exactly like pixel.js's cloudShadowAt — sampling the
 // field at the surface's own xz instead displaces the shade by cloudHeight/tan(el) (~35 wu at a
@@ -127,7 +138,7 @@ function patchMaterial(mat, toon){
     if(mat.isMeshToonMaterial){
       if(!pars.includes(TOON_IRR)) return fail(mat, "toon irradiance");
       pars = pars.replace(TOON_IRR,
-        "vec3 irradiance = getGradientIrradiance( geometryNormal, directLight.direction ) * directLight.color * lmSunShade() * uLmDirectTint;");
+        "vec3 irradiance = getGradientIrradiance( geometryNormal, directLight.direction ) * directLight.color * lmSunShade() * lmDirectTint();");
     }else{
       if(!pars.includes(LAMBERT_DOT) || !pars.includes(LAMBERT_IRR)) return fail(mat, "lambert dotNL/irradiance");
       if(toon){
@@ -135,7 +146,7 @@ function patchMaterial(mat, toon){
         pars = pars.replace(LAMBERT_DOT,
           LAMBERT_DOT + "\n\tif( uToonOn > 0.5 ) dotNL = texture2D( uToonRamp, vec2( dotNL * 0.5 + 0.5, 0.0 ) ).r;");
       }
-      pars = pars.replace(LAMBERT_IRR, "vec3 irradiance = dotNL * directLight.color * lmSunShade() * uLmDirectTint;");
+      pars = pars.replace(LAMBERT_IRR, "vec3 irradiance = dotNL * directLight.color * lmSunShade() * lmDirectTint();");
     }
     frag = frag.replace(marker, FRAG_DECL + pars);
     // Indirect (hemi/ambient) term × the shade tint — expand lights_fragment_end so the statement
@@ -144,7 +155,7 @@ function patchMaterial(mat, toon){
     const endChunk = ThreeChunks.lights_fragment_end;
     if(!frag.includes(endMarker) || !endChunk.includes(INDIRECT)) return fail(mat, "lights_fragment_end indirect");
     frag = frag.replace(endMarker, endChunk.replace(INDIRECT,
-      "RE_IndirectDiffuse( irradiance * uLmShadeTint, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );"));
+      "RE_IndirectDiffuse( irradiance * lmShadeTint(), geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );"));
     shader.fragmentShader = frag;
     shader.vertexShader = VERT_DECL + shader.vertexShader.replace("#include <begin_vertex>",
       "#include <begin_vertex>" + VERT_BODY);
@@ -153,6 +164,8 @@ function patchMaterial(mat, toon){
     // after the first compile and the same objects are what the program reads.
     shader.uniforms.uLmDirectTint = toneUniform(mat, "lmDirectTint");
     shader.uniforms.uLmShadeTint = toneUniform(mat, "lmShadeTint");
+    shader.uniforms.uLmDirectTintN = toneUniform(mat, "lmDirectTintN");
+    shader.uniforms.uLmShadeTintN = toneUniform(mat, "lmShadeTintN");
   };
   // Distinct program per patch variant, or three would reuse a stock material's compiled program.
   mat.customProgramCacheKey = () => `lm:${mat.isMeshToonMaterial ? "toon" : "lambert"}:${toon ? 1 : 0}`;
@@ -174,11 +187,32 @@ const hexLin = h => [srgbToLin((h >> 16 & 255) / 255), srgbToLin((h >> 8 & 255) 
  * Faces with other albedos (the meadow's green0 patches) scale proportionally — a patch in shadow
  * reads as a lighter shadow, which is the reference's green0/green0/green2 behaviour.
  * `rig` mirrors scene.js's lights; pass the same numbers the predictor uses (palette-snap.mjs).
+ *
+ * NIGHT (optional): `night` = {lit, shadow} from palette.js TONES_NIGHT, solved the same way but
+ * against `nightRig` (rig.js TONE_RIG_NIGHT — the dimmed, blue key light). The albedo is the SAME
+ * material, so the night solve only re-answers "what should this face show", never "what is it".
+ * Omit `night` and the day pair is copied into the night slots, so uLmNight is a no-op for it.
  */
-export function setToneTargets(mat, {albedo, lit, shadow, rig}){
+export function setToneTargets(mat, {albedo, lit, shadow, night, rig, nightRig}){
+  const day = solvePair(mat, albedo, lit, shadow, rig, "lmDirectTint", "lmShadeTint");
+  if(night) solvePair(mat, albedo, night.lit, night.shadow, nightRig || rig, "lmDirectTintN", "lmShadeTintN");
+  else{
+    toneUniform(mat, "lmDirectTintN").value.set(day.direct[0], day.direct[1], day.direct[2]);
+    toneUniform(mat, "lmShadeTintN").value.set(day.shade[0], day.shade[1], day.shade[2]);
+  }
+  return day;
+}
+/** Night tier ONLY: the material keeps the stock rig by day (tints stay 1) and swaps to an authored
+ *  pair as uLmNight rises. For surfaces whose DAY look is not an authored tone triple and must stay
+ *  byte-identical — the fog field, whose albedo is per-instance, so `albedo` here is the
+ *  representative shade the solve is centred on and the other instances scale proportionally. */
+export function setNightTone(mat, {albedo, lit, shadow, rig}){
+  return solvePair(mat, albedo, lit, shadow, rig, "lmDirectTintN", "lmShadeTintN");
+}
+function solvePair(mat, albedo, lit, shadow, rig, directKey, shadeKey){
   const a = hexLin(albedo), l = hexLin(lit), sh = hexLin(shadow);
   const sun = hexLin(rig.sunColor), sky = hexLin(rig.skyColor);
-  const direct = toneUniform(mat, "lmDirectTint").value, shade = toneUniform(mat, "lmShadeTint").value;
+  const direct = toneUniform(mat, directKey).value, shade = toneUniform(mat, shadeKey).value;
   const out = [0, 0, 0], outS = [0, 0, 0];
   for(let i = 0; i < 3; i++){
     const den = Math.max(1e-5, a[i]);
@@ -215,7 +249,7 @@ export function applyLightingMods(THREE, scene){
 
 /** Per-frame value sync; every patched material sees these through the shared references. */
 export function syncLightMods({cloudScale, cloudSpeed, cloudCover, cloudOffsetX, cloudOffsetZ,
-                               cloudHeight, sunDir, time, cloudShade, toon, cloudMax}){
+                               cloudHeight, sunDir, time, cloudShade, toon, cloudMax, night}){
   if(!shared) return;
   shared.uCloudScale.value = cloudScale;
   shared.uCloudSpeed.value = cloudSpeed;
@@ -227,4 +261,6 @@ export function syncLightMods({cloudScale, cloudSpeed, cloudCover, cloudOffsetX,
   shared.uCloudShade.value = cloudShade ? 1 : 0;
   shared.uLmCloudMax.value = cloudMax ?? 0.8;
   shared.uToonOn.value = toon ? 1 : 0;
+  // Hosts without a day/night clock (test scene, editor preview) omit this and stay on the day pair.
+  shared.uLmNight.value = night ?? 0;
 }

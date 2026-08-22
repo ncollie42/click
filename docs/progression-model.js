@@ -1,5 +1,10 @@
 // Progression model — the income → XP → level → draft → income feedback loop.
 //
+// RETIRED (2026-08-22): the XP loop this integrates was deleted from the game — see the header of
+// progression-spec.js. LEVEL_CURVE now comes from that spec's frozen historical copy, not from
+// data.js, so this bench still runs and still charts the OLD pacing. Nothing here describes the
+// live run any more; the live progression is MAIN_BASE_LEVELS + one dawn buff per night.
+//
 // Pure and DOM-free: progression.html renders it, scripts/validate.mjs smoke-
 // tests it, and `node docs/progression-model.js` prints a summary for quick
 // tuning. All game numbers arrive live from data.js/simulation.js; all intent

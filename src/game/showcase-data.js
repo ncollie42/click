@@ -116,7 +116,12 @@ function overlaps(a,b){return a.minX<=b.maxX&&b.minX<=a.maxX&&a.minY<=b.maxY&&b.
 function validateManifest(){
   sameMembers("resource nodes",manifest.resourceNodes.map(f=>f.id),["wood","stone","diamond"]);
   sameMembers("loose resources",manifest.looseResources.map(f=>f.id),RESOURCE_KINDS);
-  sameMembers("buildings",manifest.buildings.map(f=>f.id),Object.keys(BUILDING_TYPES).filter(id=>id!=="tower"&&!BUILDING_TYPES[id].targetOnly));
+  // "tower" is covered by its variants; target-only rows are aiming ghosts, not buildings; and
+  // mainBase is excluded because the showcase ALREADY shows the base — the fixture world stands one
+  // at the map centre (state.baseLevel=1, no construction record), and a second copy in the gallery
+  // row would be a duplicate the simulation's one-base invariant rejects.
+  const galleryBuildings=Object.keys(BUILDING_TYPES).filter(id=>id!=="tower"&&id!=="mainBase"&&!BUILDING_TYPES[id].targetOnly);
+  sameMembers("buildings",manifest.buildings.map(f=>f.id),galleryBuildings);
   sameMembers("tower variants",manifest.towers.map(f=>f.id),Object.keys(TOWER_VARIANTS));
   sameMembers("enemies",manifest.enemies.map(f=>f.id),Object.keys(ENEMY_TYPES));
 

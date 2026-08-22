@@ -202,10 +202,10 @@
         <section class="pane" data-tab="gameplay">
           <div class="vSubpane" data-subtab="economy">
           <label class="chk"><input autocomplete="off" type="checkbox" id="vFreeCosts"><span>free costs</span></label>
-          <div class="row"><span>feeding</span><span id="vXpReadout">xp 0 · tier 0 · 0 points</span></div>
+          <div class="row"><span>progress</span><span id="vProgressReadout">base lv 0/3 · tier 0</span></div>
           <div class="btnrow">
-            <button id="vGrantXp" type="button">+25 xp</button>
-            <button id="vGrantXpBig" type="button">+100 xp</button>
+            <button id="vDealBaseDraft" type="button">deal base draft</button>
+            <button id="vDealDawnDraft" type="button">deal dawn buff</button>
           </div>
           <div class="btnrow">
             <button id="vGrantAll" type="button">+25 all</button>
@@ -226,6 +226,7 @@
           <label id="vSpeedRow"><span class="row"><span>game speed</span><span id="o_vSpeed"></span></span>
             <input autocomplete="off" type="range" id="vSpeed" min="1" max="6" step="1" value="1"></label>
           <div class="btnrow">
+            <button id="vRaiseBase" type="button">raise main base</button>
             <button id="vStartDay" type="button">start day</button>
             <button id="vStartNight" type="button">start night</button>
             <button id="vAdvancePhase" type="button">advance phase</button>
@@ -352,10 +353,11 @@
     <!-- Empty showcase roots: src/ui/showcase.js exclusively owns their children and listeners. -->
     <section id="showcasePanel" hidden aria-label="showcase controls"></section>
     <div id="showcaseLabels" hidden aria-hidden="true"></div>
-    <!-- The run's one progress bar: level, and how far into it. src/ui/draft.js owns every value in
-         it, because the level it counts is the thing that deals the draft. -->
-    <section id="xpHud" aria-label="level progress">
-      <div id="levelBar"><i id="levelBarFill"></i><b id="levelBarLabel">lv 0</b><span id="levelBarXp">0 / 6</span></div>
+    <!-- The run's one progress bar: the MAIN BASE's authored level, and what the next one still
+         wants. src/ui/draft.js owns every value in it, because the level it counts is the thing
+         that deals the draft. (It counted XP until Aug 22; that track no longer exists.) -->
+    <section id="baseHud" aria-label="main base progress">
+      <div id="baseBar"><i id="baseBarFill"></i><b id="baseBarLabel">base lv 0/3</b><span id="baseBarNeed">10 wood</span></div>
     </section>
     <section id="phaseHud">
       <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
@@ -417,9 +419,9 @@
       <div id="upgradeDetail">select an upgrade</div>
       <div id="upgradeActions"><button id="upgradeAccept">accept</button><button id="upgradeDecline">decline</button></div>
     </section>
-    <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
+    <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the settlement is lost. begin again?</p><button id="restart">restart</button></div></section>
     <!-- Victory opens on clearing WIN_WAVE; the player may restart or continue into later waves. -->
-    <section id="victory" class="off"><div class="endcard"><h2>the kingdom stands</h2><p>every wave broken. the dawn is yours.</p><div class="endcard-actions"><button id="victoryRestart">play again</button><button id="victoryContinue">continue</button></div></div></section>
+    <section id="victory" class="off"><div class="endcard"><h2>the base stands</h2><p>every wave broken. the dawn is yours.</p><div class="endcard-actions"><button id="victoryRestart">play again</button><button id="victoryContinue">continue</button></div></div></section>
   </main>
 </div>
 <!-- Card flights (a spent consumable leaving for the base, a drafted card arriving in the

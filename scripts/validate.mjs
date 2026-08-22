@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
-import {readFileSync,readdirSync,statSync} from "node:fs";
+import {existsSync,readFileSync,readdirSync,statSync} from "node:fs";
 import {join,relative,resolve} from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 
@@ -35,8 +35,9 @@ try{
     import(pathToFileURL(join(root,"src/game/map-document.js")))
   ]);
 
-  assert.deepEqual(data.RESOURCE_XP,{wood:1,stone:1,dust:5,coin:5,diamond:12});
-  assert.deepEqual(Object.keys(data.RESOURCE_XP),data.RESOURCE_KINDS);
+  // XP RETIRED 2026-08-22: no level curve, no per-resource xp table, nothing that grants either.
+  assert.equal(data.RESOURCE_XP,undefined,"RESOURCE_XP must stay deleted");
+  assert.equal(data.LEVEL_CURVE,undefined,"LEVEL_CURVE must stay deleted");
   assert.deepEqual(data.STAFF_GATHER,{cooldownFactor:.5,yield:1});
   assert.deepEqual(data.DRAFT_REROLL,{coinCost:1});
   assert.deepEqual(data.CONSUMABLE_FORGE,{dustCost:5});assert.equal(Object.isFrozen(data.CONSUMABLE_FORGE),true);
@@ -44,10 +45,13 @@ try{
   assert.deepEqual(data.WAVE_THREAT_CURVE,{startBudget:12,targetBudget:100,targetWave:8,power:1.5});assert.equal(Object.isFrozen(data.WAVE_THREAT_CURVE),true);
   assert.equal(Object.isFrozen(data.ENEMY_TYPES),true);assert.equal(Object.values(data.ENEMY_TYPES).every(enemy=>Object.isFrozen(enemy)&&Number.isInteger(enemy.threatCost)&&enemy.threatCost>0&&enemy.spawnWeight>0&&["light","heavy"].includes(enemy.weightTag)),true);
   for(const archetype of ["raider","archer","healer","bomber","brute"]){const variants=Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.archetype===archetype&&!enemy.boss).sort((a,b)=>a.variantTier-b.variantTier);assert.deepEqual(variants.map(enemy=>enemy.variantTier),[1,2,3]);assert.deepEqual(variants.map(enemy=>enemy.minWave),[1,4,7]);assert.ok(variants[1].hp>variants[0].hp&&variants[2].hp>variants[1].hp);assert.ok(variants[1].threatCost>variants[0].threatCost&&variants[2].threatCost>variants[1].threatCost);}
-  assert.deepEqual(new Set(Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.variantTier===2).map(enemy=>enemy.variantColor)),new Set(["#3568a8"]));assert.deepEqual(new Set(Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.variantTier===3).map(enemy=>enemy.variantColor)),new Set(["#a23e50"]));
+  // LAYERING (Aug 22): variant COLOUR left the game layer. data.js may not name a hex — it carries
+  // the tier, and render/palette.js ENEMY_VARIANT_TINT maps tier -> swatch (asserted in the palette
+  // section below, which is where the swatch law is enforced).
+  assert.equal(Object.values(data.ENEMY_TYPES).every(enemy=>enemy.variantColor===undefined),true);
+  assert.equal(JSON.stringify(data.ENEMY_TYPES).match(/#[0-9a-fA-F]{3,8}\b/g),null,"ENEMY_TYPES must not author colour — see palette.js ENEMY_VARIANT_TINT");
   {const boss=data.ENEMY_TYPES.bruteBoss;assert.equal(boss.archetype,"brute");assert.equal(boss.boss,true);assert.equal(boss.minWave,5);assert.equal(boss.modelScale,4);assert.equal(boss.size,data.ENEMY_TYPES.brute.size*4);assert.equal(boss.hp,250);assert.equal(boss.damage,10);assert.equal(boss.stompDamage,10);assert.equal(boss.stompRadius,200);assert.equal(boss.threatCost,20);}assert.deepEqual(data.WAVE_BOSS_SPAWNS,{5:["bruteBoss"],10:["bruteBoss","bruteBoss","bruteBoss"]});
   assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.pool)&&recipe.pool.every(type=>data.ENEMY_TYPES[type])),true);
-  assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});
   assert.deepEqual(Object.values(data.DAMAGE_TARGET_TYPE),["enemies-only","resources-only","enemies-resources","player-resources","all"]);assert.equal(data.DAMAGE_ORBS.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);
   assert.equal(data.FIREBALL.damage,5);assert.equal(data.FIREBALL.fallTime,.65);assert.equal(data.FIREBALL.radius,68,"fireball radius halved Aug 20");assert.equal(data.FIREBALL.rockHp,3,"fireball leaves a small rock");assert.equal(data.BUILDING_TYPES.fireballTarget.effectRadius,data.FIREBALL.radius,"the fireball aiming ghost must show the damage radius");assert.equal(data.FOG.blockHp,4,"fog cost is flat 4 across the board");assert.equal(Object.isFrozen(data.FIREBALL),true);assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
   assert.equal(Object.values(data.TOWER_VARIANTS).every(variant=>variant.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every tower must author its damage target type");
@@ -55,6 +59,69 @@ try{
   assert.equal(Object.values(data.ENEMY_TYPES).every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES),true,"every hostile attack must author its target type");assert.equal(data.ENEMY_TYPES.bruteBoss.stompDamageTargetType,data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES);
   assert.equal(Object.isFrozen(data.CHEST),true);
   assert.equal(data.CHEST.startingCount,1);assert.equal(data.CHEST.maxHp,4);assert.equal(data.CHEST.footprint,data.FOOTPRINT_1x1);
+
+  // ── main base ──
+  // The player-built base (CONTEXT.md "Worker Limit", resources_and_buildings.md "Main Base").
+  // DATA assertions: shape, immutability, the authored level list, the three capacity numbers that
+  // must never be merged into one, and the BUILDING_TYPES row the site is constructed through.
+  // The runtime lifecycle (opening card → pre-wave → day 1) is asserted in "the opening" below.
+  const mainBaseResult=(()=>{
+    const {MAIN_BASE,MAIN_BASE_LEVELS,BASE}=data;
+    // BASE stays the pure spatial anchor: map centre, 3x3, no structure stats hiding on it.
+    assert.deepEqual([BASE.x,BASE.y,BASE.footprint],[data.W/2,data.H/2,data.FOOTPRINT_3x3],"BASE must remain the map-centre 3x3 anchor");
+    assert.deepEqual(Object.keys(BASE).filter(key=>!["x","y","r","footprint"].includes(key)),[],"BASE is spatial only — structure stats belong to MAIN_BASE");
+    assert.deepEqual(["x","y","r","footprint"].filter(key=>key in MAIN_BASE),[],"MAIN_BASE must not restate the anchor's geometry");
+
+    // One frozen definition owning health, storage reach, both slot counts and the attack.
+    assert.ok(Object.isFrozen(MAIN_BASE),"main base tuning must be immutable");
+    assert.deepEqual({...MAIN_BASE},{maxHp:100,storageRadius:600,buildSlots:2,jobSlots:2,
+      range:95,damage:2,rate:.85,damageTargetType:data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY,
+      cost:{wood:10},maxLevel:3});
+    assert.equal(MAIN_BASE.storageRadius,data.BASE_ZONE,"the base's storage reach is the zone already drawn, never a second number");
+
+    // Map-centre attack balance is PRESERVED across the handover, not re-tuned: these are the exact
+    // numbers the retired king fired with, and MAIN_BASE is now their only home.
+    assert.deepEqual([MAIN_BASE.range,MAIN_BASE.damage,MAIN_BASE.rate],[95,2,.85],"the base's attack balance drifted from the defence it inherited");
+    assert.equal(data.KING,undefined,"the king is retired: no unit record may shadow the base's attack");
+
+    // Authored levels: exactly three, deeply frozen, and the list simply ENDS.
+    assert.deepEqual(MAIN_BASE_LEVELS.map(entry=>({...entry,cost:{...entry.cost}})),
+      [{level:1,cost:{wood:10}},{level:2,cost:{stone:10}},{level:3,cost:{wood:10,stone:10}}]);
+    assert.ok(Object.isFrozen(MAIN_BASE_LEVELS)&&MAIN_BASE_LEVELS.every(entry=>Object.isFrozen(entry)&&Object.isFrozen(entry.cost)),"the authored level list must be deeply frozen");
+    assert.throws(()=>{MAIN_BASE_LEVELS[0].cost.wood=1;},TypeError,"an authored level cost must reject writes");
+    assert.deepEqual(MAIN_BASE_LEVELS.map(entry=>entry.level),[1,2,3],"authored levels are 1-based and contiguous");
+    assert.equal(MAIN_BASE.maxLevel,MAIN_BASE_LEVELS.length,"maxLevel must be derived from the authored list");
+    assert.equal(MAIN_BASE_LEVELS[MAIN_BASE.maxLevel],undefined,"nothing may extrapolate a level past the authored list");
+    for(const entry of MAIN_BASE_LEVELS)assert.deepEqual(Object.keys(entry.cost).filter(kind=>!data.RESOURCE_KINDS.includes(kind)),[],"level costs are resource records");
+
+    // The level-1 build price IS the level-1 recipe — same object, so the two cannot drift.
+    assert.equal(MAIN_BASE.cost,MAIN_BASE_LEVELS[0].cost,"the level-1 construction cost must reference the recipe, not copy it");
+
+    // The base's level is the run's ONLY progression number since XP was deleted.
+    assert.deepEqual(Object.keys(MAIN_BASE).filter(key=>/xp/i.test(key)),[],"the base's level list must not carry XP fields");
+
+    // Worker Limit vs build capacity vs population — three different numbers.
+    assert.equal(MAIN_BASE.jobSlots,2,"the completed base holds two haulers (Worker Limit)");
+    assert.equal(MAIN_BASE.buildSlots,2,"the base SITE is staffed by two builders");
+    assert.equal(data.BUILDING_TYPES.house.jobSlots,undefined,"population is HOUSE_SLOTS on the house, never a Worker Limit");
+
+    // The construction row REFERENCES the authored record — one base, one set of numbers.
+    const row=data.BUILDING_TYPES.mainBase;
+    assert.equal(row.cost,MAIN_BASE.cost,"the base site must charge the authored level-1 recipe object itself");
+    assert.equal(row.buildSlots,MAIN_BASE.buildSlots,"the base site must read its build staffing from MAIN_BASE");
+    assert.equal(row.footprint,BASE.footprint,"the base site must occupy the anchor's own footprint");
+    assert.equal(row.resource,null,"the base is not a resource building");
+    assert.equal(row.instant,undefined,"the base must be built, never placed complete");
+    // The card side of the same contract: one opening card, never draftable, one charge.
+    {
+      const card=cardCatalog.cardById.bpMainBase;
+      assert.ok(card,"the opening card is missing from the registry");
+      assert.deepEqual([card.category,card.ref,card.charges,card.inPool,card.implemented],["build","building:mainBase",1,false,true],"the opening card's registry contract drifted");
+    }
+    assert.equal(data.HOUSE_SLOTS,2);
+    assert.notEqual(data.HOUSE_SLOTS,data.GARRISON.capacity,"population and Worker Limit must stay independent numbers");
+    return {levels:MAIN_BASE_LEVELS.length,jobSlots:MAIN_BASE.jobSlots};
+  })();
 
   // ── authored starter world ──
   // The world is authored data (src/game/maps/starter.map.json) parsed by map-document and
@@ -175,7 +242,10 @@ try{
     const {scoreBuilding,scoreTower}=await import(pathToFileURL(join(root,"docs/tower-score.js")));
     const refTables={building:id=>id in data.BUILDING_TYPES,upgrade:id=>data.UPGRADES.some(u=>u.id===id),tower:id=>id in data.TOWER_VARIANTS,concept:()=>true};
     const checkRef=(ref,owner)=>{const [kind,id]=ref.split(":");assert.ok(refTables[kind]?.(id),`${owner} ref ${ref} names nothing in data.js`);};
-    assert.equal(spec.LEVEL_CURVE,data.LEVEL_CURVE,"the spec must re-export the game's level curve, never restate it");
+    // The spec's LEVEL_CURVE is a RETIRED local copy now (data.js has none), so it may only be a
+    // plain frozen record — it must never pretend to be a live game table again.
+    assert.deepEqual(spec.LEVEL_CURVE,{base:6,growth:1.19},"the retired pacing bench lost its historical curve");
+    assert.equal(Object.isFrozen(spec.LEVEL_CURVE),true,"the historical curve must be frozen");
     assert.deepEqual(Object.keys(cards.RARITY_WEIGHTS).sort(),[...cards.RARITIES].sort());
     assert.equal(new Set(cards.CARD_FEATURES).size,cards.CARD_FEATURES.length,"card features must be unique");
     for(const rarity of cards.RARITIES)assert.ok(cards.RARITY_WEIGHTS[rarity]>0,`rarity weight ${rarity} must be positive`);
@@ -281,6 +351,54 @@ try{
       assert.match(forgeModel,/new THREE\.BoxGeometry\(/,"Consumable Forge model is not a cube body");assert.match(forgeModel,/userData contract: none/);
     }
 
+    // Main base MODEL contract (docs/tickets/03-main-base.md, docs/model-spec.md). The base is an
+    // ordinary registered building body now — one authored SUNKEN STONE DOME (Aug 22, replacing
+    // the cube) reached the ordinary way by BOTH hosts. There is no second base factory, no
+    // reviewed module, and no awake / orb / gulp / precursor-pit identity left to resurrect.
+    {
+      const registry=readFileSync(join(root,"src/render/models/buildings/index.js"),"utf8"),
+            baseModel=readFileSync(join(root,"src/render/models/buildings/main-base.js"),"utf8"),
+            barrel=readFileSync(join(root,"src/render/models.js"),"utf8"),
+            sceneSource=readFileSync(join(root,"src/render/scene.js"),"utf8"),
+            catalog=readFileSync(join(root,"tools/map-editor/object-catalog.js"),"utf8");
+      assert.match(registry,/import \{build as mainBase\} from "\.\/main-base\.js"/);
+      assert.match(registry,/consumableForge, mainBase,/,"the main base is not explicitly registered");
+      assert.match(baseModel,/export function build\(g, add\)/,"the main base must be an ordinary building body");
+      assert.match(baseModel,/new THREE\.SphereGeometry\(/,"the main base model is not a sphere body");
+      // Smooth normals are the whole point of the sphere under the pixel pipeline (flat facets
+      // hand the quantizer one value per plate); the tone pair is the shared stone ink.
+      assert.match(baseModel,/toned\(TONES\.stone, \{flatShading:false\}\)/,
+        "the dome must wear the authored stone tone pair with SMOOTH shading");
+      assert.doesNotMatch(baseModel,/BoxGeometry/,"the retired cube body is back");
+      // One factory, reached through the registry, by the game AND the map editor.
+      assert.match(sceneSource,/makeBuilding\("mainBase"\)/,"scene.js must build the base through the registry");
+      assert.match(catalog,/makeBuilding\("mainBase"\)/,"the map editor must preview the registry's base body");
+      // Conditional presence, and exactly one owner of the map centre.
+      assert.match(sceneSource,/if\(!mainBaseStanding\(\)\)\{/,"syncBase must draw nothing before the base stands");
+      assert.match(sceneSource,/if\(b\.complete && b\.type==="mainBase"\)continue;/,"syncBuildings must leave the standing base to syncBase");
+      // Stale references: the retired identity is gone from every host that used to carry it.
+      assert.equal(existsSync(join(root,"src/render/models/reviewed/the-hole.js")),false,"the retired reviewed base module must be deleted");
+      for(const [name,text] of [["main-base.js",baseModel],["scene.js",sceneSource],["models.js",barrel],["buildings/index.js",registry],["object-catalog.js",catalog]])
+        for(const token of ["makeMainBase","the-hole","main-base-awake","precursor","orbHover","gulp"])
+          assert.equal(text.includes(token),false,`${name} still carries the retired base identity (${token})`);
+      // Footprint PADS are retired too (Aug 22, owner: the terrain's soil replaces them). The
+      // helper, its exports and the userData.floor contract must stay gone, or buildings start
+      // standing on flat plates over painted soil again.
+      const kit=readFileSync(join(root,"src/render/models/kit.js"),"utf8"),
+            blueprintModel=readFileSync(join(root,"src/render/models/buildings/blueprint.js"),"utf8");
+      for(const [name,text] of [["kit.js",kit],["models.js",barrel],["buildings/index.js",registry],
+                                ["blueprint.js",blueprintModel],["scene.js",sceneSource]])
+        for(const token of ["makeFootprintFloor(","FLOOR_TOP","userData.floor"])
+          assert.equal(text.includes(token),false,`${name} still draws a footprint pad (${token})`);
+      assert.match(kit,/export const GROUND_Y = 0;/,"the ground seat every body sits on must be 0");
+      for(const [name,text] of [["index.html",readFileSync(join(root,"index.html"),"utf8")],
+                                ["src/ui/hud.js",readFileSync(join(root,"src/ui/hud.js"),"utf8")],
+                                ["src/ui/hand.js",readFileSync(join(root,"src/ui/hand.js"),"utf8")],
+                                ["src/ui/draft.js",readFileSync(join(root,"src/ui/draft.js"),"utf8")]])
+        for(const token of ["kingdom","castle"])
+          assert.equal(text.toLowerCase().includes(token),false,`${name} still carries retired base copy (${token})`);
+    }
+
     const {runModel,MODELED_WAVE_CLEAR_SECONDS}=await import(pathToFileURL(join(root,"docs/progression-model.js")));
     assert.equal(MODELED_WAVE_CLEAR_SECONDS,45,"the docs-only estimate must preserve the prior model output");
     const model=runModel();
@@ -305,17 +423,171 @@ try{
   assert.equal(sim.rocks.every(node=>node.max===9),true,"world rocks must yield 9 stone");
   assert.equal(sim.diamonds.every(node=>node.max===6),true,"world deposits must yield 6 diamonds");
   assert.equal(data.METEOR.rockHp,15,"meteor rocks must keep their independent spell yield");
-  // ── the starting hand ──
-  // With the build shop gone a fresh run can only build out of the hand, so normal initialization
-  // seeds the opening kit. It is dealt ONCE (re-initializing the same mode stays idempotent) and it
-  // is dealt through the ordinary hand writer, so every entry is a real one-copy stack.
+  // ── the opening ──
+  // A run BOOTS with nothing built and one card. The base is raised from that card, finished by the
+  // ordinary delivery path, and only then does day 1 — and therefore the wave clock — begin. Dealt
+  // ONCE (re-initializing the same mode stays idempotent) through the ordinary hand writer.
   {
     const opening=sim.hand();
-    assert.deepEqual(opening.map(entry=>entry.id),["bpHouse","bpTower"],"a normal run must open with workers and the first tower");
+    assert.deepEqual(opening.map(entry=>entry.id),["bpMainBase"],"a normal run must open with the main base card alone");
     assert.equal(opening.every(entry=>entry.count===1&&entry.charges===null),true,"a seeded card must be an ordinary untouched stack");
     assert.equal(opening.every(entry=>cardCatalog.cardById[entry.id].category==="build"),true);
+    assert.equal(cardCatalog.cardById.bpMainBase.inPool,false,"the opening card must never be draftable");
+    assert.equal(sim.draftEligible(["build"]).some(card=>card.id==="bpMainBase"),false,"the opening card reached the draft pool");
     assert.equal(sim.initializeRunMode("normal"),undefined);
     assert.deepEqual(sim.hand().map(entry=>entry.id),opening.map(entry=>entry.id),"re-initializing a run must not deal the opening kit twice");
+    // The empty initial world, and the untimed pre-wave state it sits in.
+    assert.equal(sim.buildings.length,0,"a run must boot with nothing built");
+    assert.equal(sim.state.baseLevel,0,"a run must boot with no base standing");
+    assert.deepEqual([sim.state.clock.phase,sim.state.clock.remaining,sim.state.clock.light],["pre-wave",0,0],"a run must boot into an untimed, fully lit pre-wave");
+    assert.throws(()=>sim.transitionPhase(),/pre-wave opening ends by building the base/,"the pre-wave opening must not be a phase flip away from night");
+    // Playing it commits immediately — no ghost, no aiming — and a second copy refuses.
+    assert.equal(sim.playCard(0),"applied","the opening card places itself");
+    assert.deepEqual([sim.state.buildMode,sim.state.cardTargeting],[null,null],"the opening card must not arm a placement");
+    const site=sim.buildings.find(building=>building.type==="mainBase");
+    assert.ok(site&&!site.complete,"playing the opening card must leave one unfinished site");
+    assert.deepEqual([site.x,site.y],[data.BASE.x,data.BASE.y],"the base site must sit on the authored anchor");
+    assert.deepEqual(site.cost,{...data.MAIN_BASE.cost},"the site must charge the authored level-1 recipe");
+    assert.equal(sim.hoverTarget(),null,"the map centre must expose no base action before the base stands");
+    assert.equal(sim.debugDealCard("bpMainBase"),true);
+    assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpMainBase")),false,"a second main base must refuse");
+    assert.deepEqual(sim.hand().map(entry=>entry.id),["bpMainBase"],"a refused card must stay in hand");
+    assert.equal(sim.buildings.filter(building=>building.type==="mainBase").length,1);
+    // Indefinite: no countdown to run out, no wave to schedule, and elapsed run time still moves.
+    const beforeElapsed=sim.state.clock.elapsed;
+    sim.update(data.DAY_DURATION*4);
+    assert.equal(sim.state.clock.phase,"pre-wave","pre-wave must never time out into night");
+    assert.equal(sim.state.enemies.length,0,"pre-wave must spawn no wave enemies");
+    assert.equal(sim.state.clock.light,0,"pre-wave must stay fully lit");
+    assert.ok(sim.state.clock.elapsed>=beforeElapsed+data.DAY_DURATION*4,"elapsed run time must keep counting during pre-wave");
+    // A debug-spawned enemy has nothing to attack and nothing to walk to: it idles instead of
+    // besieging an anchor that holds no base.
+    assert.equal(sim.spawnEnemy("raider"),undefined);
+    // Parked point-blank on the anchor: an unbuilt centre is neither a target nor a shooter, so the
+    // raider idles AND takes nothing back — the base's own attack waits for the base.
+    const loiterer=sim.state.enemies.at(-1);
+    loiterer.x=data.BASE.x+20;loiterer.y=data.BASE.y;
+    const loiterAt={x:loiterer.x,y:loiterer.y},healthBefore=sim.state.baseHp,loitererHp=loiterer.hp;
+    sim.update(5);
+    assert.deepEqual([loiterer.x,loiterer.y],[loiterAt.x,loiterAt.y],"an enemy with no valid target must idle in place");
+    assert.equal(sim.state.baseHp,healthBefore,"an absent base cannot be damaged");
+    assert.equal(loiterer.hp,loitererHp,"an unbuilt base must not defend the map centre");
+    assert.equal(sim.state.gameOver,false);
+    sim.debugClearEnemies();
+    // Nor is the unbuilt centre a POST: it offers no hauling slot to reserve, fill or draw.
+    assert.equal(sim.workerOccupancyStatus(data.BASE),null,"the bare anchor must offer no hauling slots");
+    assert.equal(sim.durablePostStatus(data.BASE),null,"the bare anchor must expose no vacancy");
+    // Ten wood, delivered the ordinary way, ends the opening and starts a FULL day 1.
+    // Three manual builders are standing on the site as it finishes. The level-1 site is the ONE
+    // construction whose builders inherit a post on a DIFFERENT runtime object than the record they
+    // finished — the BASE anchor — and the inheritance obeys the base's Worker Limit, so the third
+    // builder returns to free exactly like an over-capacity camp builder.
+    const emptyCarry=()=>Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0]));
+    const founders=[0,1,2].map(i=>({x:site.x+8*i,y:site.y+30,postX:site.x,postY:site.y+20,spawnSource:null,job:"build",jobTarget:site,autonomous:false,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:emptyCarry(),hp:data.WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0,guardSafeTime:0}));
+    sim.state.workers.push(...founders);
+    sim.state.carried.wood=data.MAIN_BASE.cost.wood;
+    sim.setPointerWorld(site.x,site.y);sim.secondaryRelease();
+    assert.equal(site.complete,true);assert.equal(sim.state.baseLevel,1);
+    assert.deepEqual(founders.map(w=>w.job),["haul","haul","free"],"the base site must hand exactly its Worker Limit of builders to the base haul post");
+    assert.deepEqual(founders.slice(0,2).map(w=>w.jobTarget),[data.BASE,data.BASE],"an inherited base post must name the BASE anchor, never the construction record");
+    assert.deepEqual(founders.slice(0,2).map(w=>w.autonomous),[false,false],"inheritance is a manual-builder privilege and stays manual");
+    assert.equal(founders[2].jobTarget,null);
+    assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots,"inheritance must fill the base's derived occupancy");
+    sim.validateSimulationInvariants();
+    sim.state.workers.length=0;
+    assert.deepEqual([sim.state.clock.phase,sim.state.clock.remaining,sim.state.clock.completedNights],["day",data.DAY_DURATION,0],"finishing the base must start day 1 with the full day");
+    // ── authored base levels, and the draft each one pays ──
+    // Since XP was deleted (2026-08-22) a base level is the run's only build source, so a "base"
+    // offer mixes builds and buffs while "dawn" stays buff-only. A taken reward is a REAL permanent
+    // change to the run this file keeps measuring, so each one is scrubbed straight back off.
+    const zero=()=>Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0]));
+    const REWARD_CATEGORIES={base:["build","buff"],dawn:["buff"]};
+    const takeRewardOffer=kind=>{
+      assert.equal(sim.draftKind(),kind,"a "+kind+" reward was expected");
+      const offer=sim.draftPending(),allowed=REWARD_CATEGORIES[kind];
+      assert.equal(offer.length,3);assert.equal(new Set(offer).size,3,"the "+kind+" offer repeated a card");
+      assert.equal(offer.every(id=>allowed.includes(cardCatalog.cardById[id].category)&&cardCatalog.cardById[id].inPool),true,"a "+kind+" reward dealt outside its pool");
+      // Prefer a buff so the scrub below can undo the pick; a build-only offer is cleared out of the hand.
+      const index=Math.max(0,offer.findIndex(id=>cardCatalog.cardById[id].category==="buff"));
+      const id=offer[index],isBuff=cardCatalog.cardById[id].category==="buff",stacks=sim.buffStacks(id),held=sim.hand().length;
+      const capacity=sim.state.capacity,baseMax=sim.state.baseMax,baseHp=sim.state.baseHp;
+      assert.equal(sim.chooseDraft(index),true);
+      if(isBuff){
+        assert.equal(sim.buffStacks(id),stacks+1,"a drafted buff must land through applyBuff");
+        assert.equal(sim.hand().length,held,"a drafted buff must never enter the hand");
+        if(stacks)sim.state.draft.buffs[id]=stacks;else delete sim.state.draft.buffs[id];
+      }else{
+        assert.equal(sim.hand().length,held+1,"a drafted build must land in the hand");
+        sim.debugClearHand();
+      }
+      sim.state.capacity=capacity;sim.state.baseMax=baseMax;sim.state.baseHp=baseHp;
+    };
+    // Level 1 pays exactly one draft, and nothing else is owed behind it.
+    takeRewardOffer("base");
+    assert.equal(sim.draftPending(),null,"a completed base level owes exactly one pick");
+    // A completed level-1 base asks for the authored level-2 recipe next, and nothing else.
+    assert.deepEqual(sim.mainBaseStatus(),{level:1,maxLevel:3,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[1].cost,delivered:zero()});
+    // Worker hauling is storage, never a silent upgrade: a hauler arrives with exactly what the
+    // recipe wants and the recipe stays empty.
+    const hauler={x:data.BASE.x,y:data.BASE.y,postX:data.BASE.x,postY:data.BASE.y,spawnSource:null,job:"haul",jobTarget:data.BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...zero(),stone:10},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0};
+    sim.state.workers.push(hauler);sim.update(1/60);sim.state.workers.length=0;
+    assert.deepEqual(sim.mainBaseStatus().delivered,zero(),"a worker hauler funded a base level");
+    assert.equal(sim.state.stored.stone,10,"a worker hauler must deposit into storage");
+    assert.equal(sim.draftPending(),null,"a worker deposit dealt a reward");
+    sim.state.stored.stone=0;
+    // A PLAYER release pays the recipe first. Mixed loads split: the wood the recipe cannot use
+    // goes straight to storage, the stone banks as partial progress, and nothing completes.
+    sim.state.carried.stone=4;sim.state.carried.wood=7;
+    sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
+    assert.deepEqual(sim.mainBaseStatus().delivered,{...zero(),stone:4},"a partial base delivery was not banked");
+    assert.deepEqual({...sim.state.stored},{...zero(),wood:7},"resources the recipe cannot use must land in storage");
+    assert.deepEqual({...sim.state.carried},zero());
+    assert.equal(sim.draftPending(),null,"a partial delivery paid a reward");
+    // One release, at most ONE level: 30 stone finishes level 2 with 10 and stores the other 24.
+    sim.state.carried.stone=30;
+    sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
+    assert.equal(sim.state.baseLevel,2,"an oversized release must complete exactly one level");
+    assert.deepEqual(sim.mainBaseStatus(),{level:2,maxLevel:3,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[2].cost,delivered:zero()},"a completed level must clear its progress and charge the next recipe");
+    assert.deepEqual({...sim.state.stored},{...zero(),wood:7,stone:24},"the remainder of a level-completing release must land in storage");
+    takeRewardOffer("base");
+    // Repeating the release at a level that is already paid changes nothing but storage.
+    sim.state.carried.stone=5;
+    sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
+    assert.deepEqual(sim.mainBaseStatus().delivered,{...zero(),stone:5});
+    assert.equal(sim.state.baseLevel,2);assert.equal(sim.draftPending(),null,"a repeated release duplicated a base reward");
+    // Level 3 wants BOTH resources; the top of the authored list has no next recipe at all.
+    sim.state.carried.wood=data.MAIN_BASE_LEVELS[2].cost.wood;sim.state.carried.stone=data.MAIN_BASE_LEVELS[2].cost.stone;
+    sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
+    assert.equal(sim.state.baseLevel,3);
+    assert.deepEqual(sim.mainBaseStatus(),{level:3,maxLevel:3,atMaxLevel:true,cost:null,delivered:zero()},"a maxed base must report no next recipe");
+    assert.deepEqual({...sim.state.stored},{...zero(),wood:7,stone:24+5},"level 3 must consume exactly its recipe, five of it already banked");
+    takeRewardOffer("base");
+    // At the maximum level every deposit is storage, however large, and nothing is ever rewarded again.
+    sim.state.carried.wood=40;sim.state.carried.stone=40;
+    sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
+    assert.deepEqual({...sim.state.stored},{...zero(),wood:47,stone:69});
+    assert.deepEqual(sim.mainBaseStatus().delivered,zero());
+    assert.equal(sim.draftPending(),null,"a maxed base kept paying rewards");
+    // A free-cost sweep cannot re-complete a standing base, so it cannot re-pay one either.
+    sim.DBG.freeCosts=true;sim.debugSweepFreeCosts();sim.DBG.freeCosts=false;
+    assert.equal(sim.state.baseLevel,3);assert.equal(sim.draftPending(),null,"the free-cost sweep duplicated a base reward");
+    for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;
+    // Queue priority when several rewards are banked at once: base levels, then dawn, then
+    // consumables. The queues are written straight into the ledger and the pump is one debug
+    // queue call — this is about the DEALER's order alone.
+    Object.assign(sim.state.draft,{dawnQueue:1,consumableQueue:1});
+    assert.equal(sim.debugQueueDraft("base"),true);
+    const dealt=[];while(sim.draftPending()){dealt.push(sim.draftKind());if(sim.draftKind()==="consumable")assert.equal(sim.chooseDraft(0),true);else takeRewardOffer(sim.draftKind());}
+    assert.deepEqual(dealt,["base","dawn","consumable"],"the reward queue changed its priority");
+    sim.debugClearHand();
+    assert.deepEqual({...sim.state.carried},Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0])));
+    // Day/night pacing past the opening is untouched: the ordinary flip still runs, and dawn still
+    // hands day 2 a full DAY_DURATION.
+    sim.transitionPhase();assert.equal(sim.state.clock.phase,"night");
+    sim.state.enemies.length=0;sim.state.nightWave.remainingSpawns=0;
+    sim.transitionPhase();while(sim.draftPending())sim.chooseDraft(0);
+    assert.deepEqual([sim.state.clock.phase,sim.state.clock.remaining,sim.state.clock.completedNights],["day",data.DAY_DURATION,1],"dawn after the first night must be unchanged");
+    sim.debugClearHand();
   }
   assert.throws(()=>sim.initializeRunMode("invalid"),/invalid run mode/);
   // Ring spawning: every manual spawn lands near ENEMY_SPAWN_RADIUS of the base, preferring land.
@@ -339,8 +611,10 @@ try{
   taggedEnemy.waveNightNumber=0;assert.throws(()=>sim.validateSimulationInvariants(),/malformed wave membership/);delete taggedEnemy.waveNightNumber;sim.state.enemies.splice(1);
   const invalidDrop={kind:"invalid",x:100,y:100,groundY:100,vx:0,vy:0,ground:true,target:null,t:0,spin:0,ttl:null};sim.resourceDrops.push(invalidDrop);assert.throws(()=>sim.validateSimulationInvariants(),/unknown resource drop kind/);sim.resourceDrops.pop();
   sim.state.runMode="invalid";assert.throws(()=>sim.update(1/60),/invalid run mode/);sim.state.runMode="normal";
-  // The house is placed the only way a house can be placed now: by playing the bpHouse card the
-  // opening kit dealt. There is no dock and no toggleBuildMode() to reach for.
+  // The house is placed the only way a house can be placed now: by playing a bpHouse card. The
+  // opening no longer deals one — it is EARNED from a base-level draft — so the bench deals
+  // itself one. There is no dock and no toggleBuildMode() to reach for.
+  assert.equal(sim.debugDealCard("bpHouse"),true);
   sim.DBG.freeCosts=true;const houseGrass=sim.grass.find(tuft=>sim.canPlace(tuft.x,tuft.y,"house")&&sim.footprintFogFree(tuft.x,tuft.y,data.BUILDING_TYPES.house.footprint)),houseSite=houseGrass&&{x:houseGrass.x,y:houseGrass.y};assert.ok(houseSite);sim.setPointerWorld(houseSite.x,houseSite.y);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),"targeting");assert.equal(sim.state.buildMode,"house");sim.primaryPress();sim.primaryRelease();assert.equal(sim.buildings.some(item=>item.type==="house"&&item.complete),true,"the bpHouse card did not stand a house");assert.equal(sim.grass.includes(houseGrass),false,"successful building placement did not clear overlapping grass");sim.DBG.instantWorkers=true;sim.update(1/60);const worker=sim.state.workers[0],workerOrigin={x:worker.x,y:worker.y};sim.setPointerWorld(worker.x,worker.y);sim.secondaryPress();assert.equal(sim.heldWorker(),worker);sim.pointerCancelled();assert.equal(worker.x,workerOrigin.x);assert.equal(worker.y,workerOrigin.y);assert.equal(sim.state.workers.includes(worker),true);assert.equal(worker.job,"free","a house-born worker must spawn free");assert.equal(worker.autonomous,true);sim.DBG.freeCosts=sim.DBG.instantWorkers=false;
   // Teardown: the pickup scaffolding must not leak an autonomous economy into the stress run below.
   sim.state.workers.length=0;sim.buildings.length=0;sim.validateSimulationInvariants();
@@ -366,6 +640,7 @@ try{
     import assert from "node:assert/strict";
     import * as sim from "./src/game/simulation.js";import * as data from "./src/game/data.js";import {cellToWorld,footprintWorldRect} from "./src/game/grid.js";
     sim.initializeRunMode("normal");
+    sim.debugRaiseMainBase();   // Skip the opening: these scenarios exercise the DAY/NIGHT game, so the base is stood up through the real path (no xp, like every free-cost completion).
     let water=null,shore=null;
     for(let cy=2;cy<data.GRID_ROWS-2;cy++)for(let cx=2;cx<data.GRID_COLS-2;cx++){
       const p=cellToWorld(cx,cy),one=footprintWorldRect(cx,cy,data.FOOTPRINT_1x1),three=footprintWorldRect(cx,cy,data.FOOTPRINT_3x3);
@@ -396,7 +671,7 @@ try{
       const makeWorker=(x,y)=>({x,y,postX:x,postY:y,spawnSource:null,job:"guard",jobTarget:null,autonomous:false,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:counts(),hp:data.WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0});
       const hit=()=>{sim.primaryPress();sim.update(.02);sim.primaryRelease();};
       try{
-        sim.initializeRunMode("normal");sim.TUNE.chopTime=.01;
+        sim.initializeRunMode("normal");sim.debugRaiseMainBase();sim.TUNE.chopTime=.01;
         // A chest under standing fog is owned by the fog cell and unclickable; use a revealed one.
         const chest=sim.chests.find(c=>!sim.fogAtPoint(c.x,c.y)),seedOrigin={x:chest.x,y:chest.y};
         assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).kind,"break-chest");assert.equal(sim.resolvePrimaryAction(chest.x,chest.y).icon,"axe");
@@ -434,7 +709,7 @@ try{
       const enemy=(x,y)=>({combatKind:"enemy",type:"raider",x,y,hp:5,max:5,attackCooldown:0,healCooldown:1,wob:0,flash:0,shotFlash:0,healFlash:0,status:{burn:null,slow:null},retaliationTower:null});
       const swing=()=>{sim.primaryPress();sim.update(.02);sim.primaryRelease();};
       try{
-        sim.initializeRunMode("normal");sim.TUNE.chopTime=.01;Math.random=()=>0;
+        sim.initializeRunMode("normal");sim.debugRaiseMainBase();sim.TUNE.chopTime=.01;Math.random=()=>0;
         sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=sim.resourceDrops.length=0;sim.state.enemies.length=sim.state.workers.length=0;
         // A hand-built arena east of the base. Distances author the jump order: from A the tree (40)
         // outranks B (105); from the tree only B (65) is in the 120 reach (C sits 125 away); from B,
@@ -510,8 +785,8 @@ try{
       // dawn reward can freeze the world in the middle of a worker measurement.
       // A pending draft offer freezes the whole world, so any scenario that crosses a real dawn
       // clears the reward it just earned before it measures anything else.
-      const clearDraft=()=>{sim.state.draft.queue=0;sim.state.draft.dawnQueue=0;sim.state.draft.consumableQueue=0;sim.state.draft.offer=null;sim.state.draft.offerKind=null;sim.state.draftPaused=false;};
-      const reset=()=>{sim.buildings.length=sim.resourceDrops.length=sim.chests.length=sim.state.workers.length=sim.state.enemies.length=sim.trees.length=sim.rocks.length=sim.diamonds.length=0;for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;sim.state.xp=0;sim.state.levelXp=0;sim.state.level=0;sim.state.clock.phase="day";sim.state.clock.remaining=data.DAY_DURATION;sim.state.paused=sim.state.gameOver=false;sim.state.coinTimer=99999;clearDraft();Object.assign(sim.state.nightWave,{activePlan:null,threatBudget:0,spawnedThreat:0,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,activeNightNumber:null});sim.DBG.groundSourcing=sim.DBG.builderSelfSupply=true;sim.DBG.instantWorkers=false;sim.TUNE.builderSourceRadius=300;sim.TUNE.freeSearchRadius=200;sim.TUNE.fleeHpThreshold=1;};
+      const clearDraft=()=>{sim.state.draft.baseQueue=0;sim.state.draft.dawnQueue=0;sim.state.draft.consumableQueue=0;sim.state.draft.offer=null;sim.state.draft.offerKind=null;sim.state.draftPaused=false;};
+      const reset=()=>{sim.buildings.length=sim.resourceDrops.length=sim.chests.length=sim.state.workers.length=sim.state.enemies.length=sim.trees.length=sim.rocks.length=sim.diamonds.length=0;for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;sim.state.clock.phase="day";sim.state.clock.remaining=data.DAY_DURATION;sim.state.paused=sim.state.gameOver=false;sim.state.coinTimer=99999;clearDraft();Object.assign(sim.state.nightWave,{activePlan:null,threatBudget:0,spawnedThreat:0,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,activeNightNumber:null});sim.DBG.groundSourcing=sim.DBG.builderSelfSupply=true;sim.DBG.instantWorkers=false;sim.TUNE.builderSourceRadius=300;sim.TUNE.freeSearchRadius=200;sim.TUNE.fleeHpThreshold=1;};
       // Night without a wave: a positive spawn budget that is never due keeps the clearance check
       // from auto-dawning the moment the phase flips, so night behavior can be measured on its own.
       const holdNight=()=>{sim.state.clock.phase="night";sim.state.nightWave.remainingSpawns=1;sim.state.nightWave.nextSpawnAt=1e9;};
@@ -521,6 +796,7 @@ try{
       const sweep=()=>step(31);
       try{
         sim.initializeRunMode("normal");
+        sim.debugRaiseMainBase();   // Skip the opening: these scenarios exercise the DAY/NIGHT game, so the base is stood up through the real path (no xp, like every free-cost completion).
         // ── the scout hut: a staffed post whose staffers mine the fog ── (runs FIRST, on the real
         // fog field, because everything after this block strips the fog for coordinate-free fixtures)
         {
@@ -566,8 +842,13 @@ try{
         // These scenarios build fixtures at arbitrary coordinates the fog field would otherwise
         // cover; fogged nodes are inactive and fogged cells reject placement, so strip the fog once.
         sim.clearAllFog();
+        // The main base is deliberately and PERMANENTLY absent from this list. Its completed Worker
+        // Limit is MAIN_BASE.jobSlots and its runtime post is the BASE anchor, not this construction
+        // record; authoring jobSlots on the row would open a second two-slot pool at the same
+        // coordinates. The base's own occupancy is asserted against BASE further down.
         assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2],["scoutHut",2],["garrison",3]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);
-        assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{lumber:2,quarry:3,stockpile:2,house:2,scoutHut:2,rangeBeacon:2,warShrine:2,wardTotem:2,hasteTotem:2,obelisk:3,tower:3,captureYard:3,garrison:2,consumableForge:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0,fireballTarget:0});
+        assert.equal(data.BUILDING_TYPES.mainBase.jobSlots,undefined,"the base site row must not restate the completed base's Worker Limit");
+        assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{mainBase:2,lumber:2,quarry:3,stockpile:2,house:2,scoutHut:2,rangeBeacon:2,warShrine:2,wardTotem:2,hasteTotem:2,obelisk:3,tower:3,captureYard:3,garrison:2,consumableForge:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0,fireballTarget:0});
         assert.equal(sim.DBG.groundSourcing,true);assert.equal(sim.TUNE.builderSourceRadius,400);
         // Camps and quarries are pure WORK buildings: they grow nothing, ever. Their value is the
         // staffed-gather rate on wild nodes inside serviceRadius (covered by the staffing tests).
@@ -575,9 +856,9 @@ try{
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",104,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=false;step();assert.equal(builder.taskTarget,null);assert.ok(builder.carried.wood>0);assert.equal(loose.claimedBy,undefined);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=3;const loose=drop("wood",130,100),builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.resourceDrops.push(loose);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.taskTarget,loose);assert.equal(loose.claimedBy,builder);assert.equal(store.storage.wood,3);sim.DBG.groundSourcing=false;sim.TUNE.builderSourceRadius=60;step();assert.equal(builder.taskTarget,loose);}
         reset();{const site=building("lumber",100,100,false),store=building("stockpile",110,100);store.storage.wood=1;const builder=worker("build",site,100,100);sim.buildings.push(site,store);sim.state.workers.push(builder);sim.DBG.groundSourcing=true;step();assert.equal(builder.carried.wood,1);}
-        reset();{const site=building("tower",100,100,false,{wood:0,stone:0,dust:1}),store=building("stockpile",110,100),builder=worker("build",site,100,100);store.storage.dust=1;sim.buildings.push(site,store);sim.state.workers.push(builder);step();assert.equal(builder.carried.dust,1,"builders must haul variant materials");step();assert.equal(site.complete,true,"variant material did not finish the one tower build");assert.equal(sim.xp(),data.RESOURCE_XP.dust,"completion xp must weight rare materials");}
+        reset();{const site=building("tower",100,100,false,{wood:0,stone:0,dust:1}),store=building("stockpile",110,100),builder=worker("build",site,100,100);store.storage.dust=1;sim.buildings.push(site,store);sim.state.workers.push(builder);step();assert.equal(builder.carried.dust,1,"builders must haul variant materials");step();assert.equal(site.complete,true,"variant material did not finish the one tower build");assert.equal(sim.draftPending(),null,"an ordinary completion must pay no draft");}
         reset();{const site=building("lumber",100,100,false),builder=worker("build",site,100,100);sim.buildings.push(site);sim.state.workers.push(builder);step();assert.equal(builder.starved,true);}
-        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step();assert.equal(builder.job,"build");assert.equal(builder.jobTarget,site);assert.equal(builder.selfSupply.node,tree);step(600);assert.equal(site.complete,true);assert.equal(site.delivered.wood,1);assert.equal(sim.xp(),1,"completion must grant cost-weighted xp");assert.equal(builder.job,"staff","manual builder must inherit the durable post it stood up");assert.equal(builder.jobTarget,site);assert.equal(builder.autonomous,false);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);}
+        reset();{const site=building("lumber",100,100,false),tree={x:180,y:100,hp:3,max:3,stump:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(builder);step();assert.equal(builder.job,"build");assert.equal(builder.jobTarget,site);assert.equal(builder.selfSupply.node,tree);step(600);assert.equal(site.complete,true);assert.equal(site.delivered.wood,1);assert.equal(sim.draftPending(),null,"an ordinary completion must pay no draft");assert.equal(builder.job,"staff","manual builder must inherit the durable post it stood up");assert.equal(builder.jobTarget,site);assert.equal(builder.autonomous,false);assert.equal(builder.selfSupply,null);assert.equal(sim.resourceDrops.some(item=>item.claimedBy===builder),false);}
         reset();{const site=building("tower",100,100,false,{wood:1,stone:1}),tree={x:190,y:100,hp:3,max:3,stump:0,shake:0},rock={x:130,y:100,hp:3,max:3,depleted:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.rocks.push(rock);sim.state.workers.push(builder);step();assert.deepEqual(builder.selfSupply,{kind:"stone",node:rock},"nearest needed node must win across kinds");}
         reset();{const site=building("tower",100,100,false,{wood:1,stone:1}),tree={x:130,y:100,hp:3,max:3,stump:0,shake:0},rock={x:190,y:100,hp:3,max:3,depleted:0,shake:0},builder=worker("build",site,100,100);sim.buildings.push(site);sim.trees.push(tree);sim.rocks.push(rock);sim.state.workers.push(builder);step();assert.deepEqual(builder.selfSupply,{kind:"wood",node:tree},"nearest needed node must win across kinds");}
         reset();{const site=building("tower",100,100,false,{wood:2,stone:0}),tree={x:170,y:100,hp:6,max:6,stump:0,shake:0},a=worker("build",site,100,100),b=worker("build",site,102,100);sim.buildings.push(site);sim.trees.push(tree);sim.state.workers.push(a,b);step();assert.ok(a.selfSupply||b.selfSupply);assert.equal([a,b].filter(item=>item.selfSupply).length,1,"node/self-supply reservation duplicated");step(700);assert.equal(site.delivered.wood,site.cost.wood);assert.equal(site.complete,true,"builders must reselect without over-delivery");}
@@ -1183,8 +1464,8 @@ try{
           sim.state.workers.push(alpha,beta);
           for(let i=0;i<3600&&!station.complete;i++)step();
           assert.equal(station.complete,true,"the builders never delivered the authored cost");
-          // Completion XP on the authored 12-unit cost crosses a level and queues a draft, which
-          // freezes the world; clear it so the postings below can be measured in motion.
+          // An ordinary completion pays no draft since XP was deleted, but the bench clears the
+          // ledger anyway so a stray queued reward can never freeze the postings measured below.
           clearDraft();
           // The construction stretch is the only long one; a fresh day keeps the postings below from
           // meeting a dusk they were never measuring.
@@ -1307,35 +1588,144 @@ try{
           assert.ok(sim.state.workers.length>=data.HOUSE_SLOTS-1&&sim.state.workers.length<=data.HOUSE_SLOTS,"death/replacement must keep the house population");
           assert.equal(sim.state.workers.every(item=>["free","build","haul","harvest","staff"].includes(item.job)),true,"with no garrison standing, an autonomous run may never mint guards");
         }
-        console.log(JSON.stringify({checks:86}));
+        // ── the base defends its own ground ──
+        // The map centre's attack moved off the retired king onto the completed base. BALANCE is
+        // MAIN_BASE's; the COMBAT RULES are the towers' — the same permanent buffs and the same
+        // auras, applied by the very helpers a tower uses, so the two can never drift apart.
+        // Fog exclusion is structural rather than measurable here: the base reaches at most
+        // range+towerRange+rangeBeacon (195) and the starting clearing is FOG.clearRadius 560, so no
+        // fog block can ever stand inside its reach. It gets the rule anyway by targeting through
+        // nearestTowerTarget/eachTowerCombatTarget, the one funnel every tower and orb reads.
+        reset();{
+          sim.DBG.invulnBase=true;
+          const pin=(x,y)=>{sim.spawnEnemy("raider");const e=sim.state.enemies.at(-1);e.x=x;e.y=y;e.hp=e.max=99999;return e;};
+          // Range is a hard edge, and one frame of raider walk cannot carry it across.
+          const outside=pin(data.BASE.x+data.MAIN_BASE.range+6,data.BASE.y);
+          sim.update(1/60);
+          assert.equal(outside.hp,99999,"the base fired past its authored range");
+          sim.state.enemies.length=0;
+          // Everything below is measured off a PINNED target's health track: the frames it lost
+          // health on give the cadence, the size of one loss gives the damage.
+          const volley=(steps,x=data.BASE.x+20)=>{
+            sim.state.enemies.length=0;sim.state.baseAttack.cooldown=0;
+            const enemy=pin(x,data.BASE.y);const at=[];let previous=enemy.hp,drop=0;
+            for(let i=0;i<steps;i++){enemy.x=x;enemy.y=data.BASE.y;sim.update(1/60);if(enemy.hp<previous){at.push(i);drop=previous-enemy.hp;previous=enemy.hp;}}
+            sim.state.enemies.length=0;return {at,drop};
+          };
+          const cadence=result=>(result.at[1]-result.at[0])/60;
+          const plain=volley(180);
+          assert.ok(plain.at.length>=3,"a standing base must defend itself unprompted");
+          assert.equal(plain.drop,data.MAIN_BASE.damage,"base damage drifted from MAIN_BASE");
+          assert.ok(Math.abs(cadence(plain)-data.MAIN_BASE.rate)<=2/60,"base cadence "+cadence(plain)+" is not MAIN_BASE.rate");
+          // The three PERMANENT tower buffs reach the base; the tower HP buff deliberately does not.
+          assert.equal(sim.debugApplyBuff("towerDamage"),true);
+          assert.equal(volley(120).drop,data.MAIN_BASE.damage+data.CARD_BUFFS.towerDamage,"the towerDamage buff must reach the base");
+          delete sim.state.draft.buffs.towerDamage;
+          assert.equal(sim.debugApplyBuff("towerSpeed"),true);
+          assert.ok(Math.abs(cadence(volley(180))-data.MAIN_BASE.rate/data.CARD_BUFFS.towerSpeed)<=2/60,"the towerSpeed buff must reach the base");
+          delete sim.state.draft.buffs.towerSpeed;
+          assert.equal(sim.debugApplyBuff("towerRange"),true);
+          assert.ok(volley(120,data.BASE.x+data.MAIN_BASE.range+data.CARD_BUFFS.towerRange-8).at.length>0,"the towerRange buff must reach the base");
+          delete sim.state.draft.buffs.towerRange;
+          assert.equal(sim.state.baseMax,data.MAIN_BASE.maxHp,"the base's health pool is MAIN_BASE's — the tower HP buff is not the base's");
+          // The three AURAS apply by position, exactly as they do to a tower standing here.
+          const aura=type=>{sim.buildings.length=0;sim.buildings.push(building(type,data.BASE.x+40,data.BASE.y+40));};
+          aura("warShrine");
+          assert.equal(volley(120).drop,data.MAIN_BASE.damage+data.BUILDING_TYPES.warShrine.damageBonus,"a nearby War Shrine must buff the base");
+          aura("hasteTotem");
+          assert.ok(Math.abs(cadence(volley(180))-data.MAIN_BASE.rate*data.BUILDING_TYPES.hasteTotem.cooldownFactor)<=2/60,"a nearby Haste Totem must quicken the base");
+          aura("rangeBeacon");
+          assert.ok(volley(120,data.BASE.x+data.MAIN_BASE.range+data.BUILDING_TYPES.rangeBeacon.rangeBonus-8).at.length>0,"a nearby Range Beacon must extend the base");
+          sim.buildings.length=0;sim.DBG.invulnBase=false;
+        }
+        // Losing the base is still the run-loss condition, reached through the same baseHp path.
+        reset();{
+          sim.state.baseHp=1;
+          sim.spawnEnemy("raider");const sieger=sim.state.enemies.at(-1);
+          sieger.x=data.BASE.x+10;sieger.y=data.BASE.y;sieger.hp=sieger.max=99999;
+          sim.update(1/60);
+          assert.equal(sim.state.baseHp,0,"an enemy must damage the standing base through baseHp");
+          assert.equal(sim.state.gameOver,true,"losing the base must end the run");
+          sim.state.gameOver=false;sim.state.baseHp=sim.state.baseMax;sim.state.enemies.length=0;
+        }
+        // ── the base's Worker Limit (CONTEXT.md) ──
+        // Two haulers, occupancy DERIVED from the workers naming BASE — held ones included — and
+        // reserved the instant a posting is named, never after the walk.
+        reset();{
+          const post=[0,1,2].map(i=>freeWorker(data.BASE.x-260+i*90,data.BASE.y+260));
+          sim.state.workers.push(...post);
+          const [first,second,third]=post;
+          const dropOnBase=w=>{sim.setPointerWorld(w.x,w.y);sim.secondaryPress();sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();};
+          assert.deepEqual(sim.workerOccupancyStatus(data.BASE),{target:data.BASE,assigned:0,capacity:data.MAIN_BASE.jobSlots});
+          dropOnBase(first);
+          assert.deepEqual([first.job,first.jobTarget,first.autonomous],["haul",data.BASE,false],"dropping a worker on the standing base must post it as a hauler");
+          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,1,"a base posting must reserve its slot immediately, before the walk");
+          dropOnBase(second);
+          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots);
+          // Full: the third drop is REFUSED outright and the worker goes back where it came from.
+          const origin={x:third.x,y:third.y};
+          assert.equal(sim.workerAssignmentAt(third,data.BASE.x,data.BASE.y),null,"a full base must reject a manual drop");
+          dropOnBase(third);
+          assert.equal(third.job,"free","a refused drop must leave the worker unassigned");
+          assert.deepEqual({x:third.x,y:third.y},origin,"a refused drop must restore the worker's pickup origin");
+          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots);
+          // A HELD hauler keeps its slot: its reservation cannot be handed to the worker on the ground.
+          sim.setPointerWorld(first.x,first.y);sim.secondaryPress();
+          assert.equal(sim.heldWorker(),first);
+          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots,"lifting a base hauler must keep its slot reserved");
+          assert.equal(sim.workerAssignmentAt(third,data.BASE.x,data.BASE.y),null,"a held hauler's slot must not be handed to another worker");
+          sim.pointerCancelled();
+          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots,"returning a held hauler must not overfill the base");
+          // The slot tray the overlay draws is the same derived count.
+          assert.deepEqual([sim.durablePostStatus(data.BASE).capacity,sim.durablePostStatus(data.BASE).assigned],[data.MAIN_BASE.jobSlots,data.MAIN_BASE.jobSlots]);
+          assert.equal(sim.workerOccupancyAt(data.BASE.x,data.BASE.y).target,data.BASE,"the base must answer the hovered-occupancy probe");
+          // Autonomous hauling obeys the same limit: a full base is not a destination, so a loose
+          // drop inside base coverage may not mint a third hauler. Three drops for two posted
+          // haulers, so at least one is provably still unclaimed when the sweep runs.
+          for(const dx of [-40,0,40])sim.resourceDrops.push(drop("wood",third.x+dx,data.BASE.y+150));
+          sweep();
+          assert.ok(sim.resourceDrops.some(item=>!item.claimedBy),"the capacity test needs an unclaimed drop in base coverage");
+          assert.equal(third.job,"free","a full base must be excluded from autonomous hauling destinations");
+          assert.equal(sim.workerOccupancyStatus(data.BASE).assigned,data.MAIN_BASE.jobSlots);
+          // Free a slot and the scheduler takes it through the ordinary path.
+          sim.state.workers.splice(sim.state.workers.indexOf(first),1);
+          sweep();
+          assert.deepEqual([third.job,third.jobTarget,third.autonomous],["haul",data.BASE,true],"a vacant base slot must be claimable by the free-worker scheduler");
+          sim.validateSimulationInvariants();
+        }
+        console.log(JSON.stringify({checks:120}));
       }finally{Math.random=old;}
     `
   }).trim());
-  const xpResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+  // ── the draft economy (XP RETIRED 2026-08-22) ──
+  // Progression is the authored base levels plus one dawn buff per night survived. This suite owns
+  // the dealer: what a base offer may contain, that nothing else pays one, the world freeze, the
+  // coin reroll, and the wave tier — which now rides NIGHTS SURVIVED, not any player level.
+  const draftResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
       import assert from "node:assert/strict";
       import * as sim from "./src/game/simulation.js";
-      import {BASE,RESOURCE_XP,RESOURCE_KINDS,LEVEL_CURVE} from "./src/game/data.js";
+      import {BASE,RESOURCE_KINDS} from "./src/game/data.js";
       import {cardById} from "./src/game/cards.js";
       const counts=()=>Object.fromEntries(RESOURCE_KINDS.map(kind=>[kind,0]));
       const worker=(load)=>({x:BASE.x,y:BASE.y,postX:BASE.x,postY:BASE.y,spawnSource:null,job:"haul",jobTarget:BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...counts(),...load},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0});
-      const cost=level=>LEVEL_CURVE.base*LEVEL_CURVE.growth**level;
+      const CATEGORIES={base:["build","buff"],dawn:["buff"],consumable:["consumable"]};
       // Draining must not disturb the wave checks below, so the two schedule-bending cards are avoided.
       const skip=new Set(["calmNight","longDay"]);
-      const drain=()=>{let taken=0;while(sim.draftPending()){const offer=sim.draftPending(),kind=sim.draftKind(),category=kind==="level"?"build":kind==="dawn"?"buff":"consumable";assert.ok(offer.length>0&&offer.length<=3);assert.equal(new Set(offer).size,offer.length,"draft offered a duplicate card");assert.equal(offer.every(id=>cardById[id].inPool&&cardById[id].implemented),true,"draft offered a card that is not in the pool");assert.equal(offer.every(id=>cardById[id].category===category),true,"draft mixed reward pools");assert.equal(sim.chooseDraft(Math.max(0,offer.findIndex(id=>!skip.has(id)))),true);taken++;}return taken;};
-      sim.initializeRunMode("normal");assert.equal(sim.xp(),0);assert.equal(sim.waveTier(),0);
-      assert.deepEqual(sim.levelState(),{level:0,xp:0,next:cost(0)});assert.equal(sim.draftPending(),null);assert.equal(sim.chooseDraft(0),false);
-      // Base deposits are storage, never XP: the manual drop and the hauler deposit both credit
-      // state.stored and leave the level track untouched.
-      sim.state.carried.wood=5;sim.setPointerWorld(BASE.x,BASE.y);sim.secondaryRelease();assert.equal(sim.xp(),0);assert.equal(sim.state.carried.wood,0);assert.equal(sim.state.stored.wood,5);assert.equal(sim.state.level,0);assert.equal(sim.draftPending(),null,"a base deposit must not grant xp or deal a draft");
-      const hauler=worker({diamond:1});sim.state.workers.push(hauler);sim.update(1/60);assert.equal(sim.xp(),0);assert.equal(hauler.carried.diamond,0);assert.equal(sim.state.stored.diamond,1);
-      // Construction completion is the only XP source (exercised end-to-end in the worker suite);
-      // the grants below mirror it: 5 xp holds under level 1, then 12 crosses levels 1 AND 2 in one
-      // grant — the first offer is live and the rest are queued.
-      assert.equal(sim.debugGrantXp(5),true);assert.equal(sim.xp(),5);assert.equal(sim.state.level,0);assert.equal(sim.draftPending(),null,"a partial level must not deal a draft");
-      sim.debugGrantXp(RESOURCE_XP.diamond);
-      assert.equal(sim.state.level,2);assert.equal(sim.state.draft.queue,1);assert.equal(sim.levelState().xp,17-cost(0)-cost(1));assert.equal(sim.levelState().next,cost(2));
-      const firstOffer=sim.draftPending();assert.equal(firstOffer.length,3);assert.equal(new Set(firstOffer).size,3);assert.equal(firstOffer.every(id=>cardById[id].inPool&&cardById[id].category==="build"),true,"level-up offered something other than a build");
+      const drain=()=>{let taken=0;while(sim.draftPending()){const offer=sim.draftPending(),kind=sim.draftKind(),allowed=CATEGORIES[kind];assert.ok(offer.length>0&&offer.length<=3);assert.equal(new Set(offer).size,offer.length,"draft offered a duplicate card");assert.equal(offer.every(id=>cardById[id].inPool&&cardById[id].implemented),true,"draft offered a card that is not in the pool");assert.equal(offer.every(id=>allowed.includes(cardById[id].category)),true,"draft dealt outside its kind's pool");assert.equal(sim.chooseDraft(Math.max(0,offer.findIndex(id=>!skip.has(id)))),true);taken++;}return taken;};
+      sim.initializeRunMode("normal");sim.debugRaiseMainBase();assert.equal(sim.waveTier(),0);
+      assert.equal(sim.draftPending(),null,"a free-cost base must pay no draft");assert.equal(sim.chooseDraft(0),false);
+      assert.equal(sim.debugQueueDraft("nonsense"),false,"only the authored reward kinds may be queued");
+      // Base deposits are storage and nothing else: neither the manual drop nor the hauler deposit
+      // may deal a reward (the base stands at level 1 here, so its recipe is charged by release).
+      sim.state.carried.wood=5;sim.setPointerWorld(BASE.x,BASE.y);sim.secondaryRelease();assert.equal(sim.state.carried.wood,0);assert.equal(sim.state.stored.wood,5);assert.equal(sim.draftPending(),null,"a base deposit dealt a draft");
+      const hauler=worker({diamond:1});sim.state.workers.push(hauler);sim.update(1/60);assert.equal(hauler.carried.diamond,0);assert.equal(sim.state.stored.diamond,1);assert.equal(sim.draftPending(),null,"a hauler deposit dealt a draft");
+      sim.state.workers.length=0;
+      // A base level deals ONE mixed build+buff offer; a second queued reward waits behind it.
+      assert.equal(sim.debugQueueDraft("base"),true);assert.equal(sim.debugQueueDraft("base"),true);
+      assert.equal(sim.draftKind(),"base");
+      const firstOffer=sim.draftPending();assert.equal(firstOffer.length,3);assert.equal(new Set(firstOffer).size,3);
+      assert.equal(firstOffer.every(id=>cardById[id].inPool&&CATEGORIES.base.includes(cardById[id].category)),true,"a base level offered something outside the build+buff pool");
       assert.equal(sim.chooseDraft(3),false);assert.equal(sim.chooseDraft(-1),false);assert.equal(sim.draftPending(),firstOffer,"a rejected pick must not consume the offer");
       // The world is frozen while an offer pends, and only the queue drain lets time move again.
       const frozen=sim.state.clock.elapsed;for(let i=0;i<60;i++)sim.update(1/60);assert.equal(sim.state.clock.elapsed,frozen,"the world advanced under a pending draft");
@@ -1347,27 +1737,38 @@ try{
       const rerolled=sim.draftPending();
       assert.notEqual(rerolled,firstOffer);assert.equal(rerolled.length,3);
       assert.equal(rerolled.every(id=>!firstOffer.includes(id)),true,"a paid reroll must not repeat the shown cards");
-      assert.equal(rerolled.every(id=>cardById[id].inPool&&cardById[id].category==="build"),true,"a reroll must stay in the offer's pool");
+      assert.equal(rerolled.every(id=>cardById[id].inPool&&CATEGORIES.base.includes(cardById[id].category)),true,"a reroll must stay in the offer's pool");
       assert.equal(sim.state.stored.coin,0,"the reroll must spend the coin");
-      assert.equal(sim.chooseDraft(Math.max(0,rerolled.findIndex(id=>!skip.has(id)))),true);assert.notEqual(sim.draftPending(),rerolled,"the queued level-up must replace the consumed offer");
+      assert.equal(sim.chooseDraft(Math.max(0,rerolled.findIndex(id=>!skip.has(id)))),true);assert.notEqual(sim.draftPending(),rerolled,"the queued base reward must replace the consumed offer");
       assert.equal(drain()>0,true);assert.equal(sim.draftPending(),null);assert.equal(sim.state.draftPaused,false);
       for(let i=0;i<60;i++)sim.update(1/60);assert.ok(sim.state.clock.elapsed>frozen,"the world stayed frozen after the draft was consumed");
-      assert.equal(sim.debugGrantXp(0),false);assert.equal(sim.debugGrantXp(-1),false);assert.equal(sim.debugGrantXp(1.5),false);assert.equal(sim.debugGrantXp(Number.MAX_SAFE_INTEGER),false);assert.equal(sim.debugGrantXp(Number.MAX_SAFE_INTEGER+1),false);assert.equal(sim.xp(),17);
-      // Wave tier is level/3 capped at 4.
-      while(sim.state.level<6){sim.debugGrantXp(1);drain();}assert.equal(sim.waveTier(),2);
+      // One live wave's plan is a snapshot: its budget is the authored curve for its wave number and
+      // every scheduled spawn joins that night, however the tier moves afterwards.
       sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,plan=wave.activePlan,budget=wave.threatBudget;assert.equal(budget,sim.waveThreatBudget(1));assert.equal(plan.entries.reduce((sum,entry)=>sum+entry.threatCost,0),budget);sim.update(.01);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber);sim.state.enemies.length=0;sim.update(.01);assert.equal(sim.state.clock.phase,"night","an early clear skipped later scheduled spawns");
-      sim.debugGrantXp(2000);drain();assert.equal(sim.waveTier(),4);assert.equal(wave.activePlan,plan,"active wave plan changed after leveling");assert.equal(wave.threatBudget,budget);
       while(wave.remainingSpawns>0){const next=plan.entries[wave.totalSpawns-wave.remainingSpawns];sim.update(Math.max(.001,next.at-wave.elapsed+.001));assert.equal(sim.state.enemies.length,1);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber,"scheduled enemy lost wave membership");sim.state.enemies.length=0;}assert.equal(wave.spawnedThreat,budget);
-      // The cap holds however far the level runs.
-      sim.debugGrantXp(2000000);drain();assert.ok(sim.state.level>=30);assert.equal(sim.waveTier(),4);
-      sim.validateSimulationInvariants();console.log(JSON.stringify({checks:37,waveSpawns:wave.totalSpawns,waveThreat:budget,level:sim.state.level}));
+      // WAVE TIER = floor(nights begun / 2), capped at 4. Each forced night pays its dawn buff, which
+      // is drained so the world keeps moving; nothing about the base or the hand may move the tier.
+      const night=()=>{sim.debugGoToPhase("night");sim.state.enemies.length=0;sim.debugGoToPhase("day");drain();sim.state.enemies.length=0;};
+      assert.equal(sim.state.nightWave.nightNumber,1,"the debug wave runs inside the first night");
+      sim.debugGoToPhase("day");drain();
+      assert.equal(sim.waveTier(),0,"one night survived is still tier 0");
+      night();assert.equal(sim.waveTier(),1,"the second night must open the tier-1 pools");
+      night();night();assert.equal(sim.waveTier(),2,"the fourth night must open the tier-2 pools");
+      for(let i=0;i<10;i++)night();assert.equal(sim.waveTier(),4,"the tier must cap at 4 however long the run goes");
+      sim.validateSimulationInvariants();console.log(JSON.stringify({checks:37,waveSpawns:wave.totalSpawns,waveThreat:budget,nights:sim.state.nightWave.nightNumber}));
     `
   }).trim());
   const tierOneResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
       import assert from "node:assert/strict";import * as sim from "./src/game/simulation.js";
-      // Level 3 unlocks the healer pool; wave number—not level—owns its Threat Budget.
-      sim.initializeRunMode("normal");sim.debugGrantXp(22);assert.equal(sim.state.level,3);assert.equal(sim.waveTier(),1);sim.debugStartWave("healerEscort");assert.equal(sim.state.nightWave.activePlan.sourceId,"healerEscort");assert.equal(sim.state.nightWave.threatBudget,sim.waveThreatBudget(1));console.log(JSON.stringify({threat:sim.state.nightWave.threatBudget}));
+      // Two nights survived unlock the healer pool; the WAVE NUMBER — not the tier — owns its Threat Budget.
+      sim.initializeRunMode("normal");sim.debugRaiseMainBase();sim.DBG.invulnBase=true;
+      const drain=()=>{while(sim.draftPending())assert.equal(sim.chooseDraft(0),true);};
+      for(let i=0;i<2;i++){sim.debugGoToPhase("night");sim.state.enemies.length=0;sim.debugGoToPhase("day");drain();sim.state.enemies.length=0;}
+      assert.equal(sim.state.nightWave.nightNumber,2);assert.equal(sim.waveTier(),1);
+      sim.debugStartWave("healerEscort");assert.equal(sim.state.nightWave.activePlan.sourceId,"healerEscort");
+      assert.equal(sim.state.nightWave.threatBudget,sim.waveThreatBudget(sim.state.nightWave.nightNumber),"a debug wave must keep the authored budget of the night it runs in");
+      console.log(JSON.stringify({threat:sim.state.nightWave.threatBudget}));
     `
   }).trim());
   // A calm night measurably shrinks the NEXT wave, and only that one.
@@ -1378,6 +1779,7 @@ try{
       let seed=0x0ca1;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       try{
         sim.initializeRunMode("normal");
+        sim.debugRaiseMainBase();   // Skip the opening: these scenarios exercise the DAY/NIGHT game, so the base is stood up through the real path (no xp, like every free-cost completion).
         // A direct deal isolates play semantics from the chest/wave reward drafts.
         const drainOffers=()=>{while(sim.draftPending())sim.chooseDraft(0);};
         assert.equal(sim.debugDealCard("calmNight"),true);
@@ -1390,7 +1792,7 @@ try{
         sim.transitionPhase();const calm=sim.state.nightWave.threatBudget;
         assert.equal(calm,Math.max(1,Math.floor(plain*CARD_CONSUMABLES.calmNightFactor)));assert.ok(calm<plain);
         sim.transitionPhase();drainOffers();sim.transitionPhase();assert.equal(sim.state.nightWave.threatBudget,sim.waveThreatBudget(2),"the discount must not carry into a second night");
-        console.log(JSON.stringify({plain,calm,levels:sim.state.level}));
+        console.log(JSON.stringify({plain,calm,nights:sim.state.nightWave.nightNumber}));
       }finally{Math.random=old;}
     `
   }).trim());
@@ -1403,6 +1805,7 @@ try{
       let victories=0,continues=0;sim.connect({victory(){victories++;},victoryContinued(){continues++;}});
       const drain=()=>{while(sim.draftPending())sim.chooseDraft(0);};
       sim.initializeRunMode("normal");
+      sim.debugRaiseMainBase();   // Skip the opening: these scenarios exercise the DAY/NIGHT game, so the base is stood up through the real path (no xp, like every free-cost completion).
       for(let wave=1;wave<=WIN_WAVE;wave++){
         assert.equal(sim.state.clock.phase,"day");sim.transitionPhase();assert.equal(sim.state.nightWave.nightNumber,wave);
         if(wave<WIN_WAVE){sim.transitionPhase();drain();}
@@ -1427,7 +1830,7 @@ try{
       import {DAY_DURATION,NIGHT_ENEMY_CAP} from "./src/game/data.js";
       let seed=0xc1ea;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       try{
-        sim.initializeRunMode("normal");sim.DBG.invulnBase=true;
+        sim.initializeRunMode("normal");sim.debugRaiseMainBase();sim.DBG.invulnBase=true;
         sim.update(DAY_DURATION-1);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.remaining,1);sim.update(1);assert.equal(sim.state.clock.phase,"night","the day countdown did not reach dusk at 75 seconds");
         sim.debugStartWave("raiderRush");const wave=sim.state.nightWave,night=wave.activeNightNumber,scheduled=wave.totalSpawns;
         assert.equal(sim.state.clock.phase,"night");assert.equal(sim.state.clock.remaining,0);assert.ok(Number.isInteger(night)&&night>0);
@@ -1463,7 +1866,17 @@ try{
       const element=id=>elements.get(id)||elements.set(id,{id,textContent:"",hidden:false,style:{},dataset:{},children:[],classList:{toggle(){},contains(){return false;}},replaceChildren(){this.children.length=0;},appendChild(child){this.children.push(child);}}).get(id);
       globalThis.document={getElementById:element,createElement:()=>({textContent:""})};
       const {syncPhaseHud}=await import("./src/ui/hud.js");
-      sim.initializeRunMode("normal");sim.DBG.invulnBase=true;syncPhaseHud();
+      // The opening panel: a named phase, no countdown, no progress and no forecast list.
+      sim.initializeRunMode("normal");syncPhaseHud();
+      assert.equal(element("phaseName").textContent,"pre-wave");
+      assert.equal(element("phaseTime").textContent,"untimed","the pre-wave panel must not print a countdown");
+      assert.equal(element("phaseProgressFill").style.width,"0.00%");
+      assert.equal(element("forecastLabel").textContent,"first objective");
+      assert.match(element("forecastRemaining").textContent,/raise the main base/);
+      assert.equal(element("recipeSummary").children.length,0,"pre-wave must forecast no wave");
+      const preWaveRunTime=element("runTime").textContent;
+      sim.debugRaiseMainBase();sim.DBG.invulnBase=true;syncPhaseHud();
+      assert.equal(element("phaseName").textContent,"day 1");assert.ok(element("recipeSummary").children.length>0,"day must forecast the coming wave");
       assert.equal(element("phaseTime").textContent,"1:15");assert.equal(element("phaseProgressFill").style.width,"0.00%");
       sim.debugStartWave("raiderRush");sim.update(.01);syncPhaseHud();
       assert.match(element("phaseTime").textContent,/^elapsed 0:00$/);assert.match(element("forecastRemaining").textContent,/1 wave enemy alive · 11 scheduled spawns remaining/);assert.equal(element("phaseProgressFill").style.width,"0.00%");
@@ -1471,10 +1884,11 @@ try{
       assert.match(element("forecastRemaining").textContent,/1 wave enemy alive · 0 scheduled spawns remaining/);assert.equal(element("phaseProgressFill").style.width,"91.67%");
       sim.state.enemies.length=0;syncPhaseHud();assert.equal(element("forecastRemaining").textContent,"wave clear · 0 enemies alive · 0 scheduled spawns remaining");assert.equal(element("phaseProgressFill").style.width,"100.00%");const clear=element("phaseProgressFill").style.width;
       sim.update(1/60);syncPhaseHud();assert.equal(element("phaseName").textContent,"day 2");assert.equal(element("phaseTime").textContent,"1:15");
-      console.log(JSON.stringify({spawning:"1/11",survivor:"1/0",clear,day:element("phaseTime").textContent}));
+      console.log(JSON.stringify({spawning:"1/11",survivor:"1/0",clear,day:element("phaseTime").textContent,preWaveRunTime}));
     `
   }).trim());
   assert.equal(hudResult.spawning,"1/11");assert.equal(hudResult.survivor,"1/0");assert.equal(hudResult.clear,"100.00%");assert.equal(hudResult.day,"1:15");
+  assert.equal(hudResult.preWaveRunTime,"0:00","the pre-wave panel still reports elapsed run time");
   // A drafted buff must move a MEASURED number, not just a ledger entry.
   const buffResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
@@ -1482,7 +1896,7 @@ try{
       import {CARD_BUFFS} from "./src/game/data.js";
       let seed=0xb0ff;const old=Math.random;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/0x100000000);
       try{
-        sim.initializeRunMode("normal");sim.TUNE.chopTime=1;
+        sim.initializeRunMode("normal");sim.debugRaiseMainBase();sim.TUNE.chopTime=1;
         const tree=sim.trees[0];
         // Hold the same chop for a tenth of a second: the bar's fill IS the buffed rate.
         const fill=()=>{sim.setPointerWorld(tree.x,tree.y);sim.primaryPress();sim.update(.1);const progress=sim.chopProgress();sim.primaryRelease();return progress;};
@@ -1549,10 +1963,16 @@ try{
       const placementAnchor=(x,y)=>{const wanted=snapToCellCenter(x,y);if(sim.canPlace(wanted.x,wanted.y,sim.state.buildMode))return wanted;let best=null,bestDistance=Infinity;for(let cy=64;cy<data.H-64;cy+=data.CELL)for(let cx=64;cx<data.W-64;cx+=data.CELL)if(sim.canPlace(cx,cy,sim.state.buildMode)){const d=Math.hypot(cx-x,cy-y);if(d<bestDistance){best={x:cx,y:cy};bestDistance=d;}}assert.ok(best,"no land placement anchor");return best;};
       const place=(x,y)=>{const anchor=placementAnchor(x,y);sim.setPointerWorld(anchor.x,anchor.y);sim.primaryPress();sim.primaryRelease();return anchor;};
       try{
-        sim.initializeRunMode("normal");clearGround();
-        // 0 · the opening kit, and the debug command that takes it away again
-        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpHouse","bpTower"],"a normal run must open with workers and the first tower");
-        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpTower")),"targeting","a seeded card must play like any other");
+        sim.initializeRunMode("normal");
+        // 0 · the opening kit, and the debug command that takes it away again. One card opens a run;
+        // this block is about the HAND, so the base is stood up (which spends that card) and a
+        // drafted-style build is dealt in its place to prove a seeded card and a dealt one behave alike.
+        assert.deepEqual(sim.hand().map(entry=>entry.id),["bpMainBase"],"a normal run must open with the main base card alone");
+        assert.equal(sim.debugRaiseMainBase(),true);drain();
+        clearGround();
+        assert.deepEqual(sim.hand().map(entry=>entry.id),[],"standing the base must spend the opening card");
+        assert.equal(sim.debugDealCard("bpTower"),true);assert.equal(sim.debugDealCard("bpHouse"),true);
+        assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpTower")),"targeting","a dealt card must play like any other");
         assert.equal(sim.state.buildMode,"tower");assert.equal(sim.cancelBuildMode(),true);
         assert.equal(sim.debugClearHand(),2,"clearing the hand must report what it dropped");
         assert.deepEqual(sim.hand(),[],"debugClearHand must empty the hand");
@@ -1561,13 +1981,21 @@ try{
         assert.equal(sim.draftKind(),null);
         assert.equal(sim.playCard(0),false,"an empty hand plays nothing");assert.equal(sim.playCard(-1),false);assert.equal(sim.playCard(.5),false);
 
-        // 1 · level-up rewards are builds that enter the hand
-        sim.debugGrantXp(400);
-        const levelOffer=sim.draftPending();assert.ok(levelOffer);assert.equal(sim.draftKind(),"level");
-        assert.equal(levelOffer.every(id=>cardById[id].category==="build"),true,"level-up offered non-building loot");
-        const drafted=levelOffer[0],eventsBeforeBlueprint=handEvents;
-        assert.equal(sim.chooseDraft(0),true);assert.ok(held(drafted));
-        assert.ok(handEvents>eventsBeforeBlueprint,"a level blueprint should enter the hand");
+        // 1 · a base-level reward can be a BUILD, and a drafted build enters the hand. The pool is
+        // mixed (build+buff) since XP died, so the offer is redrawn until it shows one — the pool is
+        // majority builds, so this terminates immediately in practice.
+        let buildOffer=null,buildIndex=-1;
+        for(let attempt=0;attempt<40&&buildIndex<0;attempt++){
+          assert.equal(sim.debugQueueDraft("base"),true);
+          buildOffer=sim.draftPending();assert.ok(buildOffer);assert.equal(sim.draftKind(),"base");
+          assert.equal(buildOffer.every(id=>["build","buff"].includes(cardById[id].category)),true,"a base level offered loot outside the build+buff pool");
+          buildIndex=buildOffer.findIndex(id=>cardById[id].category==="build");
+          if(buildIndex<0)assert.equal(sim.chooseDraft(0),true);
+        }
+        assert.ok(buildIndex>=0,"the base-level pool never offered a build card");
+        const drafted=buildOffer[buildIndex],eventsBeforeBlueprint=handEvents;
+        assert.equal(sim.chooseDraft(buildIndex),true);assert.ok(held(drafted));
+        assert.ok(handEvents>eventsBeforeBlueprint,"a drafted blueprint should enter the hand");
         drain();assert.equal(sim.state.draftPaused,false);
 
         // 2 · dawn pays one permanent-buff pick and then releases the world
@@ -1710,9 +2138,9 @@ try{
           const before=sim.hand().length;
           let repeats=0,guardPool=0,seen=null;
           while(repeats<2&&guardPool++<900){
-            if(!sim.draftPending())sim.debugGrantXp(400);
+            if(!sim.draftPending())sim.debugQueueDraft("base");
             const offer=sim.draftPending();if(!offer)continue;
-            assert.equal(sim.draftKind(),"level","builds must come from XP rewards");
+            assert.equal(sim.draftKind(),"base","builds must come from base-level rewards");
             const at=seen===null?offer.findIndex(id=>cardById[id].category==="build"):offer.indexOf(seen);
             if(at<0){sim.chooseDraft(0);continue;}
             if(seen===null)seen=offer[at];
@@ -1797,7 +2225,7 @@ try{
     assert.ok(debuggerSource.includes("function buildCardDealer()"),"the dealer grid must be generated from the registry");
     assert.ok(debuggerSource.includes('bindBtn("vClearHand"'),"clear hand is unbound");
   }
-  assert.match(html,/id="vGroundSourcing" checked/);assert.match(html,/id="vBuilderSelfSupply" checked/);assert.match(html,/id="vBuilderRadius" min="60" max="1000" step="10" value="400"/);assert.match(html,/id="vFreeSearchRadius" min="100" max="1000" step="20" value="500"/,"markup default must agree with TUNE.freeSearchRadius");assert.ok(debuggerSource.includes('bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });'));assert.ok(debuggerSource.includes('bindV("vFreeSearchRadius", v => { TUNE.freeSearchRadius = v; }, v => v + "px")'));assert.ok(overlay.includes("workerOccupancyStatus(target)"));assert.ok(overlay.includes("workerOccupancyAt(state.mouse.x,state.mouse.y)"));assert.ok(overlay.includes("drawWorkerSlots(target,height,status)"));assert.ok(overlay.includes("state.workers.length>0||!!heldWorker()"));assert.match(overlay,/hollow circles are vacancies/);assert.match(overlay,/! vacant/);assert.ok(overlay.includes("const BUILD_JOB_ACCENT=css(PAL.jobBuild)"));assert.ok(overlay.includes("function drawBuilderLines()"),"the blueprint builder-link visualization must survive the free-worker rework");assert.ok(overlay.includes('hovered?.kind==="building"&&!hovered.object.complete'));assert.ok(overlay.includes('worker.job==="build"&&worker.jobTarget===site'));assert.equal(overlay.match(/if\(state\.runMode!=="normal"\)return/g)?.length,1);
+  assert.match(html,/id="vGroundSourcing" checked/);assert.match(html,/id="vBuilderSelfSupply" checked/);assert.match(html,/id="vBuilderRadius" min="60" max="1000" step="10" value="400"/);assert.match(html,/id="vFreeSearchRadius" min="100" max="1000" step="20" value="500"/,"markup default must agree with TUNE.freeSearchRadius");assert.ok(debuggerSource.includes('bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });'));assert.ok(debuggerSource.includes('bindV("vFreeSearchRadius", v => { TUNE.freeSearchRadius = v; }, v => v + "px")'));assert.ok(overlay.includes("workerOccupancyStatus(target)"));assert.ok(overlay.includes("workerOccupancyAt(state.mouse.x,state.mouse.y)"));assert.ok(overlay.includes("drawWorkerSlots(target,height,status)"));assert.ok(overlay.includes("state.workers.length>0||!!heldWorker()"));assert.match(overlay,/hollow circles are vacancies/);assert.ok(!overlay.includes("! vacant"),"the '! vacant' nag was removed by owner request — the worker-slot tray is the ONLY occupancy readout");assert.ok(overlay.includes("const BUILD_JOB_ACCENT=css(PAL.jobBuild)"));assert.ok(overlay.includes("function drawBuilderLines()"),"the blueprint builder-link visualization must survive the free-worker rework");assert.ok(overlay.includes('hovered?.kind==="building"&&!hovered.object.complete'));assert.ok(overlay.includes('worker.job==="build"&&worker.jobTarget===site'));assert.equal(overlay.match(/if\(state\.runMode!=="normal"\)return/g)?.length,1);
   // The guard-recruitment era is fully retired: no markup control, no debug flag, no loan-marker
   // coupling and no stale terminology may survive outside intentionally historical documentation.
   {
@@ -1826,11 +2254,11 @@ try{
     sim.update(dt);
     if(sim.state.clock.phase==="night"&&sim.state.nightWave.remainingSpawns===0&&sim.livingActiveWaveEnemies()>0)sim.debugClearEnemies();
     while(sim.draftPending()){
-      const kind=sim.draftKind();assert.ok(["level","dawn","consumable"].includes(kind),"a pending offer must name its kind");
+      const kind=sim.draftKind();assert.ok(["base","dawn","consumable"].includes(kind),"a pending offer must name its kind");
       let dawnPick=null,dawnStacksBefore=0;
       if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="buff"),true,"a dawn offer dealt something other than a permanent buff");dawnPick=sim.draftPending()[0];dawnStacksBefore=sim.buffStacks(dawnPick);}
       else if(kind==="consumable")assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="consumable"),true,"a consumable offer dealt something from another pool");
-      else assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="build"),true,"a level offer dealt something other than a build");
+      else assert.equal(sim.draftPending().every(id=>["build","buff"].includes(cardCatalog.cardById[id].category)),true,"a base offer dealt something outside the build+buff pool");
       assert.equal(sim.chooseDraft(0),true);
       if(dawnPick){assert.equal(sim.buffStacks(dawnPick),dawnStacksBefore+1,"dawn choice did not add a permanent buff stack");earnedDawnBuffStacks++;}
     }
@@ -1844,8 +2272,14 @@ try{
   assert.equal(sim.damageDummies.length,0);
   assert.equal(sim.showcaseProps.length,0);
 
-  // Feed levels and drain their drafts before checking the capped wave tier.
-  while(sim.state.level<12){sim.debugGrantXp(40);while(sim.draftPending())assert.equal(sim.chooseDraft(0),true);}
+  // Survive nights (the only thing that moves the tier now) and drain their dawn buffs before
+  // checking the cap.
+  sim.DBG.invulnBase=true;
+  while(sim.state.nightWave.nightNumber<12){
+    sim.debugGoToPhase("night");sim.state.enemies.length=0;
+    sim.debugGoToPhase("day");while(sim.draftPending())assert.equal(sim.chooseDraft(0),true);sim.state.enemies.length=0;
+  }
+  sim.DBG.invulnBase=false;
   assert.equal(sim.waveTier(),4);assert.equal(sim.state.draftPaused,false);
   sim.validateSimulationInvariants();
 
@@ -1864,9 +2298,14 @@ try{
         const check=()=>{sim.validateSimulationInvariants();assert.equal(sim.buildings.length,expected.buildings);assert.equal(sim.chests.length,expected.chests);assert.equal(sim.damageDummies.length,expected.dummies);assert.equal(sim.showcaseProps.length,expected.props);assert.equal(sim.state.enemies.length,expected.enemies);assert.equal(sim.state.workers.length,expected.workers);assert.equal(sim.state.enemies.every(e=>e.displayUnit&&e.waveNightNumber===undefined),true);assert.equal(sim.state.workers.every(w=>w.displayUnit),true);assert.equal(sim.state.nightWave.activeNightNumber,null);assert.equal(sim.livingActiveWaveEnemies(),0);const terrain=sim.terrainMetadata();assert.deepEqual([terrain.terrainCellSize,terrain.terrainCols,terrain.terrainRows],[16,data.W/16,data.H/16]);for(let terrainY=0;terrainY<terrain.terrainRows;terrainY++)for(let terrainX=0;terrainX<terrain.terrainCols;terrainX++)assert.equal(sim.terrainAtRasterCell(terrainX,terrainY),"land","showcase terrain must remain authored all-land");};
         check();
         const authoredEnemies=sim.state.enemies.map(enemy=>({enemy,x:enemy.x,y:enemy.y}));for(let i=0;i<4;i++)assert.equal(sim.spawnEnemy("raider"),undefined,"showcase spawn command changed its return contract");assert.equal(sim.spawnEnemy("brute"),undefined);assert.equal(sim.state.enemies.length,authoredEnemies.length,"showcase debugger spawn added a production enemy");assert.equal(sim.state.enemies.every((enemy,index)=>enemy===authoredEnemies[index].enemy&&enemy.x===authoredEnemies[index].x&&enemy.y===authoredEnemies[index].y),true,"showcase spawn command changed authored enemy identity or position");check();
-        assert.equal(sim.debugGrantXp(105),true);assert.equal(sim.xp(),105);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);check();
+        // The sandbox is never dealt cards: every reward queue refuses outside a normal run, and a
+        // rebuild leaves the draft ledger exactly as empty as it found it.
+        const emptyLedger={baseQueue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null};
+        const ledger=()=>({baseQueue:sim.state.draft.baseQueue,dawnQueue:sim.state.draft.dawnQueue,consumableQueue:sim.state.draft.consumableQueue,offer:sim.state.draft.offer,offerKind:sim.state.draft.offerKind});
+        for(const kind of ["base","dawn","consumable"])assert.equal(sim.debugQueueDraft(kind),false,"the showcase sandbox accepted a "+kind+" reward");
+        assert.deepEqual(ledger(),emptyLedger);assert.equal(sim.rebuildShowcase(),true);assert.deepEqual(ledger(),emptyLedger);check();
         const firstRevision=sim.showcaseLabels().revision;
-        for(let i=0;i<20;i++){sim.debugGrantXp(40);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);check();}
+        for(let i=0;i<20;i++){assert.equal(sim.rebuildShowcase(),true);assert.deepEqual(ledger(),emptyLedger);check();}
         assert.ok(sim.showcaseLabels().revision>firstRevision);
         const prop=sim.showcaseProps[0],origin={x:prop.x,y:prop.y};sim.setPointerWorld(prop.x,prop.y);sim.secondaryPress();assert.equal(sim.heldProp(),prop);sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();assert.equal(prop.x,origin.x);assert.equal(prop.y,origin.y);assert.equal(sim.showcaseProps.includes(prop),true);
         const fixtureChest=sim.chests[0],chestOrigin={x:fixtureChest.x,y:fixtureChest.y};sim.setPointerWorld(fixtureChest.x,fixtureChest.y);sim.secondaryPress();assert.equal(sim.heldChest(),fixtureChest);sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();assert.deepEqual({x:fixtureChest.x,y:fixtureChest.y},chestOrigin);assert.equal(sim.chests.includes(fixtureChest),true);
@@ -1891,10 +2330,26 @@ try{
   execFileSync(process.execPath,[join(root,"scripts/card-mechanics.test.mjs")],{cwd:root,stdio:"pipe"});
 
   // Palette law (src/render/palette.js header): every PAL albedo is one of the 32 SWATCH colours,
-  // so the quantizer (mode 1) never has to guess. Light roles multiply and are exempt. The
-  // off-palette census over src/render/models is informational — per-model inks migrate separately.
+  // so the quantizer (mode 1) never has to guess. Light roles multiply and are exempt.
+  //
+  // Three asserts, in the order the doctrine reads:
+  //   1. PAL ⊆ SWATCH.
+  //   2. OFF-PALETTE CENSUS = 0 over src/render/models. HARD since Aug 22, when the per-model inks
+  //      finished migrating (the reviewed/ casts were the last holdouts). A new model that hand-
+  //      picks a hex fails here, which is the point: the quantizer and the tone solves both assume
+  //      every authored albedo is already a swatch.
+  //      Only CODE counts — comments are stripped first, because these files carry long calibration
+  //      notes that quote the hexes they replaced, and a history note is not an authored colour.
+  //      A line that genuinely needs a non-swatch hex (a LIGHT colour, a hash seed) says so with a
+  //      `palette-exempt` marker in its own trailing comment; grep the marker to audit them.
+  //   3. ACTOR VALUE GATE. palette.js COLOUR THEORY: "value carries readability" — grayscale a
+  //      frame and every actor must be clearly lighter or darker than the ground under it. Encoded
+  //      as: OKLab L of every actor role differs from BOTH green1 (the lit clearing) and green2
+  //      (the forest-region tint) by >= .08. Fix a failure by re-mapping the ROLE — the swatches
+  //      are a parametric ramp (scripts/palette-ramp.mjs) and the ground owns that value band.
   const paletteResult=await(async()=>{
-    const {PAL,SWATCH,LIGHT_ROLES}=await import(pathToFileURL(join(root,"src/render/palette.js")).href);
+    const {PAL,SWATCH,LIGHT_ROLES,ENEMY_VARIANT_TINT}=await import(pathToFileURL(join(root,"src/render/palette.js")).href);
+    const {oklab}=await import(pathToFileURL(join(root,"scripts/palette-snap.mjs")).href);
     const swatches=new Set(Object.values(SWATCH));
     assert.equal(swatches.size,32,"SWATCH must hold exactly 32 distinct colours");
     for(const [role,value] of Object.entries(PAL)){
@@ -1902,18 +2357,58 @@ try{
       for(const hex of Array.isArray(value)?value:[value])
         assert.ok(swatches.has(hex),`PAL.${role} ${hex.toString(16)} is not a SWATCH colour`);
     }
-    let offPalette=0;const perFile=new Map();
+    // Enemy variant tint is palette vocabulary, not model ink, so it is checked here rather than by
+    // the file census below. Tiers are the join key with data.js ENEMY_VARIANT_BANDS: 1 is untinted.
+    assert.deepEqual(Object.keys(ENEMY_VARIANT_TINT).map(Number).sort(),[2,3]);
+    for(const [tier,pair] of Object.entries(ENEMY_VARIANT_TINT)){
+      assert.equal(pair.length,2,`ENEMY_VARIANT_TINT[${tier}] must name BOTH seam steps [hot, cool]`);
+      for(const hex of pair)
+        assert.ok(swatches.has(hex),`ENEMY_VARIANT_TINT[${tier}] ${hex.toString(16)} is not a SWATCH colour`);
+      // Monotone: the walls are darker than the core, or the two-step stops being a step.
+      assert.ok(oklab(pair[0])[0]>oklab(pair[1])[0],`ENEMY_VARIANT_TINT[${tier}] cool step is not darker than its core`);
+    }
+    // Block comments are blanked (newlines preserved so reported line numbers stay true), then any
+    // line carrying the exemption marker is dropped whole, then each line's // tail is cut.
+    const codeLines=src=>src.replace(/\/\*[\s\S]*?\*\//g,m=>m.replace(/[^\n]/g,"")).split("\n")
+      .map(line=>line.includes("palette-exempt")?"":line.split("//")[0]);
+    const offPalette=[];let scanned=0;
     for(const path of jsFiles){
       const rel=relative(root,path);
       if(!rel.startsWith("src/render/models/"))continue;   // where per-model ink lives
-      const hits=(readFileSync(path,"utf8").match(/0x[0-9a-fA-F]{6}\b/g)||[])
-        .map(h=>parseInt(h,16)).filter(h=>!swatches.has(h)&&h!==0xffffff&&h!==0x000000);
-      if(hits.length){offPalette+=hits.length;perFile.set(rel,hits.length);}
+      scanned++;
+      codeLines(readFileSync(path,"utf8")).forEach((line,i)=>{
+        for(const tok of line.match(/0x[0-9a-fA-F]{6}\b/g)||[]){
+          const hex=parseInt(tok,16);
+          if(swatches.has(hex)||hex===0xffffff||hex===0x000000)continue;
+          offPalette.push(`${rel}:${i+1} ${tok}`);
+        }
+      });
     }
-    return {roles:Object.keys(PAL).length,offPalette,files:perFile.size};
+    assert.equal(offPalette.length,0,
+      `off-palette literals in src/render/models (use a SWATCH, or mark the line palette-exempt):\n  ${offPalette.join("\n  ")}`);
+    // Actors: units, enemies, buildings, pickups — everything that stands ON the ground.
+    // Enemy CAPS are deliberately absent: enemy-shard.js normalises every enemy swatch to
+    // luminance 1 and takes value from its own PLANE ramp, so a cap swatch's own L never reaches the
+    // screen (archerCap red1 would fail this gate and renders as a dark orange fin regardless).
+    // The BODY roles are listed because they are what a grayscale frame reads as the creature.
+    const ACTOR_ROLES=["skin","coat","jobHaul","jobBuild","jobGuard",
+                       "raider","archer","healer","brute","bomber",
+                       "timber","roof","masonry","coin","diamond",
+                       "chestTimber","chestFrame","chestLatch"];
+    const GROUND_L=[oklab(SWATCH.green1)[0],oklab(SWATCH.green2)[0]];
+    const VALUE_GAP=0.08;
+    const collisions=[];
+    for(const role of ACTOR_ROLES){
+      const L=oklab(PAL[role])[0];
+      const gap=Math.min(...GROUND_L.map(g=>Math.abs(L-g)));
+      if(gap<VALUE_GAP)collisions.push(`PAL.${role} L=${L.toFixed(3)} is only ${gap.toFixed(3)} from the ground ramp`);
+    }
+    assert.equal(collisions.length,0,
+      `actor roles inside the ground's value band (palette.js COLOUR THEORY):\n  ${collisions.join("\n  ")}`);
+    return {roles:Object.keys(PAL).length,files:scanned,actors:ACTOR_ROLES.length};
   })();
 
-  console.log(`validate ok | syntax ${jsFiles.length} | palette ${paletteResult.roles} roles on 32 swatches, ${paletteResult.offPalette} off-palette literals in ${paletteResult.files} model files | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level wave threat ${tierOneResult.threat}/${xpResult.waveThreat} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | labels ${showcaseResult.labels}`);
+  console.log(`validate ok | syntax ${jsFiles.length} | palette ${paletteResult.roles} roles on 32 swatches, 0 off-palette in ${paletteResult.files} model files, ${paletteResult.actors} actors clear of the ground band | main base ${mainBaseResult.levels} authored levels, ${mainBaseResult.jobSlots} hauler limit | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+draftResult.checks+chestResult.checks+handResult.checks} checks | wave threat ${tierOneResult.threat}/${draftResult.waveThreat} after ${draftResult.nights} nights | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

@@ -38,23 +38,34 @@
 // position in models.js) is therefore never captured and never restored, so an animated worker
 // cannot teleport to world origin. assertNoRoot() below makes that structural, not a comment.
 import * as THREE from "three";
+import {SWATCH as S} from "../../palette.js";
 
 // ── palette (five-hue unit coding — judged BETTER than the reference; do not drift) ─────────
+// Aug 22 migration: the five hues survive, the hexes do not — every ink is a shared swatch
+// (palette.js SWATCH). OKLab-nearest (scripts/palette-snap.mjs) picked most of them; the COAT
+// values were pulled DOWN a step by hand because a worker is an actor on the meadow and
+// palette.js COLOUR THEORY requires its value to clear SWATCH.green1/green2 by a visible margin.
+// Nearest for the old tan coat (0xbd9455) and the old olive coat (0xb09a55) was literally
+// green1 — the grass — which is the exact collision the doctrine forbids, so the coats went dark
+// (wood1 / green4) and hue keeps doing the job-coding. Values, top to bottom:
+//   skin stone0 .85 · build red0 .84 · haul blue2 .52 · guard grey0 .52 · carrier wood1 .50 ·
+//   gatherer green4 .45  — all ≥ .10 OKLab-L clear of the lit meadow (green1 .72).
 const C = {
-  skin: 0xe6cfa2,          // warm cream — still 3+ value steps above every coat, but pulled
+  skin: S.stone0,          // warm cream — still 3+ value steps above every coat, but pulled
                            // off near-white so the face reads as a HEAD, not a lamp
-  coat: 0xbd9455,          // tan carrier
-  hoodTan: 0x8f6a40,       // richer brown cowl for the tan units
-  jobHaul: 0x5f87ab,       // denim blue
-  jobBuild: 0xdf9c30,      // marigold
-  jobGuard: 0x87684a,      // chocolate, lifted a touch
-  hat: 0x6f4930, strapDark: 0x4e3826,
-  blade: 0xded8c9, metal: 0xbdb7ab, metalDark: 0x6b6660,
-  trunk: 0x6b4a2e, wood: 0xb98a4e, timberDark: 0x5c4a38,
-  haft: 0x4a3222,          // warm dark brown — NOT the near-black v15 used, which read as an
+  coat: S.wood1,           // tan carrier
+  hoodTan: S.wood2,        // richer brown cowl for the tan units
+  jobHaul: S.blue2,        // denim blue
+  jobBuild: S.red0,        // marigold
+  jobGuard: S.grey0,       // chocolate, lifted a touch
+  coatOlive: S.green4, hoodOlive: S.teal0,   // gatherer: olive cowl over olive, both under the meadow
+  hat: S.wood1, strapDark: S.wood2,
+  blade: S.stone0, metal: S.stone1, metalDark: S.grey0,
+  trunk: S.wood2, wood: S.wood0, timberDark: S.wood2,
+  haft: S.wood2,           // warm dark brown — NOT the near-black v15 used, which read as an
                            // outline artifact rather than a wooden handle
-  eye: 0x27201a,
-  barkLog: 0xa46f3e, logCap: 0xe9d6a8, logRing: 0x7c4f2c,   // cream end-grain so "logs" read at range
+  eye: S.shade2,
+  barkLog: S.wood0, logCap: S.cream0, logRing: S.wood1,   // cream end-grain so "logs" read at range
 };
 const shade = (hex, f) => new THREE.Color(hex).multiplyScalar(f).getHex();
 const mat = hex => new THREE.MeshLambertMaterial({ color: hex, flatShading: true });
@@ -261,9 +272,9 @@ function buildBrimGeo() {
       triOut(p, P[k], Q[l], Q[k], ctr);
     }
   }
-  for (const [S, sgn] of [[stations[0], -1], [stations[stations.length - 1], 1]]) {
-    const ctr = [S[0][0] + sgn * 2, (S[0][1] + S[1][1] + S[2][1]) / 3, (S[0][2] + S[1][2] + S[2][2]) / 3];
-    triOut(p, S[0], S[1], S[2], ctr);
+  for (const [cap, sgn] of [[stations[0], -1], [stations[stations.length - 1], 1]]) {
+    const ctr = [cap[0][0] + sgn * 2, (cap[0][1] + cap[1][1] + cap[2][1]) / 3, (cap[0][2] + cap[1][2] + cap[2][2]) / 3];
+    triOut(p, cap[0], cap[1], cap[2], ctr);
   }
   return geoFrom([[p, 0]]);
 }
@@ -338,7 +349,7 @@ function buildAxe() {
   // as an ink outline, not a handle) and the cheek is dark metal, so bit / beard / poll / haft
   // are four separate values against the tan coat.
   const axe = new THREE.Group(); axe.name = "axe";
-  const cheekSteel = 0x6b6660, bitSteel = 0xcfc8b7, steelEdge = 0xfbf8ef;
+  const cheekSteel = C.metalDark, bitSteel = C.blade, steelEdge = S.cream0;
   const handle = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.25, 14.5, 6), mat(C.haft));
   handle.name = "haft";
   axe.add(handle);
@@ -440,9 +451,9 @@ function buildHammer() {
   handle.position.y = -4.0;
   h.add(handle);
   const head = new THREE.Group(); head.name = "hammerHead";
-  head.add(new THREE.Mesh(new THREE.BoxGeometry(4.7, 2.6, 2.5), mat(0x8a847a)));
+  head.add(new THREE.Mesh(new THREE.BoxGeometry(4.7, 2.6, 2.5), mat(S.stone2)));
   for (const s of [-1, 1]) {                       // pale striking faces on BOTH ends
-    const face = new THREE.Mesh(new THREE.BoxGeometry(0.85, 3.0, 2.9), mat(0xd6d0c1));
+    const face = new THREE.Mesh(new THREE.BoxGeometry(0.85, 3.0, 2.9), mat(S.stone0));
     face.position.x = s * 2.55;
     head.add(face);
   }
@@ -454,16 +465,16 @@ function buildShield() {
   // its back entirely at yaw 180 and read as a warped orange crescent hugging the torso.
   const s = new THREE.Group(); s.name = "shield";
   const N = 10, R = 5.85, T = 1.90;
-  const boards = new THREE.Mesh(new THREE.CylinderGeometry(R, R, T, N), mat(0xbc6f3d));
+  const boards = new THREE.Mesh(new THREE.CylinderGeometry(R, R, T, N), mat(S.wood0));
   boards.rotation.x = Math.PI / 2;
   s.add(boards);
   for (const z of [T / 2 - 0.10, -T / 2 + 0.10]) {       // rim ring proud on BOTH faces
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(R - 0.20, 0.62, 4, N), mat(0xd0964f));
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(R - 0.20, 0.62, 4, N), mat(S.cream1));
     rim.position.z = z;
     s.add(rim);
   }
   for (const y of [-2.85, 0, 2.85]) {                    // three plank divisions across the face
-    const seam = new THREE.Mesh(new THREE.BoxGeometry(11.4, 0.42, 0.34), mat(0x8e4d27));
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(11.4, 0.42, 0.34), mat(S.wood1));
     seam.position.set(0, y, T / 2 + 0.02);
     s.add(seam);
   }
@@ -637,7 +648,7 @@ const CAM = { dist: 118, height: 22, target: 14 };
 // gatherer — olive cowl over tan, big bearded axe slung across the back
 MODELS["worker-gatherer"] = {
   cam: CAM,
-  build: () => assemble(0xb09a55, (body, parts) => {
+  build: () => assemble(C.coatOlive, (body, parts) => {
     chestStrap(body);
     seat(body, 4.6, 9.0, -5.4);
     const axe = buildAxe();
@@ -646,7 +657,7 @@ MODELS["worker-gatherer"] = {
     body.add(axe);
     parts.axe = axe;
     parts.axeHead = axe.getObjectByName("axeHead");
-  }, 0x525f30, { brimWide: true }),
+  }, C.hoodOlive, { brimWide: true }),
   anims: {
     idle, walk, carryLag,
     // v16 re-author. v15 was a uniform rigid tilt: the torso folded 0.64 rad and vanished behind
@@ -740,14 +751,14 @@ MODELS["worker-builder"] = {
     hammer.rotation.set(0.05, 0.36, 0.20);
     body.add(hammer);
     parts.hammer = hammer;
-  }, 0x5a4028, { brimWide: true }),
+  }, C.hoodTan, { brimWide: true }),
   anims: { idle, walk, carryLag },
 };
 
 // guard — chocolate cowl, warm shield with a light metal boss, tall spear seated at the hip
 MODELS["worker-guard"] = {
   cam: CAM,
-  build: () => assemble(0x8f7050, (body, parts) => {
+  build: () => assemble(C.jobGuard, (body, parts) => {
     const shield = buildShield();
     shield.position.set(6.75, 10.5, -3.40);  // on the flank, clear of the cape's skirt
     shield.rotation.set(0.05, 0.98, 0.06);
@@ -758,7 +769,7 @@ MODELS["worker-guard"] = {
     spear.rotation.set(0.20, 0, -0.30);
     body.add(spear);
     parts.shield = shield; parts.spear = spear;
-  }, 0x5b4230),
+  }, C.hoodTan),
   anims: {
     idle, walk, carryLag,
     jab(g, p, t) {

@@ -1,9 +1,9 @@
 // Owns: the tower building body. build(g, add) hangs parts via add() and may set
-// userData hooks; buildings/index.js adds the footprint pad, parts list and static bake after.
+// userData hooks; buildings/index.js adds the parts list and static bake after.
 // userData contract: userData.roof (variant accent target).
 import * as THREE from "three";
 import {PAL} from "../../palette.js";
-import {flat, meshOf, FLOOR_TOP} from "../kit.js";
+import {flat, meshOf, GROUND_Y} from "../kit.js";
 
 export function build(g, add){
   // The basic chassis owns the silhouette shared by every permanent tower variant. Keep it
@@ -24,7 +24,7 @@ export function build(g, add){
   ];
   stones.forEach(([x,z,w,h,d,turn],i)=>{
     const stone=add(meshOf(new THREE.BoxGeometry(w,h,d),flat(i%3===1?PAL.rockDark:PAL.rock)));
-    stone.position.set(x,FLOOR_TOP+h/2,z);stone.rotation.y=turn;
+    stone.position.set(x,GROUND_Y+h/2,z);stone.rotation.y=turn;
   });
 
   // Four wide-set, slightly irregular legs; crossed beams carry the load on every face.

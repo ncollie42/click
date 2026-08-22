@@ -19,9 +19,13 @@ export const MAP_TILES=(()=>{
 })();
 export const W=1536*MAP_TILES,H=1024*MAP_TILES;
 
-// ── the base ────────────────────────────────────────────────────────────────
+// ── the base anchor ─────────────────────────────────────────────────────────
 // Authored anchor, radius and reserved footprint. Not run state: base HEALTH is
 // state.baseHp/baseMax in simulation.js, and nothing ever writes x/y/r/footprint.
+// BASE is SPACE ONLY. Everything the built structure decides — health, storage reach, slots,
+// attack, authored levels — lives in MAIN_BASE / MAIN_BASE_LEVELS further down, just above BUILDING_TYPES.
+// The split is deliberate: the base becomes player-built, but WHERE it stands never moves, so the
+// map-centre anchor and its 3x3 reservation exist from world load whether a base stands on it or not.
 // Its anchor is already a cell center, so the 3x3 is symmetric around it. The base reserves cells
 // exactly like a placed building - no keep-out circle, no special case in canPlace().
 // `footprint` is attached below, once FOOTPRINT_3x3 exists; nothing else ever writes this object.
@@ -97,13 +101,8 @@ export const CHEST=Object.freeze({
   // scales with map size (3 on the default 1-tile map, 15 on the full map), editor untouched.
   scatterPerTile:3,
 });
-// Per-unit XP value of each resource in a completed building's cost. Construction completion is
-// the ONLY XP source (grantXp in simulation.js): depositing at the base just stores resources.
-// Read only by simulation.js; no runtime path may assign into this table.
-export const RESOURCE_XP={wood:1,stone:1,dust:5,coin:5,diamond:12};
-// THE level curve: going from level n to n+1 costs base*growth**n xp. docs/progression-spec.js
-// re-exports this table, so the design docs and the game can never quote different numbers.
-export const LEVEL_CURVE={base:6,growth:1.19};
+// XP RETIRED Aug 22: RESOURCE_XP / LEVEL_CURVE lived here and paid a player level per completed
+// building. Progression is now MAIN_BASE_LEVELS below — the only authored ladder in the run.
 
 // Closed target policy shared by every authored damage source. Callers choose one supported
 // combination rather than passing ad-hoc booleans that silently invent friendly-fire semantics.
@@ -182,6 +181,52 @@ export const WORKER_LEASH=150,WORKER_MELEE=24,WORKER_SPEED=52,WORKER_HP=5,WORKER
 // updateGatherer in simulation.js.
 export const STAFF_GATHER=Object.freeze({cooldownFactor:.5,yield:1});
 
+// ── the main base ───────────────────────────────────────────────────────────
+// The player-BUILT defensive base that replaces the always-present castle. The world now BOOTS
+// WITHOUT IT: the run opens in the untimed "pre-wave" clock state, the bpMainBase card raises the
+// one site on the BASE anchor, and finishing it (level-1 recipe below) starts day 1. The BUILDING_TYPES
+// row `mainBase` under this block is the ordinary construction record that path travels; base
+// levelling, base combat and base hauling arrive in later steps.
+//
+// state.baseLevel (simulation.js) is the live counterpart of this list: 0 while nothing stands,
+// then the authored `level` of the entry the base has reached. Nothing else may claim the base is up.
+//
+// LEVELS ARE AUTHORED, NOT A CURVE. Each entry is one hand-priced upgrade, and the list simply
+// ENDS: level MAIN_BASE_LEVELS.length is the maximum, and no consumer may extrapolate a level 4
+// cost by extending a pattern.
+//
+// THE run's only progression ladder. The XP level (state.level / LEVEL_CURVE / RESOURCE_XP) was
+// deleted Aug 22; state.baseLevel is what "how far along is this run" means now, and each level
+// completed pays exactly one draft.
+const freezeMainBaseLevel=entry=>Object.freeze({...entry,cost:Object.freeze({...entry.cost})});
+export const MAIN_BASE_LEVELS=Object.freeze([
+  {level:1,cost:{wood:10}},
+  {level:2,cost:{stone:10}},
+  {level:3,cost:{wood:10,stone:10}}
+].map(freezeMainBaseLevel));
+
+// What the built structure owns, so no other module restates a base number:
+//   maxHp         health of the standing base (state.baseHp/baseMax), the pool the baseHp card grows.
+//   storageRadius the base's storage service reach — the circle BASE_ZONE already draws, kept as
+//                 one number so "base storage covers this drop" has a single definition.
+//   buildSlots    construction staffing of the base SITE, exactly like a BUILDING_TYPES row.
+//   jobSlots      Worker Limit of the COMPLETED base (CONTEXT.md "Worker Limit"): at most two
+//                 haulers may be posted to it. THE authority — deliberately not restated as a
+//                 BUILDING_TYPES.mainBase field, because the completed base's post is the BASE
+//                 anchor, not the leftover construction record (see that row's note below).
+//   range/damage/rate/damageTargetType  the base's own attack, fired by updateBaseAttack() in
+//                 simulation.js. 95 / 2 / .85 are the numbers the retired king used to fire with:
+//                 handing the map centre's defence to the base changed WHO shoots, never how hard.
+//   cost          level-1 construction cost. REFERENCES the recipe list — the price of standing a
+//                 base up and the price of its first authored level are the same authored object,
+//                 never two literals that can drift apart.
+//   maxLevel      derived from the authored list so the "no extrapolation" rule has a number.
+export const MAIN_BASE=Object.freeze({
+  maxHp:100,storageRadius:BASE_ZONE,buildSlots:2,jobSlots:2,
+  range:95,damage:2,rate:.85,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,
+  cost:MAIN_BASE_LEVELS[0].cost,maxLevel:MAIN_BASE_LEVELS.length
+});
+
 // ── buildings ───────────────────────────────────────────────────────────────
 // Every entry carries an explicit `footprint` (odd cells, anchor-centered). Work camps, the
 // houses, tower chassis, capture yards, and tar pits are persistent 3x3s; ordinary buildings/deployables
@@ -191,6 +236,16 @@ export const STAFF_GATHER=Object.freeze({cooldownFactor:.5,yield:1});
 // row owns a number, including zero for instant/target-only records that never become blueprints.
 // `jobSlots` independently controls permanent staffing after completion; absence means zero.
 export const BUILDING_TYPES = {
+  // The main base's CONSTRUCTION record — every number is read from MAIN_BASE above or from the
+  // BASE anchor, never restated, so the site and the structure can never disagree. It exists so the
+  // base can travel the ordinary card → site → delivery → completion path with no special case.
+  // Deliberately NO jobSlots, permanently. This row describes the SITE. The completed base's
+  // Worker Limit is MAIN_BASE.jobSlots, and its runtime post is the BASE anchor — the same object
+  // storage, hover and enemy targeting already use — not this record, which is ordinary
+  // construction that headless harnesses routinely clear. Authoring jobSlots here would create a
+  // second, competing two-slot pool at the same coordinates. simulation.js reads MAIN_BASE.jobSlots
+  // in workerOccupancyStatus(BASE); builtJobAssignment() maps this record onto BASE for inheritance.
+  mainBase:{name:"main base",resource:null,cost:MAIN_BASE.cost,buildSlots:MAIN_BASE.buildSlots,footprint:BASE.footprint},
   // Work buildings, not sources: camps/quarries grow nothing (renewable growth deleted Aug 20).
   // Their whole value is jobSlots working WILD nodes inside serviceRadius at the STAFF_GATHER
   // rate, so placement beside a real forest/rockfield is the decision being made.
@@ -272,22 +327,27 @@ const ENEMY_ARCHETYPES={
   bomber:{hp:3,speed:60,damage:5,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:46,rate:2.5,size:.9,fuseTime:.9,blastRadius:70,weightTag:"light",threatCost:2,spawnWeight:5},
   brute:{hp:12,speed:28,damage:5,damageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,range:43,rate:1.4,size:1.35,weightTag:"heavy",threatCost:4,spawnWeight:3}
 };
+// Stat multipliers only. The band carried a `color` hex until Aug 22 ("#3568a8" veteran /
+// "#a23e50" elite); both were off-palette and the blue one spent the ALLIES' accent colour on an
+// enemy. Colour is render vocabulary and this is the game layer, so the tier is all that crosses:
+// render/palette.js ENEMY_VARIANT_TINT maps tier -> swatch and render/models/units/enemy.js applies
+// it. Keep `tier` stable — it is the join key.
 const ENEMY_VARIANT_BANDS=Object.freeze([
-  Object.freeze({suffix:"",label:"",tier:1,minWave:1,hp:1,speed:1,damage:1,rate:1,cost:1,weight:1,color:null}),
-  Object.freeze({suffix:"Veteran",label:"veteran ",tier:2,minWave:4,hp:1.6,speed:1.08,damage:1.5,rate:.9,cost:2,weight:.4,color:"#3568a8"}),
-  Object.freeze({suffix:"Elite",label:"elite ",tier:3,minWave:7,hp:2.5,speed:1.15,damage:2.5,rate:.8,cost:4,weight:.2,color:"#a23e50"})
+  Object.freeze({suffix:"",label:"",tier:1,minWave:1,hp:1,speed:1,damage:1,rate:1,cost:1,weight:1}),
+  Object.freeze({suffix:"Veteran",label:"veteran ",tier:2,minWave:4,hp:1.6,speed:1.08,damage:1.5,rate:.9,cost:2,weight:.4}),
+  Object.freeze({suffix:"Elite",label:"elite ",tier:3,minWave:7,hp:2.5,speed:1.15,damage:2.5,rate:.8,cost:4,weight:.2})
 ]);
 const enemyVariants={};
 for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of ENEMY_VARIANT_BANDS){
   const id=archetype+band.suffix;
-  enemyVariants[id]=Object.freeze({...base,name:band.label+archetype,archetype,variantTier:band.tier,variantColor:band.color,minWave:band.minWave,
+  enemyVariants[id]=Object.freeze({...base,name:band.label+archetype,archetype,variantTier:band.tier,minWave:band.minWave,
     hp:Math.ceil(base.hp*band.hp),speed:Math.round(base.speed*band.speed),damage:Math.ceil(base.damage*band.damage),
     rate:base.rate===0?0:Number((base.rate*band.rate).toFixed(2)),...(base.healAmount?{healAmount:Math.ceil(base.healAmount*band.damage),healRate:Number((base.healRate*band.rate).toFixed(2))}:{}),
     threatCost:base.threatCost*band.cost,spawnWeight:base.spawnWeight*band.weight});
 }
 // One authored boss for now: brute behavior/model, but a 4× render/collision scale and fixed boss
 // stats. It is not a weighted variant; WAVE_BOSS_SPAWNS authors every scheduled appearance.
-enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantColor:null,minWave:5,
+enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantTier:1,minWave:5,
   // The 4× model's visible ground ring reaches about 200 simulation pixels. Every walking contact
   // uses that same radius. Owner nerf Aug 20: hp halved 500→250, melee swing 60→10 — the boss is
   // pressure and presence, not an instant base-delete.
@@ -325,9 +385,6 @@ export const NIGHT_WAVE_RECIPES=Object.freeze([
 // ── day / night pacing ──────────────────────────────────────────────────────
 export const DAY_DURATION=75;
 export const NIGHT_OVERLAY_ALPHA=.28,LIGHT_FADE_TIME=6;
-
-// ── the king ────────────────────────────────────────────────────────────────
-export const KING={range:95,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,rate:.85};
 
 // ── player feel ─────────────────────────────────────────────────────────────
 // Only the constants the view debugger can NEVER write live here. The tunable

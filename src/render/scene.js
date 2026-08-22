@@ -25,19 +25,19 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
 import {configurePipelines, renderFrame, resizePipeline} from "./pipelines/index.js";
-import {initLightMods, applyLightingMods, syncLightMods, setToneTargets} from "./material-light-mods.js";
-import {PAL, css, TOWER_TOP, TONES} from "./palette.js";
-import {SUN_INTENSITY, SUN_NDOTL, HEMI_INTENSITY} from "./rig.js";
+import {initLightMods, applyLightingMods, syncLightMods, setToneTargets, setNightTone} from "./material-light-mods.js";
+import {PAL, SWATCH, css, TOWER_TOP, TONES} from "./palette.js";
+import {SUN_INTENSITY, HEMI_INTENSITY, NIGHT_SUN_SCALE, TONE_RIG, TONE_RIG_NIGHT} from "./rig.js";
 import {
-  S,WU,HU,gx,gz, flat, meshOf, isOutline, disposeGroup, FLOOR_TOP,
-  makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeCorpse, makeGrassTuftGeometry,
+  S,WU,HU,gx,gz, flat, meshOf, isOutline, disposeGroup, GROUND_Y,
+  makeTree, makeRock, makeDiamond, makeDrop, makeEnemy, makeCorpse,
   makeChest, makeDamageDummy, makeShowcaseProp,
-  makeMainBase, makePegWorker, makeKing, makeBuilding, makeBlueprint, handMeshFor,
+  makePegWorker, makeBuilding, makeBlueprint, handMeshFor,
   outlineMat, outlineMatPx, adoptOutlineShell, releaseOutlineShell
 } from "./models.js";
 import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,
-  CELL,GRID_COLS,GRID_ROWS,FOG,
+  CELL,GRID_COLS,GRID_ROWS,FOG,NIGHT_OVERLAY_ALPHA,
   FOOTPRINT_1x1,FOOTPRINT_3x3,
   RESOURCE_KINDS,
   WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_LEASH,
@@ -52,12 +52,13 @@ import {
 } from "../game/grid.js";
 import {
   TUNE, state,
-  trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs, fallingMeteors, fallingFireballs,
+  trees, rocks, diamonds, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, lightningArcs, fallingMeteors, fallingFireballs,
   fogMetadata, fogAtPoint, footprintFogFree,
   badgeAction, hoveredBuilding, captureYardOccupancy, durablePostStatus,
   canPlace, indicatorRadius, towerVariant, storageServiceRadius, workerAssignmentAt,
+  mainBaseStanding,
   heldWorker, heldEnemy, heldBuilding, heldChest, heldProp, workerLoad,
-  vacuumRadius,terrainAtRasterCell,terrainMetadata,terrainRaisedAtCell,vegetationMetadata,
+  vacuumRadius,terrainAtRasterCell,terrainMetadata,terrainRaisedAtCell,
   clamp, distance, setCameraZoom, ZOOM_LIMITS
 } from "../game/simulation.js";
 import {LAND, TERRAIN_CELL_SIZE} from "../game/authored-map.js";
@@ -101,6 +102,9 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
+// PAL.sky is SWATCH.shade2, the FLOOR of the shade bridge — already the night end of the palette,
+// so the night tier deliberately leaves it alone: as the world falls toward shade1/shade2 the
+// background stops being a void the map floats in and joins the same family. Nothing to lerp.
 scene.background = new THREE.Color(PAL.sky);
 
 // Constructor values are placeholders: placeCamera() owns fov/near/far every frame.
@@ -247,6 +251,10 @@ export function combatTargetOnScreen(target){
 const sky = new THREE.HemisphereLight(PAL.skyLight, PAL.bounce, HEMI_INTENSITY);
 scene.add(sky);
 const sun = new THREE.DirectionalLight(PAL.sunDay, 1.5);
+// The two key-light colours drawScene lerps between (in three's linear working space, which is the
+// space rig.js's tone solves are written in). The hemi pair is NOT part of the day/night lerp —
+// see the NIGHT block in rig.js for why every mirror of HEMI_INTENSITY depends on that.
+const SUN_DAY_COLOR = new THREE.Color(PAL.sunDay), SUN_NIGHT_COLOR = new THREE.Color(PAL.sunNight);
 // The key light's direction as az/el (az 0 = +X/screen-right, positive toward +Z; el up).
 // az 0 / el 60 = the test-scene owner default: high sun from screen-right, short skirts.
 // The R panel's "camera / sun" section mutates this. Day/night still owns intensity/colour.
@@ -271,7 +279,13 @@ sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 400;
 sun.shadow.bias = -0.0006;
 sun.shadow.normalBias = 0.035;
-sun.shadow.radius = 8;   // PCF blur kernel, tools/test-scene/preset.js SUN.shadow.radius
+// PCF blur kernel. 8 → 3 (Aug 22): the 8 came from the test scene, when shade was whatever the
+// hemi happened to produce and a wide blur hid the transition. Shade is now an AUTHORED swatch
+// (TONES.*), so the penumbra is a straight ramp between two palette colours — a wide one just
+// smears in-between tones the quantizer then has to band. 3 keeps a 1-2 px feather at gameplay
+// zoom (the reference's canopy shadows are crisp with a hint of softness) without the stair-step
+// aliasing radius 0-1 gives on a 2048 map. Live slider stays (R panel "shadow blur").
+sun.shadow.radius = 3;
 scene.add(sun, sun.target);
 
 // ─────────────────────────────────────────────────────────── terrain
@@ -291,12 +305,44 @@ grassTex.magFilter=grassTex.minFilter=THREE.NearestFilter;grassTex.generateMipma
 grassTex.flipY=false;   // uv.v = 1 - z/HU (pushTopPolygon), so texel row r ↔ z = HU·(1 - (r+.5)/PATCH_H)
 const landMat=flat(0xffffff,{map:grassTex,vertexColors:true});
 // The meadow's authored tones (palette.js TONES.meadow), solved into the material's direct/indirect
-// tints by material-light-mods. Rig numbers come from rig.js — the same ones the lights below use.
-const TONE_RIG={sunColor:PAL.sunDay,sunIntensity:SUN_INTENSITY,ndotl:SUN_NDOTL,skyColor:PAL.skyLight,hemiIntensity:HEMI_INTENSITY};
-setToneTargets(landMat,{...TONES.meadow,rig:TONE_RIG});
+// tints by material-light-mods. Both rigs come from rig.js — the same numbers the lights below use,
+// and TONES.meadow.night is the swatch pair the clock lerps to (drawScene's uLmNight).
+setToneTargets(landMat,{...TONES.meadow,rig:TONE_RIG,nightRig:TONE_RIG_NIGHT});
 // Terrain stays SMOOTH under the toon ramp (measured in the test-scene audition: banding the
 // ground caps its only highlights and draws contour rings). Cloud shade still applies to it.
 landMat.userData.noToonRamp=true;
+// ── SOIL on the wear field (Aug 22) ─────────────────────────────────────────────────────────
+// The wear field (see "wear field" below: base, building footprints, node clearings, trample)
+// only SHRANK blades — the ground under them stayed green. Now the terrain fragment takes
+// PAL.soil wherever wear crosses groundTune.soilAt, HARD-edged like the meadow's two tones.
+// WHY a shader sample and not a bake into the patch map: trample moves at ~20 Hz and the patch
+// map is 384x256 RGBA — rebaking it per tick to recolour a few hundred texels is pure waste, and
+// a static-stamps-only bake would drop the trample paths, which are the part that moves.
+// ACCEPTED SHORTCUT, documented: the tone solve above assumes the texel is green1, so a soil texel
+// renders soil × (green1_lit / green1) = exactly PAL.soil in full sun, and soil × green4/green1 in
+// shade (lands wood2 — the swatch the shade SHOULD be, checked with scripts/palette-snap.mjs).
+// Soil is a small fraction of the meadow, so it does not earn a second material with its own solve.
+// Chaining is safe: material-light-mods' patch calls this prior hook first, then does its own
+// replaces on the result.
+const landSoil={
+  uLandWear:{value:null},                       // assigned once wearTex exists (wear field section)
+  uLandSoil:{value:new THREE.Color(PAL.soil)},  // THREE.Color uploads LINEAR, which is what diffuseColor is
+  uLandSoilAt:{value:0},                        // synced from groundTune.soilAt every frame
+};
+landMat.onBeforeCompile=shader=>{
+  Object.assign(shader.uniforms,landSoil);
+  shader.fragmentShader=shader.fragmentShader
+    .replace("#include <common>","#include <common>\nuniform sampler2D uLandWear;\nuniform vec3 uLandSoil;\nuniform float uLandSoilAt;")
+    // After color_fragment, so neither the patch texel nor the per-cell vertex tint survives on soil.
+    .replace("#include <color_fragment>",`#include <color_fragment>
+{
+  // wearTex is flipY=false with texel row ty holding z = ty+0.5, while the terrain's uv.y is
+  // 1 - z/HU (pushTopPolygon) — hence the v flip. Its LINEAR filter is the clearing's rim, and
+  // step() turns that rim into one hard contour instead of a gradient.
+  float landWear = texture2D( uLandWear, vec2( vMapUv.x, 1.0 - vMapUv.y ) ).r;
+  diffuseColor.rgb = mix( diffuseColor.rgb, uLandSoil, step( uLandSoilAt, landWear ) );
+}`);
+};
 const REGION_COLORS={forest:new THREE.Color(PAL.regionForest),rocky:new THREE.Color(PAL.regionRocky),open:new THREE.Color(PAL.regionOpen),coast:new THREE.Color(PAL.cliff)};
 // ── ground colour law: ONE function for the terrain mesh and the grass blades ──────────────
 // Ported from the test scene (tools/test-scene/terrain.js groundColorInto): blades sample the
@@ -319,10 +365,17 @@ export const groundTune={
   patchWidth:.03,    // tone span from open to saturated — near-zero = hard 2-tone edge
   patchScale:18,     // wu per noise cell (second octave at half this). Map is 96x64 wu — 160 was ONE
                      // cell for the whole meadow (no patches at all, Aug 22 preview); 18 ≈ reference
+  // Wear value at which the terrain flips from grass to PAL.soil (the landMat patch above).
+  // NOT part of groundKey — shader-only, no terrain rebuild. .55 sits above a moment's trample
+  // (grassTune.trampleRate .9/s toward cap .75) so only a real path or a permanent stamp goes bare;
+  // 1 turns soil off entirely.
+  soilAt:.85,        // only building/base stamps (peak 1) paint soil; node clearings (.7) and trample never do
 };
 const GROUND_PANEL={sliders:[["patchStrength","patch strength",0,1,.05],["patchOpen","patch gate open",.3,.8,.01],
-  ["patchWidth","patch gate width",.05,.5,.01],["patchScale","patch scale wu",30,300,5]],
-  tips:{patchStrength:"rebuilds terrain + meadow on change: blend toward the bright second grass tone inside patches"}};
+  ["patchWidth","patch gate width",.05,.5,.01],["patchScale","patch scale wu",30,300,5],
+  ["soilAt","soil at wear",.2,1,.05]],
+  tips:{patchStrength:"rebuilds terrain + meadow on change: blend toward the bright second grass tone inside patches",
+        soilAt:"wear value where bare ground turns to PAL.soil — above .7 only building/base footprints qualify; 1 = never"}};
 const groundKey=()=>`${groundTune.patchStrength},${groundTune.patchOpen},${groundTune.patchWidth},${groundTune.patchScale}`;
 function hashWU(ix,iz,seed){let h=(ix*374761393+iz*668265263+seed*1442695041)|0;h=Math.imul(h^(h>>>13),1274126177);return((h^(h>>>16))>>>0)/4294967296;}
 function valueNoise(x,z,seed){
@@ -386,6 +439,10 @@ const waterUniforms={
   uShallow:{value:new THREE.Color(PAL.waterShallow)},uDeep:{value:new THREE.Color(PAL.waterDeep)},
   uFoam:{value:new THREE.Color(PAL.waterFoam)},uSun:{value:new THREE.Vector3(.35,.85,.3).normalize()},
 };
+// The water's two palette tiers. drawScene lerps the three uniforms between them on the day/night
+// phase — the shader is unlit, so this IS its night lighting (docs/water.md, Aug 22).
+const WATER_DAY={shallow:new THREE.Color(PAL.waterShallow),deep:new THREE.Color(PAL.waterDeep),foam:new THREE.Color(PAL.waterFoam)};
+const WATER_NIGHT={shallow:new THREE.Color(PAL.waterShallowNight),deep:new THREE.Color(PAL.waterDeepNight),foam:new THREE.Color(PAL.waterFoamNight)};
 const waterMat=new THREE.ShaderMaterial({
   transparent:true,depthWrite:false,uniforms:waterUniforms,
   vertexShader:`
@@ -428,7 +485,13 @@ const waterMat=new THREE.ShaderMaterial({
       float light=.5+.6*clamp(dot(facetNormal,uSun),0.0,1.0);
       vec3 color=mix(uShallow,uDeep,1.0-exp(-thickness*uFade))*light;
       float ripple=.5+.5*sin(thickness*6.0-uTime*2.2+(vWorld.x+vWorld.z)*.4);
-      float foam=(smoothstep(1.8,.08,thickness)*smoothstep(.3,.8,ripple)
+      // 4.5, not 1.8 (Aug 22): the shore walls drop straight to SHORE_BOTTOM, so the basin has no
+      // shelf and thickness jumps from 0 to ~7 wu within a couple of pixels — the exp() gradient
+      // above therefore lands on uDeep EVERYWHERE (measured: 100% blue2 across the whole body) and
+      // the blue ramp's shallow step was never on screen. The ripple-gated foam is the only term
+      // with a usable domain near the shore, so IT carries the shallow band: partial blue0 coverage
+      // over blue2 reads as blue1 in the middle. The hard rim (second term) is unchanged.
+      float foam=(smoothstep(4.5,.08,thickness)*smoothstep(.3,.8,ripple)
         +smoothstep(.45,.04,thickness))*uFoamMul;
       color=mix(color,uFoam,clamp(foam,0.0,1.0));
       gl_FragColor=vec4(color*uLight,clamp(.6+thickness*.12,0.0,.93));
@@ -684,35 +747,10 @@ const hitBulgeOf  = e => 1 + (e.shake||0)*.06;
 // coordinates, so a cleared forest falls in a mix of directions and never re-rolls mid-animation.
 const collapseDir = e => (((e.x*7 + e.y*13)|0) & 1) ? 1 : -1;
 
-// Thousands of tufts remain one bounded draw object. Simulation revision is the only invalidation
-// input; camera frames never rebuild matrices, and removed tufts disappear on the next revision.
-// Benched (owner pick, Aug 19): the tufts read as floor noise through the pixel pipeline — flat
-// ground until real grass models replace them. Flip to true to bring the system back; the
-// simulation's grass data and destructibility are untouched either way.
-const SHOW_GRASS_TUFTS=false;
-let grassInstances=null,builtVegetationRevision=-1;
-const grassMatrix=new THREE.Matrix4(),grassPosition=new THREE.Vector3(),grassRotation=new THREE.Quaternion(),grassScale=new THREE.Vector3();
-function syncGrass(){
-  if(!SHOW_GRASS_TUFTS){
-    if(grassInstances){scene.remove(grassInstances);grassInstances.geometry.dispose();grassInstances.material.dispose();grassInstances=null;builtVegetationRevision=-1;}
-    return;
-  }
-  // Fog revision joins the invalidation key: tufts under standing fog stay out of the build, and
-  // every fog clear re-runs it so newly revealed grass appears with the reveal.
-  const metadata=vegetationMetadata(),revisionKey=metadata.revision+":"+fogMetadata().revision;
-  if(revisionKey===builtVegetationRevision)return;
-  const tufts=grass.filter(tuft=>!fogAtPoint(tuft.x,tuft.y));
-  if(grassInstances){scene.remove(grassInstances);grassInstances.geometry.dispose();grassInstances.material.dispose();}
-  grassInstances=new THREE.InstancedMesh(makeGrassTuftGeometry(),new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true,side:THREE.DoubleSide}),Math.max(tufts.length,1));
-  grassInstances.count=tufts.length;
-  grassInstances.name="destructible-grass";grassInstances.castShadow=true;grassInstances.receiveShadow=true;grassInstances.raycast=NO_RAYCAST;
-  tufts.forEach((tuft,index)=>{
-    const variant=tuft.variant%PAL.grassTuft.length,scale=.8+variant*.07;
-    grassPosition.set(gx(tuft.x),terrainLiftAt(tuft.x,tuft.y)+.025,gz(tuft.y));grassRotation.setFromAxisAngle(_upY,((tuft.x*13+tuft.y*7)%628)/100);grassScale.set(scale,scale,scale);
-    grassMatrix.compose(grassPosition,grassRotation,grassScale);grassInstances.setMatrixAt(index,grassMatrix);grassInstances.setColorAt(index,new THREE.Color(PAL.grassTuft[variant]));
-  });
-  grassInstances.instanceMatrix.needsUpdate=true;if(grassInstances.instanceColor)grassInstances.instanceColor.needsUpdate=true;scene.add(grassInstances);builtVegetationRevision=revisionKey;
-}
+// Simulation `grass` cells (cut-grass targets) have NO render of their own: the legacy tuft
+// instancer was deleted Aug 22 — the meadow below IS the grass presentation, and tufts read as
+// floor noise through the pixel pipeline. Cutting grass is still a real simulation action; it
+// just doesn't change what's drawn.
 
 // ── the meadow: instanced grass blades (src/render/grass.js) ────────────────
 // The "real grass presentation" the flat-fill bake above waits for. One instanced draw over the
@@ -760,6 +798,7 @@ wearTex.magFilter = wearTex.minFilter = THREE.LinearFilter;
 wearTex.generateMipmaps = false;
 wearTex.unpackAlignment = 1;
 wearTex.needsUpdate = true;
+landSoil.uLandWear.value = wearTex;   // the terrain's soil paint reads this same field (landMat patch above)
 /** Max-combine a smoothstep circle into `arr` (wu coords; texel centers sit at +0.5). */
 function stampWear(arr, x, z, r, peak){
   const x0 = Math.max(0, Math.floor(x - r)), x1 = Math.min(WEAR_W - 1, Math.ceil(x + r));
@@ -791,21 +830,26 @@ function rebuildWearStatic(){
   stampWear(wearStatic, gx(BASE.x), gz(BASE.y), BASE.r * S + 1.5, 1);
   for(const b of buildings){
     // The ACTUAL grid footprint (owner ask): full wear across exactly the covered cells, then a
-    // 1 wu feathered rim, even on sides and corners. House/tower models also carry their own
-    // footprint floor pad (models.js makeFootprintFloor), so the footprint itself is bare by
-    // construction — the stamp's job is the rim, and a few rim blades overlapping the building
-    // edge is wanted ("a tad", owner call).
-    const fp = buildingFootprint(b.type);
-    stampWearRect(wearStatic, gx(b.x), gz(b.y), fp.w * CELL * S / 2, fp.h * CELL * S / 2, 1, 1);
+    // 1 wu feathered rim, even on sides and corners. Since Aug 22 this stamp is the ONLY ground
+    // treatment a building gets — the flat pad mesh under every body is deleted — so it also has
+    // to paint the soil the pad used to be.
+    // SOIL_MARGIN exists for that: the field is 1 texel/wu and LINEAR-filtered, so the soilAt (.85)
+    // crossing falls INSIDE the peak-1 rect, up to ~0.7 wu in on the worst texel alignment. Half a
+    // world unit of extra half-extent pushes the crossing back out to the footprint edge, so no
+    // building corner is ever left standing on bare green. Grass still overlaps the rim "a tad"
+    // (owner call), which is the point of the 1 wu feather.
+    const fp = buildingFootprint(b.type), SOIL_MARGIN = .5;
+    stampWearRect(wearStatic, gx(b.x), gz(b.y),
+                  fp.w * CELL * S / 2 + SOIL_MARGIN, fp.h * CELL * S / 2 + SOIL_MARGIN, 1, 1);
   }
   const r = grassTune.clearRadius;
   if(r > 0) for(const list of [trees, rocks, diamonds])
-    for(const e of list) stampWear(wearStatic, gx(e.x), gz(e.y), r, .95);
+    for(const e of list) stampWear(wearStatic, gx(e.x), gz(e.y), r, grassTune.clearStrength);   // < soilAt by default: shortens blades, never paints soil
 }
 let wearStaticKey = "", lastWearT = 0;
 function syncWear(time, pushers){
   const key = buildings.length + ":" + trees.length + ":" + rocks.length + ":" + diamonds.length
-            + ":" + grassTune.clearRadius;
+            + ":" + grassTune.clearRadius + ":" + grassTune.clearStrength;
   if(time - lastWearT < .05 && key === wearStaticKey) return;
   if(key !== wearStaticKey){ rebuildWearStatic(); wearStaticKey = key; }
   const dt = Math.min(.25, Math.max(0, time - lastWearT));
@@ -836,7 +880,7 @@ function syncMeadow(time){
     meadow = createGrass(THREE, {seed: (terrainMetadata().seed ?? 1) | 0,
                                  region: {x0: 0, z0: 0, x1: WU, z1: HU}, sample: meadowSample});
     meadow.setWearMap(wearTex);
-    setToneTargets(meadow.mesh.material,{...TONES.meadow,rig:TONE_RIG});   // blades = ground tones
+    setToneTargets(meadow.mesh.material,{...TONES.meadow,rig:TONE_RIG,nightRig:TONE_RIG_NIGHT});   // blades = ground tones, night pair included
     scene.add(meadow.mesh);
     meadowKey = key;
   }else if(key !== meadowKey){
@@ -845,11 +889,10 @@ function syncMeadow(time){
   }
   // Pushers: everything that walks the meadow, in world units. Fog-dormant entities are hidden
   // by the sync layers above, so they must not part grass either. The 32-slot cap is grass.js's;
-  // typical load (king + workers + enemies) sits well under it. The same list feeds the wear
+  // typical load (workers + enemies) sits well under it. The same list feeds the wear
   // field's trample stamps, so what parts the grass is exactly what wears it down.
   const pushers = [];
   const push = (e, r) => { if(e && pushers.length < 32 && !fogAtPoint(e.x, e.y)) pushers.push({x: gx(e.x), z: gz(e.y), r}); };
-  push(state.king, 3);
   for(const w of state.workers) push(w, 1.8);
   push(heldWorker(), 1.8);
   for(const e of state.enemies) push(e, 2.2);
@@ -857,6 +900,7 @@ function syncMeadow(time){
   for(const c of controlledEnemies) push(c, 2.2);
   meadow.setPushers(pushers);
   syncWear(time, pushers);
+  landSoil.uLandSoilAt.value = groundTune.soilAt;   // live R-panel knob, shader-only (no rebuild)
   meadow.sync(time);
 }
 
@@ -1046,6 +1090,13 @@ const fogMat=new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true});
 // Fog is a gameplay surface a third of the screen wide — banding it is a look decision the owner
 // has not made; opt out of the toon ramp (cloud shade still applies).
 fogMat.userData.noToonRamp=true;
+// NIGHT TIER (Aug 22). Fog blocks are per-instance coloured off the shade bridge (FOG_SHADES), so
+// they have no day tone triple to extend — setNightTone adds a NIGHT-ONLY pair and leaves the day
+// render byte-identical. Solved on shade0, the middle of the land palette above; the other two
+// shades scale proportionally (same rule as the meadow's green0 patches). Without it the dimmed
+// key light would drop the field to shade2 and the unknown would stop reading as a wall at all —
+// this walks it one step DOWN the bridge (shade0 lit -> shade1) instead of switching it off.
+setNightTone(fogMat,{albedo:PAL.fogLand[0],lit:SWATCH.shade1,shadow:SWATCH.shade2,rig:TONE_RIG_NIGHT});
 let fogMesh=null,fogShell=null,fogBuiltRevision=-1,fogHadShake=false,fogBuiltHeight=-1;
 const _fq0=new THREE.Quaternion(),_fv=new THREE.Vector3(),_fs=new THREE.Vector3(),_fm=new THREE.Matrix4();
 function rebuildFogField(count){
@@ -1244,7 +1295,9 @@ const syncControlledEnemies=makeLayer(unit=>makeEnemy(unit.type),(g,unit)=>{
     if(engaged&&anims.lunge)anims.lunge(inner,combatPhase(.5),t);
     else anims.scuttle(inner,moving?(unit.wob*.2)%1:0,t);
   }
-  for(const material of d.tintMats||[])material.emissive.setHex(unit.flash>0?PAL.flash:0x244a35);
+  // A controlled (turned) enemy is player-side now, so a hit on it reads with the player-side
+  // hurt colour, not the enemy-hit flash. Its rest emissive stays the sage cast that marks it turned.
+  for(const material of d.tintMats||[])material.emissive.setHex(unit.flash>0?PAL.hurtGlow:0x244a35);   // palette-exempt: turned-unit rest cast
   setXZ(g,unit);g.rotation.set(0,d.yaw,0);
   const modelScale=def.modelScale||1;
   g.scale.set(S*modelScale,S*modelScale*view.heightScale/100,S*modelScale);
@@ -1358,7 +1411,11 @@ function syncBuildings(){
   // the placement ghost because none of them remain active while held.
   const visibleBuildings=heldOrbs?[...buildings,heldOrbs]:buildings;
   for(const b of visibleBuildings){
-    // The blueprint key carries its type now that the blueprint pad is footprint-sized.
+    // The finished main base is drawn by syncBase, which owns the fixed anchor placement and the
+    // pulse/hurt feedback; two owners at the map centre would double the dome. Its SITE still draws
+    // as an ordinary blueprint, which is the whole point.
+    if(b.complete && b.type==="mainBase")continue;
+    // The blueprint key carries its type: the corner posts sit on the type's own footprint.
     const key = b.complete ? (b.type==="tower" ? "tower:"+(b.tower?.variant||"basic") : b.type) : "blueprint:"+b.type;
     let rec = buildingStore.get(b);
     if(!rec || rec.key!==key){
@@ -1381,9 +1438,6 @@ function syncBuildings(){
     rec.g.scale.y = view.heightScale/100;
     const pulse = 1 + (b.pulse||0)*.12;
     rec.g.scale.x = rec.g.scale.z = pulse;
-    // The pad marks RESERVED CELLS, so it must not breathe with the pulse: undo the group's
-    // horizontal scale on the floor alone. Its extents then always equal the placement preview's.
-    if(rec.g.userData.floor) rec.g.userData.floor.scale.set(1/pulse, 1, 1/pulse);
     if(b.complete && b.type==="tower" && b.tower){
       const hurt = b.tower.hitFlash>0;
       for(const p of rec.g.userData.parts||[]) p.material.emissive.setHex(hurt?PAL.hurtGlow:0x000000);
@@ -1410,9 +1464,9 @@ function syncBuildings(){
     // Derived occupancy drives the sage bay caps directly: one visible cap per living linked ally,
     // so a capture or an ally death changes the model on the very next frame.
     if(b.type==="captureYard"&&rec.g.userData.slotMarkers){const held=captureYardOccupancy(b);rec.g.userData.slotMarkers.forEach((cap,index)=>cap.visible=index<held);}
-    // Same contract for the garrison's two station pennants, read off the durable-post status the
-    // overlay already uses: a pennant flies only for a guard that has ARRIVED, so a reserved-but-
-    // travelling slot stays bare and matches the "! vacant" label. Outside a normal run (showcase,
+    // Same contract for the garrison's two station pennants, read off the durable-post status:
+    // a pennant flies only for a guard that has ARRIVED, so a reserved-but-travelling slot stays
+    // bare and the station reads as under-staffed at a glance. Outside a normal run (showcase,
     // and therefore the placement ghost's untracked copy too) the status is null and the station
     // shows its full dress.
     if(b.type==="garrison"&&rec.g.userData.postMarkers){const staffing=durablePostStatus(b),flying=staffing?staffing.arrived:rec.g.userData.postMarkers.length;rec.g.userData.postMarkers.forEach((pennant,index)=>pennant.visible=index<flying);}
@@ -1423,28 +1477,41 @@ function syncBuildings(){
   }
 }
 
-// The main base swaps between its asleep and awake models at the run's first level-up (the orb
-// wakes with the village's first real progress). Its gulp is driven off the sim's basePulse RISING
-// EDGE with a local clock, because basePulse itself decays in a third of a second — too fast to
-// phase a readable swallow.
-let baseRec = null, lastBasePulse = 0, gulpStart = -9;
+// The standing main base. ONE fixed dome at the authored BASE anchor, built through the ordinary
+// building registry (makeBuilding("mainBase")) and drawn here rather than from its construction
+// record, which syncBuildings deliberately skips — the map centre has exactly one owner. There is
+// no level-based model swap: authored base levels are read from the overlay, never from the body.
+// NOTHING is drawn at the map centre until a base stands (mainBaseStanding): during the pre-wave
+// opening the anchor is bare ground, and its unfinished site draws as an ordinary blueprint through
+// syncBuildings.
+//
+// Two sim signals feed the body, and they are different facts:
+//   state.basePulse rises to 1 whenever the base NOTICES something (a delivery landing, a hit) and
+//     decays over ~1/3 s — it drives a short swell of the dome body.
+//   state.baseHp FALLING is the only honest damage signal (basePulse cannot tell a delivery from a
+//     hit), and it lights the same PAL.hurtGlow emissive every tower body uses.
+let baseRec = null, lastBaseHp = null, baseHurtUntil = -9;
+const BASE_HURT_SECONDS = .18;
 function syncBase(t){
-  const awake = state.level > 0;
-  if(!baseRec || baseRec.awake!==awake){
-    if(baseRec){ scene.remove(baseRec.g); disposeGroup(baseRec.g); }
-    baseRec = {awake, g: makeMainBase(awake)};
-    scene.add(baseRec.g);
+  if(!mainBaseStanding()){
+    if(baseRec){ scene.remove(baseRec); disposeGroup(baseRec); baseRec = null; }
+    lastBaseHp = null; baseHurtUntil = -9;
+    return;
   }
-  const g = baseRec.g;
-  g.scale.y = view.heightScale/100;
-  if(state.basePulse > lastBasePulse + .5) gulpStart = t;   // a delivery landed
-  lastBasePulse = state.basePulse;
-  const {inner, anims} = g.userData;
-  const gp = (t-gulpStart)/0.9;
-  if(gp>=0 && gp<1 && anims.gulp) anims.gulp(inner, gp, t);
-  else anims.idle(inner, 0, t);
+  if(!baseRec){
+    baseRec = makeBuilding("mainBase");
+    baseRec.position.set(gx(BASE.x), 0, gz(BASE.y));
+    scene.add(baseRec);
+  }
+  baseRec.scale.y = view.heightScale/100;
+  if(lastBaseHp !== null && state.baseHp < lastBaseHp) baseHurtUntil = t + BASE_HURT_SECONDS;
+  lastBaseHp = state.baseHp;
+  const hurt = t < baseHurtUntil;
+  for(const part of baseRec.userData.parts){
+    part.material.emissive.setHex(hurt ? PAL.hurtGlow : 0x000000);
+    part.scale.setScalar(1 + state.basePulse*.05);
+  }
 }
-const kingMesh = makeKing(); scene.add(kingMesh);
 
 // ─────────────────────────────────────────────────────────── ground rings (zones)
 const ringGeo = new THREE.RingGeometry(.985,1,64);
@@ -1701,6 +1768,9 @@ function drawFireballs(){
   }
 }
 
+// The base's shot colour, matched by hand to the impact burst simulation.js emits for the same hit
+// (updateBaseAttack). Not a PAL role: nothing else in the world wears it.
+const BASE_SHOT_COL = "#efe0a0";
 function drawAttacks(){
   const hs = view.heightScale/100;
 
@@ -1734,6 +1804,21 @@ function drawAttacks(){
     muzzle(b.x, b.y, topH, .22 + .42*a, col, a);
   }
 
+  // The standing base defends itself (simulation.js updateBaseAttack) and reads exactly like a
+  // tower doing it: same rising-flash edge, same travelling shot, same muzzle. It has no variant —
+  // the numbers are MAIN_BASE's — so the colour is fixed rather than looked up.
+  if(mainBaseStanding()){
+    const attack = state.baseAttack, muzzleH = 4.2*hs;
+    const prevBaseFlash = lastFlash.get(BASE) ?? 0;
+    if(attack.flash > prevBaseFlash)
+      spawnShot(BASE.x, BASE.y, muzzleH, attack.targetX, attack.targetY, .7, BASE_SHOT_COL, 1, 1.0, null);
+    lastFlash.set(BASE, attack.flash);
+    if(attack.flash > 0){
+      const a = clamp(attack.flash*3.2, 0, 1);
+      muzzle(BASE.x, BASE.y, muzzleH, .22 + .5*a, BASE_SHOT_COL, a);
+    }
+  }
+
   // Splash rings fire when the shell lands, not when the barrel flashes.
   for(const im of impacts)
     ring(im.x, im.y, im.r*(.3+.7*im.t), im.col, (1-im.t)*.9);
@@ -1742,9 +1827,12 @@ function drawAttacks(){
     // The body is hidden under standing fog, so its muzzle/heal beams go with it: a bolt leaving an
     // empty fog block would point at a shooter the player cannot see or click.
     if(fogAtPoint(e.x,e.y)) continue;
+    // The archer's bolt is the clearest "an enemy is damaging you" event in the frame, and it was
+    // GOLD — the builder's hi-vis and the coin (palette.js COLOUR THEORY). It is the enemy ability
+    // register now, the same red the creature's own seams and muzzle core wear.
     if(e.shotFlash > 0)
       beam(e.x, e.y, .8, e.shotX ?? BASE.x, e.shotY ?? BASE.y, .7, .055,
-           "#d9b65f", clamp(e.shotFlash*7, 0, 1));
+           css(PAL.enemyAbility), clamp(e.shotFlash*7, 0, 1));
     if(e.healFlash > 0 && e.healX!==undefined)
       beam(e.x, e.y, 1.0, e.healX, e.healY, 1.0, .07,
            "#75c86d", clamp(e.healFlash*3, 0, 1));
@@ -1867,8 +1955,8 @@ function syncHand(){
 
 // ─────────────────────────────────────────────────────────── scale-reference balls
 // The test scene's red dome pair (tools/test-scene/preset.js OBJECTS "red"/"red-1x1": sink 0.46
-// of the diameter, albedo 0xc84d3f — solved for the rig the game now runs), parked at the
-// castle's east edge for size/shading comparison. Sized on the PLACEMENT GRID: 1 cell = 2 wu,
+// of the diameter, albedo 0xc84d3f — solved for the rig the game now runs), parked east of the
+// base anchor for size/shading comparison. Sized on the PLACEMENT GRID: 1 cell = 2 wu,
 // big ball 3x3 cells (r 3), small ball 1x1 (r 1). R panel "camera / sun" → "scale ball" toggles
 // both; built lazily so a normal session never pays for it. SMOOTH spheres on purpose: faceting
 // re-inks every quad seam under the pixel pipeline's normal-edge pass (test-scene round-3
@@ -1878,12 +1966,12 @@ function setScaleBall(on){
   if(on && !scaleBall){
     scaleBall = new THREE.Group();
     const mat = new THREE.MeshLambertMaterial({color: 0xc84d3f});
-    // [radius wu, east offset from castle center in game px]: big ball parked against the
-    // castle, small one just past it. Ground seat matches the buildings' plane (FLOOR_TOP).
+    // [radius wu, east offset from the BASE anchor in game px]: big ball parked against the base
+    // footprint, small one just past it. Ground seat matches the buildings' plane (GROUND_Y).
     for(const [r, off] of [[3, 45 + BASE.r], [1, 45 + BASE.r + 70]]){
       const ball = new THREE.Mesh(new THREE.SphereGeometry(r, 48, 32), mat);
       ball.castShadow = ball.receiveShadow = true;
-      ball.position.set(gx(BASE.x + off), FLOOR_TOP + r*(1 - 2*.46), gz(BASE.y));
+      ball.position.set(gx(BASE.x + off), GROUND_Y + r*(1 - 2*.46), gz(BASE.y));
       scaleBall.add(ball);
     }
     scene.add(scaleBall);
@@ -1897,7 +1985,7 @@ function setScaleBall(on){
 // edge, not a number. Same rebuild-on-signature trick as the cursor hand above. The display caps
 // at PILE_MAX items so a late-game bank cannot flood the scene with meshes.
 const basePile = new THREE.Group();
-basePile.position.set(gx(BASE.x), FLOOR_TOP, gz(BASE.y + BASE.r + 26));
+basePile.position.set(gx(BASE.x), GROUND_Y, gz(BASE.y + BASE.r + 26));
 scene.add(basePile);
 const pileItems = [];
 let pileSig = "";
@@ -1927,7 +2015,7 @@ function syncBasePile(){
     pileSig = sig;
   }
 
-  basePile.visible = pileItems.length>0;
+  basePile.visible = pileItems.length>0 && mainBaseStanding();
   for(const it of pileItems)
     if(it.pop>0){ it.pop = Math.max(0, it.pop-.05); it.mesh.scale.setScalar(.8*(1 + it.pop*.9)); }
 }
@@ -1939,9 +2027,6 @@ function showGhostBuilding(type, x, y, ok, lift=0){
   if(ghostBuild.key!==key){
     if(ghostBuild.g){ scene.remove(ghostBuild.g); disposeGroup(ghostBuild.g); }
     ghostBuild.g = makeBuilding(type);
-    // The ghost's own pad is hidden: showFootprint() draws the reserved cells on the ground, and a
-    // held building floats on the cursor, where a pad would just hang in the air.
-    if(ghostBuild.g.userData.floor) ghostBuild.g.userData.floor.visible = false;
     // depthWrite off as well as transparent: a 1x1 model is wider than its cell, so a depth-writing
     // ghost would bury the reserved-cell quads underneath it and the footprint would go unseen.
     ghostBuild.g.traverse(o=>{ if(o.isMesh && !isOutline(o)){ o.material.transparent=true; o.material.opacity=.5; o.material.depthWrite=false; o.castShadow=false; } });
@@ -1956,16 +2041,16 @@ function hideGhostBuilding(){ if(ghostBuild.g) ghostBuild.g.visible=false; }
 
 // ── footprint preview ───────────────────────────────────────────────────────
 // One tinted quad per cell footprintCells() reserves, plus a border on the footprint's exact world
-// rect. The player sees the same cells canPlace() tested and the same rectangle the finished floor
-// will cover, so the preview and the committed pad share one source of dimensions.
-// Depth: the quads ride just above the tallest pad (FLOOR_TOP) so an invalid placement over an
-// existing building still shows red instead of being swallowed by that building's own floor. They
-// keep depthTest on — trees and towers still occlude them correctly — with depthWrite off and a
-// negative polygon offset so nothing coplanar (a tar puddle, another pad) can flicker against them.
+// rect. The player sees the same cells canPlace() tested and the same rectangle the soil stamp
+// under the finished building will paint, so preview and commitment share one source of dimensions.
+// Depth: the quads ride just above the ground seat (GROUND_Y) so an invalid placement over an
+// existing building still shows red instead of being swallowed by the terrain. They keep depthTest
+// on — trees and towers still occlude them correctly — with depthWrite off and a negative polygon
+// offset so nothing coplanar (a tar puddle, the land) can flicker against them.
 // Ownership: these live directly in the scene, never inside a group disposeGroup() will visit, so
 // their geometry and materials are shared module singletons and are never disposed.
 const CELL_U = CELL*S;                 // one cell in world units
-const GHOST_Y = FLOOR_TOP + .035;
+const GHOST_Y = GROUND_Y + .035;
 const CELL_GAP = .07;                  // hairline seam so each reserved cell reads as its own square
 const cellGeo = new THREE.PlaneGeometry(1,1);
 const edgeGeo = new THREE.BufferGeometry().setAttribute("position",
@@ -1999,7 +2084,7 @@ function showFootprint(type, x, y, ok){
     m.scale.set(CELL_U-CELL_GAP, CELL_U-CELL_GAP, 1);
   }
   for(let i=cells.length;i<cellPool.length;i++) cellPool[i].visible=false;
-  // The border is the authority on extents: exactly footprintWorldRect(), the rect the pad fills.
+  // The border is the authority on extents: exactly footprintWorldRect(), the reserved rect.
   if(!footprintEdge){
     footprintEdge = new THREE.LineLoop(edgeGeo, EDGE_MAT.ok);
     footprintEdge.castShadow = footprintEdge.receiveShadow = false;
@@ -2031,7 +2116,7 @@ function hideFootprint(){
 //
 // Dimensions: showSelector() takes the SAME rect shape footprintWorldRect() returns ({x,y,w,h}, sim
 // pixels, top-left anchored). A selector around a placed building therefore reuses the exact rect
-// its pad covers, cellWorldRect() supplies the one-CELL case out of the same lattice, and
+// its footprint covers, cellWorldRect() supplies the one-CELL case out of the same lattice, and
 // pointWorldRect() supplies it off-lattice for things that move continuously. No size is restated
 // here — the footprint table stays the single source of dimensions.
 //
@@ -2044,7 +2129,7 @@ function hideFootprint(){
 // uniform scale would fatten its band with the circle, so each slot owns one buffer that is
 // REWRITTEN IN PLACE (same Float32Array, same mesh) only when that slot's radius actually changes.
 //
-// Depth: both ride above GHOST_Y, so they clear pads (FLOOR_TOP), previews and the footprint border
+// Depth: both ride above GHOST_Y, so they clear the ground seat (GROUND_Y), previews and the border
 // without z-fighting; depthTest stays on so towers and trees still occlude them, with depthWrite off
 // and a negative polygon offset so nothing coplanar can flicker against them.
 //
@@ -2291,11 +2376,11 @@ function hideRadiusRings(){ for(const rec of radiusPool) rec.mesh.visible=false;
  *
  * anchor is the snapToCellCenter() result the preview and the commit both use, so the corners, the
  * ring, the tinted cells, the ghost and the building that finally lands share one centre. Extents come
- * from buildingFootprint() -> footprintWorldRect(), the same pair showFootprint() measures its pad
+ * from buildingFootprint() -> footprintWorldRect(), the same pair showFootprint() measures its cells
  * with, so 1x1 and 3x3 need no special casing and no dimension is restated here.
  *
  * Colour is the placement verdict, PAL.cellOk/PAL.cellBad — the same two colours CELL_MAT/EDGE_MAT
- * tint the pad with, so corners, ring and cells flip together. Only the CORNERS breathe (a pulse on
+ * tint the cells with, so corners, ring and cells flip together. Only the CORNERS breathe (a pulse on
  * their offsets); the ring's radius is left alone and its opacity does the breathing, because the ring
  * states real coverage and a scaled one would advertise a range the tower does not have. An invalid
  * spot therefore reads as red everywhere while still showing the true, unshrunken radius.
@@ -2463,7 +2548,7 @@ function drawZones(){
       {color:cursor.color, opacity:cursor.opacity, pulse:indicatorPulse(t, cursor.pulse)});
   } else cursorGlide.live = false;   // off screen: the next appearance teleports rather than flies in
 
-  if(m.inside && distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16) ring(BASE.x,BASE.y,BASE_ZONE);
+  if(mainBaseStanding() && m.inside && distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16) ring(BASE.x,BASE.y,BASE_ZONE);
 
   // Coverage rings for the hovered building, hung off the SAME resolution the corners used so the two
   // can never name different buildings. The radius comes from indicatorRadius(), the resolver the
@@ -2482,7 +2567,7 @@ function drawZones(){
     if(taunt) showRadiusRing(hovered.x, hovered.y, taunt, {color:css(PAL.taunt), opacity:indicatorRingOpacity(t)});
   }
   if(heldWorker()){
-    ring(BASE.x,BASE.y,BASE_ZONE,css(PAL.storage),.4);
+    if(mainBaseStanding()) ring(BASE.x,BASE.y,BASE_ZONE,css(PAL.storage),.4);
     for(const s of buildings) if(s.complete && s.type==="stockpile")
       ring(s.x,s.y,storageServiceRadius(s),css(PAL.storage),.4);
   }
@@ -2562,15 +2647,26 @@ export function drawScene(){
   }
   sun.target.position.set(gx(cam.x), 0, gz(cam.y));
   sun.target.updateMatrixWorld();
-  // Night dims and cools the key light; day/night already lives in state.clock.
-  // Noon 3.21 = the test-scene exposure solve (S·π/sin 60°, S = 0.885 — see the rig comment at
-  // the lights above). The night endpoint stays the OLD rig's 0.35 (1.1 − .75), byte-identical:
-  // night readability was tuned against it and the unlit night materials assume it.
-  const night = state.clock.light;
-  sun.intensity = SUN_INTENSITY*(1 - night*.89);   // night floor ≈ 0.35
-  sun.color.setHex(night>.25 ? PAL.sunNight : PAL.sunDay);
-  // The water shader ignores scene lights, so it tracks the night dim explicitly.
-  waterUniforms.uLight.value = 1 - night*.6;
+  // ── DAY / NIGHT ────────────────────────────────────────────────────────────────────────────
+  // ONE phase number, 0 = noon, 1 = full night, feeding the key light, the tone tier (uLmNight
+  // below), the water and the grid. state.clock.light is the simulation's night OVERLAY ALPHA and
+  // tops out at NIGHT_OVERLAY_ALPHA (0.28), so it is normalised here — the sun dim below has always
+  // documented a 0.35 floor and never reached it (driven raw it bottomed out at 2.41, a 25% dim).
+  // Noon 3.21 = the test-scene exposure solve (S·π/sin 60°, S = 0.885 — see the rig comment at the
+  // lights above); the night floor is rig.js NIGHT_SUN_SCALE.
+  const night = Math.min(1, state.clock.light / NIGHT_OVERLAY_ALPHA);
+  sun.intensity = SUN_INTENSITY*(1 - night*(1 - NIGHT_SUN_SCALE));   // 3.21 -> 0.353
+  // Continuous, replacing the old hard switch at night > .25: the tone tiers solve their night pair
+  // against EXACTLY PAL.sunNight at night = 1 and lerp on this same phase, so a step in the key
+  // light's colour would show up as a step in every toned family's landing halfway through dusk.
+  sun.color.copy(SUN_DAY_COLOR).lerp(SUN_NIGHT_COLOR, night);
+  // The water shader ignores scene lights, so it swaps its own tier (see WATER_NIGHT): a step down
+  // the blue ramp plus a mild dim. The old `1 - night*.6` darken alone made water the one surface
+  // on screen that answered night by going black.
+  waterUniforms.uShallow.value.copy(WATER_DAY.shallow).lerp(WATER_NIGHT.shallow, night);
+  waterUniforms.uDeep.value.copy(WATER_DAY.deep).lerp(WATER_NIGHT.deep, night);
+  waterUniforms.uFoam.value.copy(WATER_DAY.foam).lerp(WATER_NIGHT.foam, night);
+  waterUniforms.uLight.value = 1 - night*.25;
 
   // Material light mods: patch any materials born this frame (before the coming render compiles
   // them) and sync the shared uniforms. Knob values come from pixel.js's WINDOW MIRROR rather
@@ -2591,6 +2687,7 @@ export function drawScene(){
       cloudShade: !!materialMode,
       cloudMax: tune?.cloudMax ?? 0.8,
       toon: tune ? tune.toonRamp !== false : false,
+      night,   // the tone tier's day->night lerp; same phase the sun above rides
     });
   }
   // The grid is unlit, so without this it would stay bright while the map darkens and end up the
@@ -2609,13 +2706,13 @@ export function drawScene(){
   // in the player's hand, so it renders regardless of what cell the cursor floats over.
   const revealed=e=>!fogAtPoint(e.x,e.y);
   syncMeadow(lightTime);
-  syncGrass();syncFog();syncFogPops();
+  syncFog();syncFogPops();
   syncTrees(trees.filter(revealed)); syncRocks(rocks.filter(revealed)); syncDiamonds(diamonds.filter(revealed));
   const visibleChests=chests.filter(revealed);
   syncChests(heldChest()?[...visibleChests,heldChest()]:visibleChests);
   syncDrops(resourceDrops); syncCorpses(workerCorpses);
   // Same contract as the resources above: an enemy inside standing fog is untargetable in the
-  // simulation (clicks, towers and the king all skip it), so it must not be drawn either — a body
+  // simulation (clicks, towers and the base all skip it), so it must not be drawn either — a body
   // on screen that no click can reach is worse than no body at all. The held enemy is in hand.
   const visibleEnemies=state.enemies.filter(revealed);
   syncEnemies(heldEnemy()?[...visibleEnemies,heldEnemy()]:visibleEnemies);syncFriendlyBrutes(friendlyBrutes);syncControlledEnemies(controlledEnemies);syncWorkers();
@@ -2625,10 +2722,6 @@ export function drawScene(){
   // Sim-px outline shells track the view panel's weight slider through the world-unit material.
   outlineMatPx.uniforms.thickness.value = outlineMat.uniforms.thickness.value / S;
   syncBase(performance.now()/1000);
-  const king = state.king;
-  kingMesh.position.set(gx(king.x), terrainLiftAt(king.x,king.y), gz(king.y));
-  kingMesh.scale.y = view.heightScale/100;
-  kingMesh.userData.sword.rotation.z = king.swing>0 ? -1.2 : 0;
 
   // Shots advance on real elapsed time, independent of the sim step count.
   const nowS = performance.now()/1000;

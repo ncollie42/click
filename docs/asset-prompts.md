@@ -27,17 +27,24 @@ New generations of ANY asset should be checked against these two sheets for scal
 
 ---
 
-## Main base: the Keep and the Hole (3×3 footprint)
+## Main base: the stone dome (3×3 footprint)
 
-The current in-game keep (squat grey stone tower, crenellated top, dirt apron) still charms — keep it. The pit doesn't replace it; the keep stands guard AT the pit. Two silhouettes, one story: the villagers built their strongest thing next to the thing they don't understand.
+The base is deliberately NOT an art brief any more. It is one authored Three.js sphere —
+`src/render/models/buildings/main-base.js`, radius 2.0 wu, smooth-shaded and sunk 40 % of its
+diameter into the ground on the 3×3 footprint, painted with `toned(TONES.stone, {flatShading:false})`
+so it takes the same authored lit/shadow swatches as the meadow rocks and joins the night tier for
+free. There is no keep, no precursor pit, no orb and no asleep/awake variant to generate. (It was a
+4.4 wu cube until Aug 22; the owner replaced it, because the pixel quantizer bands a smooth curve
+and only plates a faceted one.)
 
-> Asset: a village keep beside a small pit, together on one square tile. The keep: a squat crude stone tower, uneven grey block courses #9a9a94, simple crenellated top, one arched door facing the pit, standing on a packed-sand apron #d9c9a3.
->
-> At the keep's foot, occupying the other half of the tile: a faceted funnel pit sunk into the ground, inner walls of hard-edged triangles descending from violet #a783df at the rim to near-black at the throat. Around the pit rim, a crude low curb of rough timber beams lashed over stone blocks — a well-curb built by farmers, not a monument — with one simple timber chute where things get tipped in. Thin violet cracks radiate from the pit but stop before the keep.
->
-> The pit and its cracks are the only violet elements. The keep must read as protecting — or watching — the pit.
+It is also not always there: the player BUILDS it. The map centre is bare ground during the
+pre-wave opening, the unfinished base draws as an ordinary construction blueprint, and the dome
+appears only once level 1 completes (`state.baseLevel > 0`).
 
-Variants worth one generation each: (a) the floating orb sentinel above the pit (faceted sphere, violet body, cyan eye-ring) for the awake stage; (b) pit-only, no keep, for comparing whether the merge earns its footprint.
+If the dome is ever replaced with authored art, the replacement must still be one body seated on
+the ground (there are no footprint pads any more — the terrain paints the soil), must keep
+`userData.parts` as the pulse/hurt target, and must not restore any keep / pit / orb identity.
+Generate nothing here until that decision is actually taken.
 
 ## House (1×1 footprint)
 

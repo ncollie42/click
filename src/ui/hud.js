@@ -40,7 +40,7 @@ import {
   // commands — the only writes this file can make into the world
   closeUpgradeMenu, selectUpgrade, acceptUpgrade, continueAfterVictory,
   // queries — pure reads
-  hoverTarget, costText, upgradeList,
+  hoverTarget, costText, upgradeList, mainBaseStatus,
   livingActiveWaveEnemies, clamp
 } from "../game/simulation.js";
 
@@ -103,20 +103,24 @@ function formatDuration(totalSeconds){
   const pad=n=>String(n).padStart(2,"0");
   return hours?hours+":"+pad(minutes)+":"+pad(s%60):minutes+":"+pad(s%60);
 }
+// THREE clock states, and the panel answers for each one explicitly. "pre-wave" is the untimed
+// opening (simulation.js): there is no countdown to print, no wave to forecast and no progress to
+// fill — printing a day timer there would be a promise the simulation is not making.
 export function syncPhaseHud(){
-  const clock=state.clock,wave=state.nightWave,isDay=clock.phase==="day";
-  const plan=isDay?wave.upcomingPlan:wave.activePlan,panel=document.getElementById("phaseHud");
+  const clock=state.clock,wave=state.nightWave,isDay=clock.phase==="day",isNight=clock.phase==="night",isPreWave=clock.phase==="pre-wave";
+  const plan=isDay?wave.upcomingPlan:isNight?wave.activePlan:null,panel=document.getElementById("phaseHud");
   const setText=(id,text)=>{const element=document.getElementById(id);if(element.textContent!==text)element.textContent=text;};
-  const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber,living=isDay?0:livingActiveWaveEnemies();
-  setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",isDay?Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"elapsed "+formatDuration(wave.elapsed));
+  const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber,living=isNight?livingActiveWaveEnemies():0;
+  setText("phaseName",isPreWave?"pre-wave":clock.phase+" "+phaseNumber);
+  setText("phaseTime",isPreWave?"untimed":isDay?Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"elapsed "+formatDuration(wave.elapsed));
   setText("runTime",formatDuration(clock.elapsed));
-  panel.classList.toggle("night",!isDay);
+  panel.classList.toggle("night",isNight);
   // During night, spawning merely transfers work from the schedule to the battlefield. Only an
   // active-wave defeat advances clearance, while cap-delayed scheduled work keeps the bar bounded.
-  const progress=isDay?clamp((DAY_DURATION-clock.remaining)/DAY_DURATION,0,1):clamp((wave.totalSpawns-wave.remainingSpawns-living)/Math.max(1,wave.totalSpawns),0,1);
+  const progress=isPreWave?0:isDay?clamp((DAY_DURATION-clock.remaining)/DAY_DURATION,0,1):clamp((wave.totalSpawns-wave.remainingSpawns-living)/Math.max(1,wave.totalSpawns),0,1);
   document.getElementById("phaseProgressFill").style.width=(100*progress).toFixed(2)+"%";
-  setText("forecastLabel",isDay?"next attack":"current wave");
-  setText("forecastRemaining",isDay?"":living===0&&wave.remainingSpawns===0?"wave clear · 0 enemies alive · 0 scheduled spawns remaining":living+" wave enem"+(living===1?"y":"ies")+" alive · "+wave.remainingSpawns+" scheduled spawn"+(wave.remainingSpawns===1?"":"s")+" remaining");
+  setText("forecastLabel",isPreWave?"first objective":isDay?"next attack":"current wave");
+  setText("forecastRemaining",isPreWave?"raise the main base — nothing attacks until it stands":isDay?"":living===0&&wave.remainingSpawns===0?"wave clear · 0 enemies alive · 0 scheduled spawns remaining":living+" wave enem"+(living===1?"y":"ies")+" alive · "+wave.remainingSpawns+" scheduled spawn"+(wave.remainingSpawns===1?"":"s")+" remaining");
   const signature=[clock.phase,plan?.id].join("|");
   if(panel.dataset.forecast!==signature){
     panel.dataset.forecast=signature;
@@ -138,7 +142,10 @@ export function syncBuildHud(){
 function updatePrompt(){
   const box=document.getElementById("prompt"),label=box.querySelector("span"),target=hoverTarget();
   box.classList.toggle("on",!!target);
-  if(target)label.textContent=target.kind==="base"?"deposit at base":target.kind==="stockpile"?"store in stockpile":target.kind==="consumableForge"?"deliver dust to the Consumable Forge":target.kind==="upgrade"?"deposit toward upgrade":"deliver to build";
+  // A release at the base pays its next authored level before storage, so the prompt names that
+  // level while one is still owed and falls back to plain storage at the authored maximum.
+  const base=target?.kind==="base"?mainBaseStatus():null;
+  if(target)label.textContent=base?(base.atMaxLevel?"deposit at base":"deliver toward base lv "+(base.level+1)):target.kind==="stockpile"?"store in stockpile":target.kind==="consumableForge"?"deliver dust to the Consumable Forge":target.kind==="upgrade"?"deposit toward upgrade":"deliver to build";
 }
 
 // ── audio ───────────────────────────────────────────────────────────────────

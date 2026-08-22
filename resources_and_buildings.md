@@ -45,13 +45,13 @@ Everything that is *placed* lands on one shared square lattice. `src/game/data.j
 | Spike trap | 1x1 | |
 | Land mine | 1x1 | |
 | Tar | 1x1 | |
-| Base | 3x3 | Not placeable, but occupies cells like anything else |
+| Main base | 3x3 | Anchored at the map centre; the cells are reserved even before the base is built |
 | Tree | 1x1 | Blocks only while standing |
 | Stone node | 1x1 | Blocks only while not depleted |
 | Diamond deposit | 1x1 | Blocks only while not depleted |
 | Showcase props | Authored odd footprint | Showcase-only; validated with the same placement rules |
 
-The base is never placed by the player, but it reserves ground exactly like a building: a 3x3 footprint on its own cell centre, tested by the same occupancy rule and drawn with the same pad. There is no keep-out circle and no dirt clearing under it — the cells immediately outside its 3x3 are buildable.
+The base is never placed by the player — its anchor is the fixed map centre — but it reserves ground exactly like a building: a 3x3 footprint on its own cell centre, tested by the same occupancy rule and drawn with the same pad. The reservation belongs to the anchor, not to the structure, so the nine cells stay blocked from world load even while the base is still unbuilt. There is no keep-out circle and no dirt clearing under it — the cells immediately outside its 3x3 are buildable.
 
 Towers are permanently 3x3. Choosing a chassis upgrade never resizes an already-placed tower: upgrade completion swaps stats, health scale, and behaviour but leaves the anchor and the nine reserved cells untouched. The Shock Tower is the one movable tower; relocating it re-validates the same 3x3 footprint at the new snapped anchor while excluding the tower itself from the occupancy scan, and only `x`/`y` change — cooldown, health, and variant ride along.
 
@@ -65,7 +65,7 @@ Trees, stone nodes, and diamond deposits each reserve exactly one cell *while ac
 
 ### Grass vegetation
 
-Grass-textured `LAND` is immutable topology. Separate frozen blueprint grass descriptors become mutable runtime vegetation in normal runs only. Tufts have 1 HP and use one existing completed hold-action hit. They are lower priority than enemies, chests, and real resources; clearing yields no drops, XP, workers, occupancy, or topology change. `canPlace()` ignores grass, while successful building placement and Shock Tower relocation clear overlapping tufts. The shared scatter resolver reserves grass source cells after explicit objects, rocks, and trees, preventing spawn overlap without making grass runtime occupancy. Rendering uses one bounded instanced mesh rebuilt only when the separate vegetation revision changes. Land color samples a deterministic repeating 64×64 RGBA tile: 16 KiB canvas backing plus 16 KiB GPU level (mipmaps disabled), replacing the former 7680×5120 allocation of about 150 MiB on each side.
+Grass-textured `LAND` is immutable topology. Separate frozen blueprint grass descriptors become mutable runtime vegetation in normal runs only. Tufts have 1 HP and use one existing completed hold-action hit. They are lower priority than enemies, chests, and real resources; clearing yields no drops, rewards, workers, occupancy, or topology change. `canPlace()` ignores grass, while successful building placement and Shock Tower relocation clear overlapping tufts. The shared scatter resolver reserves grass source cells after explicit objects, rocks, and trees, preventing spawn overlap without making grass runtime occupancy. Grass has no render of its own: the legacy tuft instancer was deleted Aug 22, so the meadow blade field (src/render/grass.js) is the only grass drawn and cutting a cell changes simulation state only. Land color samples a deterministic repeating 64×64 RGBA tile: 16 KiB canvas backing plus 16 KiB GPU level (mipmaps disabled), replacing the former 7680×5120 allocation of about 150 MiB on each side.
 
 ### Footprint is not the other radii
 
@@ -97,7 +97,7 @@ The grid governs *placement only*. Workers, enemies, the player cursor, loose re
 ## Building Categories
 
 ```text
-base
+base                       (the main base — built by the player, see Main Base below)
 ├── production
 │   ├── lumber camp
 │   └── quarry
@@ -171,6 +171,7 @@ Categories answer **what role does this building serve?** Tags answer **how does
 
 | Building | Category | Tags |
 |---|---|---|
+| Main base | Base | `constructed`, `automatic`, `single-target`, `cooldown`, `upgradeable`, `persistent` |
 | Lumber camp | Production | `constructed`, `staffed`, `automatic`, `resource-node`, `persistent` |
 | Quarry | Production | `constructed`, `staffed`, `automatic`, `resource-node`, `persistent` |
 | Stockpile | Storage | `constructed`, `manual`, `persistent` |
@@ -188,7 +189,31 @@ Categories answer **what role does this building serve?** Tags answer **how does
 | Garrison | Defense | `constructed`, `staffed`, `friendly`, `persistent` |
 | Consumable Forge | Progression | `constructed`, `manual`, `persistent` |
 
-Footprints for every row above live in the [Footprints](#footprints) table. All of them are 1x1 except the tower chassis, its variants, and the capture yard.
+Footprints for every row above live in the [Footprints](#footprints) table. All of them are 1x1 except the main base, the tower chassis, its variants, and the capture yard.
+
+### Main Base
+
+**Live: the opening, the authored levels, the defence and the haul post.** `MAIN_BASE` / `MAIN_BASE_LEVELS` (authored in `src/game/data.js`) plus the `mainBase` row in `BUILDING_TYPES` drive the startup flow and all three authored levels, each paying one permanent buff. The completed base now also owns the map centre's defence and its own two hauling slots. The king that used to fire from the centre is retired — record, model, palette roles and all. The base still borrows the old castle art until its own pixel model lands.
+
+**It is absent at the start of a run.** The world loads with no base on the map, and the run opens in the `"pre-wave"` clock state (`state.clock.phase`, `src/game/simulation.js`): untimed, fully lit, no countdown, no wave forecast, and no night to fall into. Gathering, cards, camera, construction delivery and elapsed run time all work normally there. The opening hand is exactly one card — `bpMainBase`, `inPool:false`, so no draft can ever offer it — and playing it needs no aiming: it drops the single unfinished site on the authored anchor and refuses a second. Delivering the level-1 recipe (10 wood) through the ordinary construction path completes it, sets `state.baseLevel` to 1, deals the run's first reward draft, and starts **day 1 with the full `DAY_DURATION`**. From that moment day/night pacing is exactly what it always was.
+
+**`state.baseLevel` is the one authority on whether a base stands.** Storage, the health target, enemy targeting, the hover action, the base's own attack, its hauling slots, worker flight destinations and the rendered structure all ask `mainBaseStanding()` (level > 0), never "is there a building record". Before it stands, the map centre is bare ground: nothing deposits there, nothing can damage it, hovering it does nothing, and a debug-spawned enemy with no other target idles in place instead of besieging an anchor. The **showcase** (`?mode=showcase`) is the documented exception: it is a fixture world, so it simply starts at level 1 with no construction record and never sees `"pre-wave"` — every base service in the gallery behaves as it did before the base became player-built.
+
+**Its anchor is fixed and reserved from world load.** `BASE` (map centre, radius 43, 3x3 footprint) is the spatial anchor and is completely separate from the built structure: it is immutable, nothing ever writes its `x`/`y`/`r`/`footprint`, and it reserves its nine cells by ordinary occupancy whether a base stands on them or not. The player never chooses where the base goes and can never move it. Everything the *structure* decides — health, storage reach, slots, attack, levels — lives in `MAIN_BASE`.
+
+**Its levels are authored, and the list ends.** `MAIN_BASE_LEVELS` is a deeply frozen list of hand-priced upgrades: level 1 costs 10 wood, level 2 costs 10 stone, level 3 costs 10 wood + 10 stone. `MAIN_BASE.maxLevel` is simply the length of that list — level 3 is the maximum and no consumer may extrapolate a level 4 price by continuing the pattern. Standing the base up in the first place costs the level-1 recipe itself (`MAIN_BASE.cost` *references* `MAIN_BASE_LEVELS[0].cost`, so the two can never drift), and it is staffed by `MAIN_BASE.buildSlots` (2) builders like any other site. This is the run's whole progression ladder: the XP level it used to sit beside (`state.level` / `LEVEL_CURVE`, earned from building completions) was deleted on 2026-08-22, and finishing an ordinary building now pays nothing but the building.
+
+**Raising a level is a delivery, and it pays a draft.** Level 1 is an ordinary construction site; levels 2 and 3 are carried to the **standing** base and released on it. The active recipe is `MAIN_BASE_LEVELS[state.baseLevel]`, its progress is `state.baseDelivered` (the level-1 recipe is the one exception — it is charged on the construction site's own `delivered` record), and partial deliveries bank there indefinitely. A release pays the recipe **first** and takes only what it still needs, so one release completes **at most one level** and everything left over — the whole load once the base is maxed — lands in storage. Worker haulers deliberately never fund a level: their deposits are storage only, because spending stone on an upgrade is the player's decision. Every completed level deals exactly one pick-one-of-three from the **mixed build + buff** pool, under its own draft kind (`"base"`, titled *the main base rises*) so it can never be mistaken for a dawn reward: a drafted buff applies immediately through `applyBuff()`, a drafted build lands in the hand. Since XP and its build-only level draft were deleted (2026-08-22) these three levels are the run's **only** source of build cards after the opening hand. Reward queue priority when several are banked at once: base levels, dawn buffs, then consumables. A free-cost completion pays no draft at all.
+
+**Attack role.** A completed base defends its own ground automatically: nearest visible enemy, `MAIN_BASE.range` 95, `MAIN_BASE.damage` 2, `MAIN_BASE.rate` 0.85s, enemies only (`updateBaseAttack`). Those are verbatim the numbers the retired king fired with, so the handover preserved the balance exactly rather than re-tuning it.
+
+The base is **not** a tower and gets none of a tower's shape: no variants, no manual activation, no relocation, no ward-totem HP. What it does share is the tower **combat rules**, by reuse rather than restatement — the same fog-gated target funnel (`eachTowerCombatTarget`, so an enemy standing in fog is as untargetable for the base as for a tower), the same three permanent buffs (`towerDamage`, `towerSpeed`, `towerRange`) and the same three auras applied by position (War Shrine damage, Haste Totem cooldown, Range Beacon range). `baseHp` remains the base's own health buff, and losing the base is still the run-loss condition. In practice the fog rule never fires for the base: its maximum reach is 195px and the starting clearing is `FOG.clearRadius` 560, so no fog block can stand inside it — it gets the rule anyway because it asks the one shared funnel.
+
+**Storage role.** The base is the colony's primary storage. Deposited resources are stored there, and `MAIN_BASE.storageRadius` (600px, the circle already drawn as `BASE_ZONE`) is its storage service reach: the range in which a base-posted hauler collects drops and inside which drops count as covered by base storage. A stockpile is the smaller, placeable second storage with its own service radius.
+
+**Hauling limit.** `MAIN_BASE.jobSlots` is 2 — the base's Worker Limit (see CONTEXT.md "Worker Limit"), so at most two haulers may be posted to it. It obeys the shared rules: occupancy derived from the workers whose `jobTarget` is the `BASE` anchor (manual, autonomous and **held** alike), reserved the instant a posting is named, a full base rejects a manual drop and restores the worker to its pickup origin, and a full base is excluded from autonomous hauling destinations. The level-1 site's **manual** builders inherit the haul post on completion when capacity permits — this is the one construction whose builders inherit a post on a *different* runtime object (the `BASE` anchor) than the record they finished. It draws the standard worker-slot tray from that same derived count. The base still produces no workers of its own; houses remain the only worker source.
+
+`BUILDING_TYPES.mainBase` deliberately carries **no** `jobSlots`. That row describes the *site*; the completed base's post is the `BASE` anchor — the same object storage, hover and enemy targeting already use — and authoring `jobSlots` on the row would open a second, competing two-slot pool at the same coordinates.
 
 ### Capture Yard
 
@@ -265,7 +290,7 @@ Workers have no permanent specialization. Every worker spawns **free** — the a
 | Incomplete blueprint | Deliver needed wood and stone from covering storage or nearby ground drops |
 | Resource node | Harvest nearby nodes of that resource |
 | Lumber camp / quarry | Staff that production building |
-| Stockpile / base | Haul nearby physical drops to that storage |
+| Stockpile / base | Haul nearby physical drops to that storage (the base holds `MAIN_BASE.jobSlots` haulers) |
 | Garrison | Guard that station (rejected outright when its three guard slots are full) |
 | House | Reposition at that house as a free worker |
 | Empty ground | Reposition there as a free worker |
@@ -294,7 +319,7 @@ Manual assignments are standing orders and are never overridden by the muster. C
 
 What a guard *gains* by standing there — the 10 HP / 2 damage kit, granted as a delta on arrival and clamped away on exit — is described once under [Garrison](#garrison); the muster only decides who walks to the post.
 
-A new run begins with zero workers. Each completed house owns `HOUSE_SLOTS` (4) worker slots and produces one missing worker per `WORKER_SPAWN_TIME` (12-second) cycle, so multiple vacancies refill sequentially. Reassignment never changes a worker's source-house ownership, and a living worker held for dragging still reserves that house's slot. Worker death immediately frees the owning house's slot and starts replacement timing. Carried resources become physical ground drops on death, while a permanent, inert corpse remains as scenery. The base has no worker-production capacity, but remains a valid storage and hauling target. Manual jobs remain within the worker's home leash. Harvesting always creates physical ground drops.
+A new run begins with zero workers. Each completed house owns `HOUSE_SLOTS` (4) worker slots and produces one missing worker per `WORKER_SPAWN_TIME` (12-second) cycle, so multiple vacancies refill sequentially. Reassignment never changes a worker's source-house ownership, and a living worker held for dragging still reserves that house's slot. Worker death immediately frees the owning house's slot and starts replacement timing. Carried resources become physical ground drops on death, while a permanent, inert corpse remains as scenery. The base has no worker-production capacity — `HOUSE_SLOTS` is population and belongs to houses alone — but it remains a valid storage and hauling target with its own Worker Limit. Manual jobs remain within the worker's home leash. Harvesting always creates physical ground drops.
 
 ## Design Rule
 

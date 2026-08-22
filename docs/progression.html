@@ -118,6 +118,13 @@
 <header>
   <p class="eyebrow">pacing bench · the thing in the ground</p>
   <h1>Progression Timeline</h1>
+  <p class="retired" style="border:2px solid #b5533a;padding:8px 10px;margin:0 0 12px">
+  <strong>RETIRED 2026-08-22 — the game has no XP.</strong> <span class="mono">state.xp</span>,
+  <span class="mono">state.level</span>, <span class="mono">LEVEL_CURVE</span> and
+  <span class="mono">RESOURCE_XP</span> were deleted. The live progression is the three authored
+  <span class="mono">MAIN_BASE_LEVELS</span> (each pays one build-or-buff draft) plus one dawn buff
+  per night survived. Everything below charts the OLD loop off a frozen copy of the last curve in
+  <span class="mono">docs/progression-spec.js</span> — historical pacing reference only.</p>
   <p>The whole run on one time axis, built around the <strong>pick-3 draft loop</strong>:
   feeding the thing earns XP, XP fills an exponential level curve, every level deals a draft,
   drafted buffs compound income, faster income feeds more. Game constants are imported
@@ -204,8 +211,11 @@
 </main>
 
 <script type="module">
-import {RESOURCE_XP,HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION,
+import {HOUSE_SLOTS,WORKER_CARRY,DAY_DURATION,
         BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,RESOURCE_KINDS} from "../src/game/data.js";
+// RESOURCE_XP was deleted from data.js with the XP system (2026-08-22). The bench keeps the last
+// live table as a frozen local copy so the historical charts still render.
+const RESOURCE_XP=Object.freeze({wood:1,stone:1,dust:5,coin:5,diamond:12});
 import {TUNE} from "../src/game/simulation.js";
 import {ARC,PHASES,BEATS,PLAYER_MODEL,LEVEL_CURVE,DRAFT_POLICY,phaseIndexAt} from "./progression-spec.js";
 import {cardById} from "../src/game/cards.js";
@@ -343,12 +353,12 @@ tile("price walls",tallWalls.length,tallWalls.length?"unlocks that make you save
   const wrap=document.getElementById("assumptions");
   const card=(cls,lbl,html)=>{const d=document.createElement("div");
     d.className="card "+cls;d.innerHTML=`<span class="lbl">${lbl}</span>`+html;wrap.appendChild(d);};
-  card("live","live gameplay + modeled pacing",
+  card("live","live gameplay + modeled pacing (XP figures are historical)",
     `<b>${TUNE.chopYield}</b> drop per chop · worker carry <b>${WORKER_CARRY}</b> ·
      house = <b>${HOUSE_SLOTS}</b> workers · day <b>${DAY_DURATION}s</b> · modeled wave-clear <b>~${MODELED_WAVE_CLEAR_SECONDS}s</b> (estimate; actual dawn requires full scheduled-wave clearance) ·
      build XP/unit <b>${RESOURCE_KINDS.map(k=>RESOURCE_XP[k]).join("/")}</b> (${RESOURCE_KINDS.join("/")}) ·
      buff effects from the <a href="cards.html" style="color:var(--accent)">card catalog</a>`);
-  card("authored","authored · level curve + drafts",
+  card("authored","authored · level curve + drafts (RETIRED)",
     `next level costs <b>${LEVEL_CURVE.base} × ${LEVEL_CURVE.growth}^level</b> XP ·
      modeled player takes an income buff every <b>${DRAFT_POLICY.incomeBuffEveryNLevels}</b> levels,
      cycling <b>${DRAFT_POLICY.cycle.length}</b> cards: ${DRAFT_POLICY.cycle.map(id=>cardById[id].id).join(", ")}`);

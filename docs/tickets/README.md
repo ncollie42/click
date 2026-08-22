@@ -16,7 +16,8 @@ construction — the reviewed casts are the thing being replaced, not the refere
 3. Headless proof: `node tools/rock-snap.mjs <name>.png [zoom] [x] [y]` at play zoom and 3×,
    and the read is NAMED as the intended subject at both. `node scripts/validate.mjs` green.
 4. `docs/pixel-models.md` case-law row added. The old module key is no longer imported anywhere
-   (leave the file in `models/reviewed/` — ticket 07 deletes the folder once all are done).
+   (leave the file in `models/reviewed/` — ticket 07 deletes the folder once all are done). Ticket
+   03 is the exception: `the-hole.js` had exactly one consumer and was deleted with it.
 
 Order: 01 → 06 are independent; 07 last. Size vocabulary: 1 cell = 2 wu = 32 game px.
 
@@ -24,7 +25,7 @@ Order: 01 → 06 are independent; 07 last. Size vocabulary: 1 cell = 2 wu = 32 g
 |---|---|---|---|
 | 01 | [workers](01-workers.md) | `reviewed/worker-peg.js` | constantly — highest value |
 | 02 | [enemies](02-enemies.md) | `reviewed/enemy-shard.js` | every night |
-| 03 | [main base](03-main-base.md) | `reviewed/the-hole.js` | always on screen |
+| 03 | [main base](03-main-base.md) — **done** | `reviewed/the-hole.js` (deleted) | only after the player builds it |
 | 04 | [summoning circle](04-summoning-circle.md) | `reviewed/summoning-circle.js` | per cast |
 | 05 | [diamond](05-diamond.md) | `reviewed/resource-nodes.js` diamond keys | map prop |
 | 06 | [chest](06-chest.md) | `reviewed/resource-nodes.js` chest keys | map prop |

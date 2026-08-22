@@ -29,9 +29,10 @@ quantize `oklab bands`.
 
 - `0` **oklab bands** (default) — OKLab lightness posterize, `bands` rungs; hue untouched.
 - `1` **palette match** — nearest authored color by OKLab distance (`spread` jitters L).
-  `paletteSize` picks the 8/16/32-color tier (PALETTES in pixel.js);
-  `pixelTune.palette = [hexes]` overrides them, `null` restores. Night/day re-toning = swap
-  the array.
+  There is exactly ONE target: the authored swatches (`QUANT_PALETTES[32]` in palette.js).
+  `pixelTune.palette = [hexes]` swaps the whole tier, `null` restores — that array IS the
+  night/fire re-toning mechanism. Kept as an A/B; it lost the Aug 22 comparison against bands
+  (selout ink speckled brown, rocks went lavender, meadow patches dithered away).
 
 (The old mode-1 **rgb levels** quantizer + dither endpoint fade were cut Aug 19 by owner call —
 dead code; recover from git if ever wanted. Saved presets with `quantizeMode 2` clamp onto

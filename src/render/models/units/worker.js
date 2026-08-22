@@ -2,6 +2,8 @@
 import * as THREE from "three";
 import {S, bakeStatic} from "../kit.js";
 import {adoptModel} from "../adopt.js";
+import {shadeToFamily} from "../game-rig.js";
+import {TONES} from "../../palette.js";
 import {MODELS as PEG_MODELS, dressCarry} from "../reviewed/worker-peg.js";
 
 // Job -> dressed peg. Key format "worker-<job>[+carry]": the +carry suffix dresses the SAME job
@@ -19,6 +21,9 @@ export function makePegWorker(key){
     const stack = inner.getObjectByName("stack");
     if(stack) bakeStatic(stack, {requireShadow: false, shell: false});
   }
+  // Coats are wood/olive/denim/gold; the wood shadow is the family cast and every coat that is
+  // not brown scales off it proportionally (see shadeToFamily), so job colour survives the shade.
+  shadeToFamily(inner, TONES.wood.shadow);
   adoptModel(inner);
   const g = new THREE.Group();
   g.add(inner);

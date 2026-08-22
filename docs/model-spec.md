@@ -89,21 +89,49 @@ glowing between facets (emissive). The ONLY villain color. No timber/cloth/anyth
 - **Spawn:** grow from ground with overshoot.
 - **Wobble:** damped rotation oscillation, one line per axis.
 
-## The main base — the Keep and the Hole (3×3 footprint)
+## The main base — the stone dome (3×3 footprint)
 
-The keep stays (it charms); the pit joins it. Full footprint: the model fills its entire 3×3 cell
-reservation (96×96 sim px) — keep on one half, pit on the other, sand apron underneath, crude
-timber+stone curb around the pit rim with one tip-in chute. Thin violet cracks radiate from the
-pit and stop before the keep.
+One authored sphere, `src/render/models/buildings/main-base.js` `build(g, add)`, registered in
+`buildings/index.js` under the `mainBase` type and reached only as `makeBuilding("mainBase")`.
+Radius 2.0 wu, **smooth-shaded** and sunk 40 % of its diameter into the ground (2.4 wu stands
+above it), centred on the 3×3 footprint (6 wu) so ~1 wu of painted soil shows on every side. The
+Keep, the precursor pit, the orb, the gulp and the asleep/awake swap are all retired, and so is the
+4.4 wu cube that replaced them (owner, Aug 22).
 
-**Group tree:** `root → [apron, keep → [tower, crenellations, door], pit → [funnel, curb, chute, cracks], orb*]`
+Why a smooth sunken sphere: under the pixel pipeline the quantizer carves bands out of a continuous
+NdotL gradient, so a smooth curve reads as a lit mass while a flat-shaded ball hands it one value
+per facet (flat plates, an inked seam at every step) — the same finding that made the tree crown
+smooth. Sinking it is the test-scene reference domes' trick (`tools/test-scene/preset.js` `sink`):
+tangent on the ground it reads as a floating marble; buried it reads as rooted.
 
-| Motion | What moves | Driver | Charm note |
+**Group tree:** `root → [body]` — one toned mesh, no ground plate (the footprint pads are deleted;
+see below). The body stays a single mesh on purpose: `bakeStatic()` only fuses two or more meshes,
+and a fused mesh's `flat()` vertex-colour material would drop the tone-target uniforms, so a lone
+body keeps `toned(TONES.stone, {flatShading:false})`'s authored lit/shadow pair and its night tier.
+
+**Conditional presence.** The base is built, not given. `mainBaseStanding()` (`state.baseLevel > 0`)
+gates it: bare ground in the pre-wave opening, an ordinary construction blueprint while the site is
+unfinished, the dome from level 1 on. `syncBuildings` skips the completed record so `syncBase` is
+the single owner of the map centre.
+
+| Motion | What moves | Driver | Note |
 |---|---|---|---|
-| idle breath | pit glow intensity slow-pulses | time | it is asleep, not dead |
-| feed gulp | funnel scales down-in briefly; cracks flash brighter | delivery event (`basePulse`) | the thing noticed |
-| tier-up | one new crack ring appears; longer rumble pulse | xp tier crossing | "I just made it worse" |
-| orb (awake stage) | faceted orb hovers over pit, slow spin + bob | tier ≥ threshold | the guardian woke up |
+| notice swell | body scales up ~5% and settles | `state.basePulse` (a delivery landed, or a hit) | the base answers the village |
+| hurt flash | body emissive → `PAL.hurtGlow` for .18 s | `state.baseHp` FALLING | `basePulse` cannot tell a delivery from damage |
+
+Authored base LEVEL is not a model state: the `main base · lv n/max` readout and its delivery
+progress live in `src/render/overlay.js`, alongside the health bar and the worker-slot tray.
+
+## No footprint pads (Aug 22)
+
+Buildings have no ground plate. `makeFootprintFloor()` and `PAL.pad` are deleted: every body seats
+its bottom face on `kit.js` `GROUND_Y` (= 0, the terrain plane), and the bare earth under a
+footprint is painted by the TERRAIN, from the wear field `scene.js` stamps per building record
+(`rebuildWearStatic` → `landSoil.uLandSoilAt`, `groundTune.soilAt` .85). The stamp is the footprint
+rect plus a half-world-unit soil margin and a 1 wu feathered rim; the margin exists because the
+wear field is 1 texel/wu and linearly filtered, so without it the soil edge falls *inside* the
+footprint and a corner can end up on bare green. Construction blueprints lost their pad too — the
+site is four corner posts on painted soil.
 
 ## The garrison — the guard station (1×1 footprint)
 
@@ -111,7 +139,7 @@ A villager build, not a keep: the same timber / plaster / stone / metal / banner
 house and the capture yard, plus the guard coat colour so the station reads as the home of the
 `guard` worker above. Compact hut pushed to the back (−Z) with a gabled roof and ridge beam, an open
 drill yard in front (+Z) — the simulation's `garrisonPost` sits at `y+18`, straight out the doorway,
-so nothing may block the +Z half of the pad. One wide door with a lintel, a shield either side in
+so nothing may block the +Z half of the footprint. One wide door with a lintel, a shield either side in
 `jobGuard` with a `metal` boss, a muster standard at the back corner clearing the roofline, and a
 weapon rack of racked spears on the left flank.
 
@@ -125,7 +153,7 @@ weapon rack of racked spears on the left flank.
 The pennants use the same contract as the Capture Yard's bay caps: the render layer reads derived
 occupancy and raises one marker per unit that is actually standing there. A reserved-but-travelling
 guard raises nothing. No new UI and no extra worker model are introduced — vacancy still reads
-through the existing worker-slot tray and its "! vacant" label.
+through the existing worker-slot tray (filled = assigned, hollow = open). There is no text nag.
 
 ## Verification
 

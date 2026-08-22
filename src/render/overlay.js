@@ -30,7 +30,8 @@ import {
   state, trees, rocks, diamonds, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, damageNumbers, resourceDrops,
   fogAtPoint,
   badgeAction, chopProgress, heldChopTarget, primaryHeld, hoverTarget, hoveredBuilding, captureYardOccupancy,
-  buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldBuilding, heldChest, workerOccupancyStatus, workerOccupancyAt, durablePostStatus, workerMaxHp, clamp
+  buildingCost, towerUpgradeList, carriedTotal, heldWorker, heldBuilding, heldChest, workerOccupancyStatus, workerOccupancyAt, workerMaxHp, clamp,
+  mainBaseStanding, mainBaseStatus
 } from "../game/simulation.js";
 
 const canvas = document.getElementById("overlay");   // 2D overlay sits above the WebGL scene
@@ -177,11 +178,11 @@ export function drawOverlay(){
   ctx.setTransform(overlayScale,0,0,overlayScale,0,0);
   ctx.clearRect(0,0,VIEW_W,VIEW_H);
 
-  // Night lighting, screen space, exactly as before.
-  if(state.clock.light>0){
-    ctx.fillStyle = "rgba(12,28,67,"+state.clock.light+")";
-    ctx.fillRect(0,0,VIEW_W,VIEW_H);
-  }
+  // Night wash REMOVED (Aug 22): night is now a palette swap in the 3D scene (palette.js
+  // TONES_NIGHT + rig.js NIGHT_SUN_SCALE, mixed by material-light-mods uLmNight), and the old
+  // 2D navy fill on top double-counted it and re-tinted the quantized swatches off-palette.
+  // state.clock.light still drives the scene (it is the normalised night phase) — only the
+  // screen-space fill is gone.
   drawNightTelegraph();
   drawBuilderLines();
 
@@ -228,7 +229,20 @@ export function drawOverlay(){
   // Effective maximum, not the ordinary one: an arrived garrison guard carries the bigger pool, so
   // its bar must fill against that or a fortified guard would read as permanently wounded.
   for(const w of state.workers){const max=workerMaxHp(w);health(w,w.x,w.y,30,w.hp/max,40,css(PAL.hpGood));}
-  health(BASE,BASE.x,BASE.y,84,state.baseHp/state.baseMax,90,css(PAL.bad));
+  // No base, no health track: during the pre-wave opening the map centre holds nothing to wound,
+  // and its unfinished site draws the ordinary delivery panel in the building loop below.
+  if(mainBaseStanding()){
+    health(BASE,BASE.x,BASE.y,84,state.baseHp/state.baseMax,90,css(PAL.bad));
+    // The authored progression, in the SAME "carry resources here" language every blueprint and
+    // upgrade uses — the standing base is just another delivery target until it tops out.
+    const base=mainBaseStatus(),levelText="main base · lv "+base.level+"/"+base.maxLevel;
+    if(base.atMaxLevel)label(levelText+" · max",BASE.x,BASE.y,60,"#e8dcbc");
+    else drawDelivery(BASE.x,BASE.y,levelText+" → "+(base.level+1),base.cost,base.delivered,css(PAL.storage));
+    // The base is a durable haul post (MAIN_BASE.jobSlots), so it wears the SAME occupancy mark
+    // every station wears — the slot tray, read off the shared derived occupancy.
+    // It is not in `buildings`, so it cannot ride the loop below and says so here instead.
+    if(occupancyVisible(BASE))drawOccupancy(BASE,30);
+  }
 
   for(const b of buildings){
     // Blueprints and upgrades are the same job — carry resources here — so they
@@ -240,9 +254,7 @@ export function drawOverlay(){
       if(b.starved) label("! starved", b.x, b.y, 22, "#e08a76");
       continue;
     }
-    const staffing=durablePostStatus(b);
-    if(staffing&&staffing.arrived<staffing.capacity)label("! vacant",b.x,b.y,30,"#72c9b2");
-    if(staffing&&occupancyVisible(b))drawOccupancy(b,48);
+    if(occupancyVisible(b))drawOccupancy(b,48);
     if(b.type==="tower" && b.tower)
       health(b,b.x,b.y,56,b.tower.hp/b.tower.maxHp,52,css(PAL.hpGood));
     // Yard capacity is derived per frame, so this readout is correct the instant a capture lands
@@ -292,7 +304,9 @@ function drawDamageNumbers(){
     ctx.save();ctx.globalAlpha=alpha;ctx.textAlign="center";ctx.textBaseline="middle";
     ctx.font="900 "+size.toFixed(1)+"px Georgia, serif";
     ctx.lineJoin="round";ctx.lineWidth=Math.max(2,size*.18);ctx.strokeStyle="#211208";ctx.strokeText(text,x,y);
-    ctx.fillStyle=hit.critical?"#fff1a6":hit.tone==="received"?"#ef765f":"#f2c84b";ctx.fillText(text,x,y);
+    // tone "received" = damage the PLAYER took, so it wears PAL.bad (red2) — the same step as every
+    // other enemy-dealt read. "dealt" and criticals stay gold/amber: those are the player winning.
+    ctx.fillStyle=hit.critical?"#fff1a6":hit.tone==="received"?css(PAL.bad):"#f2c84b";ctx.fillText(text,x,y);
     ctx.restore();
   }
 }

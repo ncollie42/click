@@ -50,3 +50,65 @@ of the quantizer for free.
   renders them as intended, but if foam ever breaks on some GPU, look here first.
 - The editor's water tab (mode select + shared sliders) remains — that's the audition venue for
   any future candidate; docs/render-lab.md has the workflow.
+
+  ## Aug 22 2026 — the blue ramp, measured, and a night tier                  
+                                                                              
+  Re-judged INSIDE the pixel pipeline (mode 0, OKLab bands), which is what    
+  "after the renderer"                                                        
+  above was waiting for. Method: sample the #scene canvas and classify every  
+  pixel to its nearest                                                        
+  SWATCH in OKLab (the same ruler palette-snap.mjs uses), walking a line from 
+  land out to the                                                             
+  horizon.                                                                    
+                                                                              
+  **What the shipped water actually displayed:** blue2, 100%. Every pixel of  
+  the body, from the                                                          
+  shore rim to the far plane. The exp() gradient (mix(uShallow, uDeep, 1-exp(-
+  thickness*uFade)))                                                          
+  was never in play, because the basin has no shelf: the shore walls drop     
+  straight to SHORE_BOTTOM                                                    
+  (4.6 wu), so measured thickness jumps 0 -> ~7 wu inside a couple of pixels  
+  and 1-exp(-7*.45)                                                           
+  saturates at 0.95. waterShallow (blue1) was authored but unreachable, and   
+  waterFloor (cream1                                                          
+  sand) sits under a 0.93-alpha body, so it is invisible except in the foam   
+  rim.                                                                        
+                                                                              
+  **Two changes, both minimal:**                                              
+                                                                              
+  1. PAL.waterFoam cream0 -> **blue0**. The near-white rim was the one thing  
+  in frame above the eye                                                      
+  channel's ceiling (the house-law complaint recorded above), and blue0 is the
+  blue ramp's own top                                                         
+  step, so the shore reads as water rather than as a highlight.               
+  2. The ripple-gated foam falloff widened, smoothstep(1.8, .08, thickness) ->
+  smoothstep(4.5,                                                             
+  .08, thickness) (scene.js waterMat fragment). The foam term is the ONLY one 
+  with a usable                                                               
+  domain near this geometry, so it now carries the shallow band: partial blue0
+  coverage over the                                                           
+  blue2 body reads as blue1 in between. uFade is untouched — lowering it just 
+  moves which single                                                          
+  swatch the whole body lands on.                                             
+                                                                              
+  Displayed after (same walk, land -> horizon): shade0/stone3 (shore wall) ·  
+  blue0/blue1 (shallow                                                        
+  band) · blue2 (body, to the far mesh) · teal0 (waterFar plane) — the        
+  authored ramp, in order.                                                    
+  A real shallow SHELF (sloped shore geometry) is the only way to widen that  
+  band further; that is a                                                     
+  terrain change, not a shader one, and it is not done.                       
+                                                                              
+  **Night tier (scene.js WATER_****NIGHT).** The shader ignores scene lights, 
+  so before this it answered                                                  
+  night with uLight = 1 - night*.6 — it was the one surface that could only   
+  get                                                                         
+  blacker while                                                               
+  everything else swapped palette (see palette.js TONES_NIGHT / rig.js NIGHT).
+  It now lerps its three                                                      
+  colours one step down the same ramp on the same 0..1 phase the sun rides —  
+  shallow blue1->blue2,                                                       
+  deep blue2->teal0, foam blue0->blue1 — and the dim drops to 1 - night*.25.  
+  Measured at full                                                            
+  night: the body lands teal0/moss0, the shore shade0/stone3.                 
+

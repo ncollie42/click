@@ -7,12 +7,14 @@
 // imports them live from src/game/data.js + simulation.js, and card effects
 // live in src/game/cards.js. Edit the game, refresh, the charts move.
 //
-// STALE (2026-08-20): the game's XP source changed to construction completion only (cost-weighted
-// RESOURCE_XP; base deposits are pure storage). The PLAYER_MODEL below (feedFraction,
-// avgXpPerFedUnit) still models the deleted feed economy, so the charts' XP arc is wrong until the
-// model is rebuilt around build-spend. Structural beats/curve/draft policy remain valid.
+// RETIRED (2026-08-22): THE GAME HAS NO XP. state.xp / state.level / LEVEL_CURVE / RESOURCE_XP
+// were deleted; progression is now the three authored MAIN_BASE_LEVELS, each paying one draft, plus
+// one dawn buff per night survived. Everything below that mentions XP, levels or draft cadence
+// models a loop that no longer runs — it is kept as the historical pacing bench (and because the
+// structural BEATS, PHASES and ARC are still the design intent) until a base-level model replaces
+// it. Do not read the XP arc in docs/progression.html as a claim about the live game.
 //
-// Direction (decided 2026-08-14): Vampire-Survivors-style leveling. XP from
+// Direction (decided 2026-08-14, retired 2026-08-22): Vampire-Survivors-style leveling. XP from
 // feeding the thing fills an exponential level curve; every level-up deals a
 // pick-3 draft from src/game/cards.js. The draft IS the dopamine drip, so the
 // beat schedule below only carries STRUCTURAL moments — the drip is emergent
@@ -29,11 +31,11 @@ export const ARC = {
   nightIncomeFactor: 0.35,   // fraction of day gather rate sustained through a night
 };
 
-// ── level curve — XP to go from level n to n+1 ───────────────────────────────
-// cost(n) = base × growth^n. The model integrates income against this and
-// reports the draft cadence; the target band is one draft every 0.5–3 min.
-// The GAME's table is canonical — this is a pass-through, not a second copy.
-export {LEVEL_CURVE} from "../src/game/data.js";
+// ── level curve — XP to go from level n to n+1 (HISTORICAL) ──────────────────
+// cost(n) = base × growth^n. This used to be a pass-through re-export of the game's own table;
+// data.js LEVEL_CURVE was deleted with the XP system on 2026-08-22, so this is now a FROZEN COPY
+// of the last live numbers, owned by this bench alone. It drives nothing in the game.
+export const LEVEL_CURVE = Object.freeze({base:6, growth:1.19});
 
 // ── draft policy — what the modeled player picks ─────────────────────────────
 // Deterministic stand-in for a real player: every `incomeBuffEveryNLevels`-th
@@ -44,7 +46,7 @@ export {LEVEL_CURVE} from "../src/game/data.js";
 export const DRAFT_POLICY = {
   incomeBuffEveryNLevels: 2,
   cycle: ["clickSpeed","workerCarry","critClicks","workerSpeed","chopYield",
-          "steadyHand","xpAppetite","vacuumRadius","workerSlot","handCarry","nightOwl"],
+          "steadyHand","vacuumRadius","workerSlot","handCarry","nightOwl"],
 };
 
 // ── phases — contiguous bands, minutes ───────────────────────────────────────

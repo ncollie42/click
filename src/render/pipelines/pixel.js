@@ -52,15 +52,21 @@
 //
 // Quantize modes (`quantizeMode`):
 //   0 oklab bands — retro's look: 32-band OKLab lightness posterize + blue shift (default).
-//   1 palette     — nearest-in-OKLab against an authored palette tier (dithered on L).
+//   1 palette     — nearest-in-OKLab against the authored 32 swatches (dithered on L). Lost the
+//                   Aug 22 A/B; kept as a live comparison and as the swap-a-tier mood mechanism.
 //
 // COLOR SPACE / precision: see post-stage.js's COLOR SPACE header — linear RT (HalfFloat when the
 // driver can render to it; the RGBA8 fallback WILL band in the darks before any quantizer runs),
 // manual sRGB encode in the composite, gated on renderer.outputColorSpace.
 
-// Quantize tiers live in palette.js (QUANT_PALETTES) with every other colour; re-exported for
-// callers that still reach for pixel.PALETTES.
-export const PALETTES = QUANT_PALETTES;
+// The palette-match target lives in palette.js (QUANT_PALETTES[32] = the authored SWATCH table),
+// with every other colour. There is exactly one tier; a different look is a `pixelTune.palette`
+// array (the night/fire mood mechanism), not a second tier.
+const SWATCH_PALETTE = QUANT_PALETTES[32];
+/** The hexes palette-match is snapping to right now: a console/preset `palette` override if one
+ *  is set, otherwise the authored swatches. Panel strip + syncUniforms read this. */
+export const activePalette = tune => Array.isArray(tune.palette) && tune.palette.length
+  ? tune.palette : SWATCH_PALETTE;
 
 /** Live-read every frame. Exported and mirrored on window for console tuning.
  *  Values are the OWNER DEFAULTS, Aug 20: ported wholesale from the test scene's solved
@@ -79,9 +85,16 @@ export const pixelTune = {
                           // "scene" = shadow-casting plane (dithered) · "image" = composite fold
   toonRamp: true,         // material-stage banded lighting (material-light-mods.js; terrain/fog
                           // opt out scene-side). Lives here so ONE panel owns the look knobs.
-  cloudScale: 0.038,     // ~26 wu features
+  // Scale/cover tuned Aug 22 against a GAMEPLAY screen (zoom 1.6 = 37.5 x 21 wu of ground), by
+  // flood-filling the coverage field over 60 such windows across the 96x64 map:
+  //   .038 / .65 (old) — 18% of screens had NO cloud shadow at all, and when one showed up its
+  //                      p90 footprint was 31% of the screen: long nothing, then one slab.
+  //   .045 / .60 (now) — 0% empty, median 2 masses, 97% of screens under 4, median biggest mass
+  //                      11% of the screen. That is the "1-3 distinct cloud shadows" read.
+  // Smaller features (.06+) start reading as noise/dapple rather than passing clouds.
+  cloudScale: 0.045,     // ~22 wu features
   cloudSpeed: 0.01,
-  cloudCover: 0.65,      // THRESHOLD (lower = more cloud); field mean ~0.45. Owner call Aug 21:
+  cloudCover: 0.60,      // THRESHOLD (lower = more cloud); field mean ~0.45. Owner call Aug 21:
                          // only the fbm peaks shade — a cute passing puff now and then, never
                          // half the map dark (was 0.38, which shaded ~half the meadow).
   cloudDarken: 0.1,      // image mode only (inert in scene mode)
@@ -130,8 +143,9 @@ export const pixelTune = {
                          // is lowest at 37 (round 2)
   spread: 0.08,          // dither amplitude at band borders (both modes). .16 → .08 Aug 22: with
                          // 32 swatches the wider zone read as speckle over the meadow
-  paletteSize: 32,       // mode 1: the one authored tier (palette.js QUANT_PALETTES)
-  palette: null,         // set an array of hexes (≤32) to override the authored tiers
+  palette: null,         // mode 1 target: null = the authored swatches (palette.js
+                         // QUANT_PALETTES[32]); set an array of ≤32 hexes to swap the whole tier
+                         // (how a night/fire mood re-tones the frame — t3ssel8r's move)
 };
 if(typeof window !== "undefined") window.pixelTune = pixelTune;
 
@@ -176,7 +190,6 @@ export const PANEL_SPEC = {
   ],
   selects: [
     ["quantizeMode", "quantize", [[0, "oklab bands"], [1, "palette match"]]],
-    ["paletteSize", "palette (m1)", [[32, "swatches (32)"]]],
     ["cloudsMode", "cloud shade via",
      [["material", "material (smooth)"], ["scene", "shadow plane"], ["image", "image fold"]]],
     ["inkMode", "outline ink", [["selout", "selout (own colour)"], ["uniform", "uniform olive"]]],
@@ -215,19 +228,18 @@ export const PANEL_SPEC = {
     rays: "Volumetric god rays (needs clouds on).",
     snap: "Quantizes the camera onto the texel lattice so pans step whole pixels instead of shimmering.",
     subpixel: "Shows the snapped render from the true camera position — pans glide while texels stay locked (needs snap).",
-    quantizeMode: "oklab bands = posterize lightness, hue untouched. palette match = snap every pixel to the nearest authored colour.",
-    paletteSize: "Which authored palette tier palette-match snaps to.",
+    quantizeMode: "oklab bands = posterize lightness, hue untouched (the shipped look). palette match = snap every pixel to the nearest authored swatch; it lost the Aug 22 A/B (ink speckle, lavender rocks) and is kept as a live comparison.",
     cloudsMode: "material (smooth) = analytic shade computed IN the materials: smooth penumbra, object sides, no dither — the default. shadow plane = real shadow-map clouds (dithered penumbra). image fold = flat screen-space multiply (cloud darken applies).",
     toonRamp: "Material-stage banded lighting (the round-5 audition, game-wide): the sun term steps through an authored ramp before the quantizer. Terrain and fog stay smooth by design.",
     inkMode: "selout = silhouette ink is each pixel's own colour banded darker (house style). uniform = one authored dark-olive ink on every silhouette, like the reference. Colour: pixelTune.inkColor (console).",
   },
 
   // A live colour strip the panel renders after the named select: the exact hexes the palette
-  // quantizer is matching against right now (authored tier, or a console-set tune.palette).
+  // quantizer is matching against right now (authored swatches, or a console-set tune.palette).
   swatches: {
-    after: "paletteSize",
-    tip: "The authored colours palette-match snaps to. Console-set pixelTune.palette overrides the tiers.",
-    get: t => Array.isArray(t.palette) && t.palette.length ? t.palette : PALETTES[t.paletteSize] || PALETTES[32],
+    after: "quantizeMode",
+    tip: "The colours palette-match snaps to: the authored swatches, unless pixelTune.palette overrides them.",
+    get: activePalette,
   },
 
   // Knobs that are inert under a condition; debug-panel dims the row and appends `why` to the
@@ -240,7 +252,6 @@ export const PANEL_SPEC = {
     creases: {when: t => t.normalEdges === true, why: "inactive: normal edges is the active crease detector"},
     edgeHighlight: {when: t => t.normalEdges !== true, why: "inactive: needs normal edges on"},
     normalThreshold: {when: t => t.normalEdges !== true, why: "inactive: needs normal edges on"},
-    paletteSize: {when: t => +t.quantizeMode !== 1, why: "inactive: quantize is in oklab-bands mode"},
     bands: {when: t => +t.quantizeMode === 1, why: "inactive: quantize is in palette mode"},
     rayStrength: {when: t => t.rays === false || t.clouds === false, why: "inactive: rays/clouds off"},
     raySteps: {when: t => t.rays === false || t.clouds === false, why: "inactive: rays/clouds off"},
@@ -688,10 +699,7 @@ function syncUniforms(THREE, renderer, cam, sun){
   uniforms.uBands.value = Math.max(2, Math.round(+pixelTune.bands || 32));
   uniforms.uSpread.value = clamp(+pixelTune.spread || 0, 0, 1);
 
-  // A console-authored pixelTune.palette wins; otherwise paletteSize picks an authored tier.
-  const pal = Array.isArray(pixelTune.palette) && pixelTune.palette.length
-    ? pixelTune.palette
-    : PALETTES[pixelTune.paletteSize] || PALETTES[32];
+  const pal = activePalette(pixelTune);
   const key = pal.join(",");
   if(key !== paletteKey){
     paletteKey = key;

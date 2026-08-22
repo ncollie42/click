@@ -1,19 +1,18 @@
 // Map editor — curated object palette over the project's model factories.
 // Owns the mapping from stable map object IDs to src/render/models.js factories
-// plus editor metadata. Factories are reused, never copied; groups a factory
-// pre-positions (the main base) are normalized back to the origin so placement
-// is always cell-driven. Browser-only (models.js imports "three").
+// plus editor metadata. Factories are reused, never copied; every group is
+// normalized back to the origin so placement is always cell-driven.
+// Browser-only (models.js imports "three").
 
 import {
-  makeTree, makeRock, makeDiamond, makeChest, makeMainBase, makeBuilding,
+  makeTree, makeRock, makeDiamond, makeChest, makeBuilding,
   disposeGroup, S,
 } from "../../src/render/models.js";
 
 export {disposeGroup, S};
 
 // Every factory group is re-anchored at the origin: the map document owns the
-// cell, the preview derives the transform. Pre-positioned factories (main base)
-// otherwise carry their production world coordinates.
+// cell, the preview derives the transform.
 function normalized(group){
   group.position.set(0, 0, 0);
   return group;
@@ -26,7 +25,11 @@ export const OBJECT_CATALOG = Object.freeze({
   "rock": Object.freeze({label: "rock", variants: null, build: () => normalized(makeRock())}),
   "diamond": Object.freeze({label: "diamond", variants: null, build: () => normalized(makeDiamond())}),
   "chest": Object.freeze({label: "chest", variants: null, build: () => normalized(makeChest())}),
-  "base": Object.freeze({label: "main base", variants: null, build: () => normalized(makeMainBase(false))}),
+  // The main base is an ordinary registered building body now (a sunken stone dome on the 3x3
+  // footprint). The
+  // editor previews it as authored geometry; the RUNNING game raises it only once the player
+  // finishes level 1, so the map centre is bare at the start of a run.
+  "base": Object.freeze({label: "main base", variants: null, build: () => normalized(makeBuilding("mainBase"))}),
   "house": Object.freeze({label: "house", variants: null, build: () => normalized(makeBuilding("house"))}),
   "lumber": Object.freeze({label: "lumber camp", variants: null, build: () => normalized(makeBuilding("lumber"))}),
   "quarry": Object.freeze({label: "quarry", variants: null, build: () => normalized(makeBuilding("quarry"))}),

@@ -48,7 +48,6 @@ Living checklist for production assets. Current canvas art is placeholder art un
 
 - [ ] Generic worker: idle, walk, hurt, downed, carried, revived
 - [ ] Worker job tools: axe, pick, builder hammer, hauling sack, guard weapon
-- [ ] King: idle guard stance, sword attack, hit effects
 - [ ] Future explorer
 - [ ] Future repair unit
 

@@ -57,10 +57,10 @@ import {
 // authored table this panel touches.
 import {CARDS} from "../game/cards.js";
 import {
-  TUNE, DBG, state, xp, waveTier, waveThreatBudget, levelState, simulationEntityDiagnostics, buffStacks,
+  TUNE, DBG, state, waveTier, waveThreatBudget, mainBaseStatus, simulationEntityDiagnostics, buffStacks,
   setCameraZoom, setCapacity, togglePause,
   // debug entry points (view panel > gameplay)
-  spawnEnemy, debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
+  spawnEnemy, debugGrant, debugQueueDraft, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase, debugRaiseMainBase,
   setWaveThreatCurve, debugStartWave, debugClearEnemies, debugHealAll, debugDealCard, debugApplyBuff, debugClearHand
 } from "../game/simulation.js";
 import {
@@ -562,8 +562,8 @@ function bindControls(){
   bindV("vBuilderSelfSupply", v => { DBG.builderSelfSupply = v; });
   bindV("vBuilderRadius", v => { TUNE.builderSourceRadius = v; }, v => v + "px");
   bindV("vFreeSearchRadius", v => { TUNE.freeSearchRadius = v; }, v => v + "px");
-  bindBtn("vGrantXp",      ()=>debugGrantXp(25));
-  bindBtn("vGrantXpBig",   ()=>debugGrantXp(100));
+  bindBtn("vDealBaseDraft",()=>debugQueueDraft("base"));
+  bindBtn("vDealDawnDraft",()=>debugQueueDraft("dawn"));
   bindBtn("vGrantAll",     ()=>debugGrant(RESOURCE_KINDS));
   bindBtn("vGrantDust",    ()=>debugGrant(["dust"]));
   bindBtn("vGrantCoin",    ()=>debugGrant(["coin"]));
@@ -571,6 +571,9 @@ function bindControls(){
 
   // time — game speed moved here from the input pane; id, range, default, format unchanged.
   bindV("vSpeed", v=>{ TUNE.gameSpeed=v; },      v=>v+"x");
+  // The phase buttons below refuse during the pre-wave opening (there is no clock to move yet), so
+  // this one is the way past it: it stands the base up through the real path, for free, and day 1 begins.
+  bindBtn("vRaiseBase",    debugRaiseMainBase);
   bindBtn("vStartDay",     ()=>debugGoToPhase("day"));
   bindBtn("vStartNight",   ()=>debugGoToPhase("night"));
   bindBtn("vAdvancePhase", debugAdvancePhase);
@@ -590,17 +593,18 @@ function bindControls(){
   bindBtn("vClearHand", ()=>{ debugClearHand(); });
 }
 
-// Three different numbers on purpose: xp is everything ever fed, the level is what the draft rides
-// on, and the wave tier is what the night reads off that level.
-export function syncXpReadout(){
-  const level=levelState();
-  $v("vXpReadout").textContent="xp "+xp()+" · lv "+level.level+" ("+level.xp.toFixed(1)+"/"+level.next.toFixed(1)+") · tier "+waveTier();
+// Two different numbers on purpose: the base level is the run's whole progression (it deals the
+// drafts), while the wave tier is what the night reads — and since Aug 22 that comes off NIGHTS
+// SURVIVED, not off any player level, so the two can and should disagree.
+export function syncProgressReadout(){
+  const base=mainBaseStatus();
+  $v("vProgressReadout").textContent="base lv "+base.level+"/"+base.maxLevel+" · tier "+waveTier();
 }
 /** Push programmatic camera changes (orbit, wheel zoom) back into the sliders. */
 export function syncViewInputs(){
   $v("vYaw").value = Math.round(view.yaw);  $v("o_vYaw").textContent = Math.round(view.yaw)+"°";
   $v("vZoom").value = state.camera.zoom;    $v("o_vZoom").textContent = state.camera.zoom.toFixed(2);
-  syncXpReadout();
+  syncProgressReadout();
 }
 
 // ─────────────────────────────────────────────── visibility measurement

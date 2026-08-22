@@ -37,6 +37,11 @@ function rockHullGeometry(scale){
 }
 // Rock family = palette.js TONES.stone / stoneDk (Aug 22): authored lit/shadow swatches replace
 // the old hand-cooled local hexes (0x7f8b9d family) that compensated for the warm rig by eye.
+// TONES.stone's lit swatch is stone0 (cream), not stone1, and THIS hull is why: the crest fan sits
+// at toon band .866-1 and renders the lit swatch exactly, while the near-vertical walls fall to
+// bands .55/.22 and land stone1/stone2 — the reference's warm-top / neutral-side / lavender-shade
+// rock in one triple. Reshaping the hull's face angles changes which swatch each face reads;
+// re-check with the litColor math in scripts/palette-snap.mjs if the ring heights move.
 export function makeRock(){
   const g = new THREE.Group();
   const body = meshOf(rockHullGeometry(1), toned(TONES.stone));

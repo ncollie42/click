@@ -9,9 +9,9 @@
 //   models/adopt.js      adoption of the reviewed sim-px modules (shadows + sim-px ink)
 //   models/reviewed/     the gauntlet-reviewed standalone modules (viewer-loadable, import only three)
 //   models/nodes/        tree, rock, diamond, chest, drops (+ node-mesh.js, the reviewed-cast path)
-//   models/units/        worker, enemy (+corpse), king, damage dummy
-//   models/buildings/    one file per building type + index.js (registry + shared frame),
-//                        main-base.js, blueprint.js
+//   models/units/        worker, enemy (+corpse), damage dummy
+//   models/buildings/    one file per building type (main-base.js included) + index.js
+//                        (registry + shared frame), blueprint.js
 //   models/props/        showcase-only props
 // Dependency direction is one-way: kit <- game-rig <- adopt <- category files <- this barrel.
 // Building a NEW model: read docs/pixel-models.md (the pixel-model skill enforces it), add a
@@ -20,10 +20,9 @@
 export {
   S, WU, HU, gx, gz, flat, meshOf, isOutline, setOutlines, outlineMat, outlineMatPx,
   adoptOutlineShell, releaseOutlineShell, bakeStatic, disposeGroup,
-  FLOOR_H, FLOOR_LIFT, FLOOR_TOP, makeFootprintFloor,
+  GROUND_Y,
 } from "./models/kit.js";
 export {GAME_EXPOSURE, GAME_TARGET, relightForGame} from "./models/game-rig.js";
-export {makeGrassTuftGeometry} from "./models/nodes/grass-tuft.js";
 export {TREE_MODELS} from "./models/nodes/node-mesh.js";
 export {makeTree} from "./models/nodes/tree.js";
 export {makeRock} from "./models/nodes/rock.js";
@@ -32,9 +31,7 @@ export {makeChest} from "./models/nodes/chest.js";
 export {makeDrop, handMeshFor} from "./models/nodes/drop.js";
 export {makePegWorker} from "./models/units/worker.js";
 export {makeEnemy, makeCorpse} from "./models/units/enemy.js";
-export {makeKing} from "./models/units/king.js";
 export {makeDamageDummy} from "./models/units/damage-dummy.js";
 export {makeShowcaseProp} from "./models/props/showcase-prop.js";
-export {makeMainBase} from "./models/buildings/main-base.js";
 export {makeBlueprint} from "./models/buildings/blueprint.js";
 export {makeBuilding, BUILDING_BUILDERS} from "./models/buildings/index.js";

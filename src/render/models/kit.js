@@ -1,12 +1,12 @@
-// Owns: the shared model-building kit — the game-pixel->world-unit scale, the flat Lambert
-// helper, outline shells (world-unit and sim-px), static baking, group disposal, footprint pads
-// and the gable prism. Every model file imports from here; this file imports from no model file
+// Owns: the shared model-building kit — the game-pixel->world-unit scale, the ground seat, the
+// flat Lambert helper, outline shells (world-unit and sim-px), static baking, group disposal and
+// the gable prism. Every model file imports from here; this file imports from no model file
 // (dependency direction: kit <- game-rig <- adopt <- models/*/ <- models.js barrel).
 import * as THREE from "three";
-import {PAL} from "../palette.js";
+import {SWATCH} from "../palette.js";
 import {setToneTargets} from "../material-light-mods.js";
-import {SUN_INTENSITY, SUN_NDOTL, HEMI_INTENSITY} from "../rig.js";
-import {CELL,W,H} from "../../game/data.js";
+import {TONE_RIG, TONE_RIG_NIGHT} from "../rig.js";
+import {W,H} from "../../game/data.js";
 
 // ── the one unit conversion the whole render layer shares ───────────────────
 // The simulation thinks in 2D game pixels; three.js thinks in world units. game (x, y) maps to
@@ -20,11 +20,11 @@ export const flat = (color, extra={}) => new THREE.MeshLambertMaterial({color, f
 // flat() + authored tone targets (palette.js TONES): the material's albedo is the triple's albedo,
 // its flat-lit face renders `lit` and its shaded face `shadow` exactly (material-light-mods).
 // For live-rig models only (trees, rocks); baked casts go through game-rig.js instead.
-const TONE_RIG = {sunColor: PAL.sunDay, sunIntensity: SUN_INTENSITY, ndotl: SUN_NDOTL,
-                  skyColor: PAL.skyLight, hemiIntensity: HEMI_INTENSITY};
+// The tone triple carries its own `night` pair (palette.js TONES_NIGHT), so a toned material joins
+// the night tier by existing — nothing here or in the model files chooses a night colour.
 export const toned = (tone, extra={}) => {
   const m = flat(tone.albedo, extra);
-  setToneTargets(m, {...tone, rig: TONE_RIG});
+  setToneTargets(m, {...tone, rig: TONE_RIG, nightRig: TONE_RIG_NIGHT});
   return m;
 };
 // ── outlines ────────────────────────────────────────────────────────────────
@@ -36,7 +36,10 @@ export const toned = (tone, extra={}) => {
 let OUTLINE_ON = true;
 export const outlineMat = new THREE.ShaderMaterial({
   side: THREE.BackSide,
-  uniforms: {thickness:{value:.05}, tint:{value:new THREE.Color(0x1d1712)}},
+  // Ink is SWATCH.shade2 (Aug 22): the palette's own night-black, cool to match the lavender
+  // hemi the shadows now bridge into. The old 0x1d1712 was a warm near-black solved against the
+  // deleted warm hemi pair and printed a brown line around every cool-shaded prop.
+  uniforms: {thickness:{value:.05}, tint:{value:new THREE.Color(SWATCH.shade2)}},
   vertexShader: `
     uniform float thickness;
     void main(){
@@ -222,24 +225,15 @@ export function addPxOutline(mesh){
   outlineShells.push(shell);
 }
 
-// ── footprint floors ────────────────────────────────────────────────────────
-// A low pad covering exactly the cells canPlace() reserves for `type`. Every dimension is derived
-// from the footprint metadata (fp.w/fp.h in CELLS -> game px -> world units), so the tower's 3x3
-// pad and a deployable's single cell come from the same expression and nothing restates a size.
-// The model keeps its own scale and stays centred on the anchor; the pad is what grows.
-// Ownership: geometry and material are built PER INSTANCE. Building groups are torn down wholesale
-// by disposeGroup(), so nothing parented into one may share a geometry or material with anything else.
-export const FLOOR_H = .09;          // pad thickness in world units
-export const FLOOR_LIFT = .006;      // bottom face held clear of the ground plane
-export const FLOOR_TOP = FLOOR_LIFT + FLOOR_H;
-// Takes the footprint itself, not a type, so the base (which has no BUILDING_TYPES entry) uses the
-// same pad path as everything else.
-export function makeFootprintFloor(fp, color=PAL.pad){
-  // cast=false: no outline shell, no shadow casting, and therefore invisible to blockerMeshes().
-  const m = meshOf(new THREE.BoxGeometry(fp.w*CELL*S, FLOOR_H, fp.h*CELL*S), flat(color), false, true);
-  m.position.y = FLOOR_LIFT + FLOOR_H/2;   // box bottom sits just above y=0, so no coplanar ground face
-  return m;
-}
+// ── the ground seat ─────────────────────────────────────────────────────────
+// Every building body seats its bottom face here. It is plain 0: the terrain plane is y=0 and
+// bodies stand directly ON it. Until Aug 22 it was .096, the top of the flat footprint-sized PAD
+// mesh this kit drew under every building; the pads are deleted (owner: "if we have soil now — we can remove the ugly 'floor' around buildings — just have the soil"), and
+// the bare ground under a footprint is now painted by the terrain itself, from the wear field
+// scene.js stamps (rebuildWearStatic -> landSoil.uLandSoilAt).
+// Kept as a named constant rather than inlined: it is the one place to change if the ground ever
+// stops being flat, and it names what `+ h/2` in every body means.
+export const GROUND_Y = 0;
 
 // Fresh closed triangular prism for a pitched-roof gable. Positions are local to the wall top;
 // non-indexed faces keep the low-poly planes hard and let disposeGroup() own the geometry normally.

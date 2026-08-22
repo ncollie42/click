@@ -5,15 +5,15 @@ import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
   CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
   FOOTPRINT_1x1,FOOTPRINT_3x3,RESOURCE_FOOTPRINT,
-  RESOURCE_KINDS,RESOURCE_NODE_HP,FOG,CHEST,RESOURCE_XP,LEVEL_CURVE,CARD_BUFFS,CARD_CONSUMABLES,
+  RESOURCE_KINDS,RESOURCE_NODE_HP,FOG,CHEST,CARD_BUFFS,CARD_CONSUMABLES,
   HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,STAFF_GATHER,
-  BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
+  BUILDING_TYPES,MAIN_BASE,MAIN_BASE_LEVELS,UPGRADES,TOWER_VARIANTS,
   ENEMY_TYPES,ENEMY_SPAWN_RADIUS,
   ENEMY_POOL,
   NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,WAVE_THREAT_CURVE,WAVE_BOSS_SPAWNS,WIN_WAVE,
   DAY_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
-  KING,STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_TARGET_TYPE,DAMAGE_ORBS,SUMMONING_CIRCLE,CONSUMABLE_FORGE,DRAFT_REROLL,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
+  STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_TARGET_TYPE,DAMAGE_ORBS,SUMMONING_CIRCLE,CONSUMABLE_FORGE,DRAFT_REROLL,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
 } from "./data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -80,7 +80,7 @@ const NO_EFFECTS = {
   victory(){},               // the win wave was cleared; the run is over, won
   victoryContinued(){},      // the player dismissed victory and resumed into the next day
   pauseChanged(){},          // (paused)
-  levelChanged(){},          // xp progress or the level itself moved
+  baseLevelChanged(){},      // the main base gained a level, or banked progress toward the next
   draftChanged(){},          // an offer appeared, was consumed, or was replaced by the next one
   handChanged(){},           // the held-card list moved: a card arrived, was spent, or lost a charge
   buildHudChanged(){},       // placement mode was armed or cleared (the crosshair, the lifted card)
@@ -158,14 +158,11 @@ const state = {
   runMode:"normal",
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
-  // xp is the run TOTAL ever earned; levelXp is only the progress into the current level, so the
-  // two never have to be reconstructed from each other. Both are written by grantXp() alone.
-  xp:0,levelXp:0,level:0,
-  // The draft's whole run ledger: queued level/build, dawn/buff, and chest-or-forge consumable
-  // rewards; the live 3-card offer and kind; buff stacks; and two banked consumable effects. Blueprints
-  // keep no ledger at all — a plan is not an unlock, so the pool may offer the same one again.
-  // Authored tables stay untouched.
-  draft:{queue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0},
+  // The draft's whole run ledger: queued base-level, dawn/buff, and
+  // chest-or-forge consumable rewards; the live 3-card offer and kind; buff stacks; and two banked
+  // consumable effects. Blueprints keep no ledger at all — a plan is not an unlock, so the pool may
+  // offer the same one again. Authored tables stay untouched.
+  draft:{baseQueue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0},
   // ── the hand ──
   // Every card the player is HOLDING, oldest first. One entry per id: {id, count, charges} where
   // count is how many copies are held and charges is the partially-spent kit's remaining placements
@@ -175,16 +172,37 @@ const state = {
   // BUILDING_TYPES key whose ghost/footprint the placement flow draws; `cast` replaces placement
   // with a spell call at the anchor.
   cardTargeting:null,
+  // baseLevel is THE authority on whether a base stands: 0 while the map centre is bare (the
+  // pre-wave opening), then the authored MAIN_BASE_LEVELS level it has reached. Every base service —
+  // storage, hover, enemy target, the rendered structure — asks mainBaseStanding(), never the
+  // presence of a building record, so the showcase fixture (level 1, no construction record) and a
+  // real run answer the same question the same way. baseHp/baseMax stay the health pool the baseHp
+  // card grows; nothing may damage the base while baseLevel is 0.
+  baseLevel:0,
+  // Progress toward the NEXT authored level, MAIN_BASE_LEVELS[baseLevel], as a resource-count record.
+  // Written only by the main-base section below and cleared by every level it completes, so a
+  // partial delivery survives any number of frames, releases and phase flips.
+  // OWNERSHIP SPLIT, and the only one: while baseLevel is 0 the level-1 recipe is an ordinary
+  // CONSTRUCTION SITE, so its progress lives on that building record's `delivered` and this record
+  // stays all zeros (asserted). From level 1 on there is no site left and this is the whole ledger.
+  baseDelivered:{wood:0,stone:0,dust:0,coin:0,diamond:0},
   baseHp:100,baseMax:100,gameOver:false,victory:false,continuedAfterVictory:false,paused:false,draftPaused:false,coinTimer:45,basePulse:0,screenShake:0,buildMode:null,capacity:5,toastTimer:0,collectCooldown:0,collecting:false,
   // elapsed is simulated run time. remaining is the authoritative DAY countdown only; night has
   // no deadline and ends from active-wave clearance after the frame's complete combat pipeline.
-  clock:{phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0},
+  // THREE phases, not two: a run BOOTS into "pre-wave", the untimed gathering opening that lasts
+  // until the main base stands (remaining is 0, light stays full, no wave is ever scheduled). It is
+  // a real phase rather than a daytime flag so every phase reader has to answer for it explicitly.
+  // pre-wave is entered once, at world load, and left once, through beginFirstDay().
+  clock:{phase:"pre-wave",remaining:0,completedNights:0,light:0,elapsed:0},
   // activeNightNumber owns the generation currently eligible to gate dawn. Scheduled enemies copy
   // it to enemy.waveNightNumber; manual/showcase enemies deliberately omit that field.
   nightWave:{upcomingPlan:null,activePlan:null,threatBudget:0,spawnedThreat:0,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0,activeNightNumber:null},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
   upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,showcaseFocus:null,
-  king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
+  // The standing base's automatic defence (updateBaseAttack). Same three fields a tower's `tower`
+  // record carries for the renderer: the cadence gate, a decaying muzzle flash, and where the last
+  // shot went. Purely runtime — every NUMBER behind it is MAIN_BASE's.
+  baseAttack:{cooldown:0,flash:0,targetX:BASE.x,targetY:BASE.y}
 };
 
 const rand = (a,b) => a + Math.random()*(b-a);
@@ -221,9 +239,12 @@ const DBG={
 // Gameplay reads:    globalUpgradeEnabled() is pure obelisk ownership; there is no override map.
 function legitimateGlobalUpgradeOwned(id){return buildings.some(building=>building.complete&&building.type==="obelisk"&&building.upgrades[id]);}
 function globalUpgradeEnabled(id){return legitimateGlobalUpgradeOwned(id);}
-// Level still unlocks broader authored Spawn Pools. Quantity/difficulty no longer comes from this
-// tier: waveThreatBudget() owns that independently, so enemy stats never need hidden scaling.
-function waveTier(){return Math.min(4,Math.floor(state.level/3));}
+// Broader authored Spawn Pools unlock with NIGHTS SURVIVED, not with a player level — the XP track
+// this used to read (Math.floor(state.level/3)) was deleted Aug 22 and elapsed nights is the
+// progression number the wave composer already thinks in. nightNumber counts nights BEGUN, so the
+// upcoming wave is nightNumber+1: tier 0 covers waves 1-2, tier 1 waves 3-4, tier 2 waves 5+.
+// Quantity/difficulty still comes from waveThreatBudget() alone, so enemy stats never hidden-scale.
+function waveTier(){return Math.min(4,Math.floor(state.nightWave.nightNumber/2));}
 // Runtime curve holder. WAVE_THREAT_CURVE remains the authored reset/default; only the debugger's
 // setter below writes this holder, and an active Spawn Plan remains an immutable snapshot.
 const WAVE_TUNE={...WAVE_THREAT_CURVE};
@@ -422,8 +443,7 @@ function buildShowcaseFixtures(){
   state.showcaseFocus=damageDummies[0]||null;
   for(const f of SHOWCASE_MANIFEST.props)showcaseProps.push({id:f.id,model:f.model,x:f.x,y:f.y,homeX:f.x,homeY:f.y,footprint:f.footprint,showcaseKey:"prop:"+f.id,showcaseLabel:f.label,showcaseSection:f.section});
   showcaseLabelRecords.push(
-    {key:"fixed:base",entity:BASE,label:"base",section:"units",height:88},
-    {key:"fixed:king",entity:state.king,label:"king",section:"units",height:34}
+    {key:"fixed:base",entity:BASE,label:"base",section:"units",height:88}
   );
   for(const items of [[...trees,...rocks,...diamonds],resourceDrops,chests,buildings,state.workers,state.enemies,damageDummies,showcaseProps])
     for(const entity of items)if(entity.showcaseLabel)showcaseLabelRecords.push({key:entity.showcaseKey,entity,label:entity.showcaseLabel,section:entity.showcaseSection,height:entity.type==="tower"?70:38});
@@ -433,12 +453,13 @@ function buildShowcaseFixtures(){
 }
 // First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
-function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.draft={queue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();}
-// ── STRAWMAN, for owner tuning ──────────────────────────────────────────────
-// With the build shop gone, cards are the ONLY way to put a building on the ground. XP will offer
-// later blueprints, but the opening needs one house (workers) and one basic tower chassis (the first
-// night). It is a DESIGN GUESS — change the ids/counts or delete the line; nothing else reads it.
-const STARTING_HAND=["bpHouse","bpTower"];
+function resetShowcaseEconomy(){state.draft={baseQueue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.baseLevelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();}
+// ── the opening hand ────────────────────────────────────────────────────────
+// ONE card. The run opens with nothing on the map and no clock pressure: the player gathers 10 wood
+// by hand, plays this card to raise the base site, and delivers the wood to it. Completing it ends
+// pre-wave and starts day 1, and the base level it completes is what deals the first draft — so the
+// house and the first tower are now EARNED in the opening rather than handed out with it.
+const STARTING_HAND=["bpMainBase"];
 let startingHandDealt=false;
 export function initializeRunMode(mode="normal"){
   if(!RUN_MODES.has(mode))throw new Error("invalid run mode: "+mode);
@@ -455,7 +476,11 @@ export function initializeRunMode(mode="normal"){
     validateSimulationInvariants();return;
   }
   installAllLandTerrain();
-  state.gameOver=false;state.victory=false;state.continuedAfterVictory=false;state.paused=false;state.showcaseFocus=null;state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.upcomingPlan=null;state.nightWave.activePlan=null;state.nightWave.threatBudget=0;state.nightWave.spawnedThreat=0;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
+  // The showcase is a FIXTURE world, not a run: its base is simply standing (level 1) with no
+  // construction record behind it, so every base service the gallery shows — storage ring, the
+  // "fixed:base" label, the rendered structure — works exactly as it did before the base became
+  // player-built. It therefore never sees "pre-wave": the sandbox opens, and stays, in day.
+  state.gameOver=false;state.victory=false;state.continuedAfterVictory=false;state.paused=false;state.showcaseFocus=null;state.baseLevel=1;state.baseDelivered=resourceCounts();state.baseHp=state.baseMax;resetShowcaseEconomy();state.clock={phase:"day",remaining:DAY_DURATION,completedNights:0,light:0,elapsed:0};state.nightWave.upcomingPlan=null;state.nightWave.activePlan=null;state.nightWave.threatBudget=0;state.nightWave.spawnedThreat=0;state.nightWave.totalSpawns=0;state.nightWave.remainingSpawns=0;state.nightWave.elapsed=0;state.nightWave.nextSpawnAt=0;state.nightWave.activeNightNumber=null;state.camera.x=SHOWCASE_MANIFEST.sections.towers.x;state.camera.y=SHOWCASE_MANIFEST.sections.towers.y;state.camera.zoom=SHOWCASE_MANIFEST.sections.towers.zoom;state.keys.clear();state.buildMode=null;state.carried=resourceCounts();state.stored=resourceCounts();buildShowcaseFixtures();clampCamera();effects.pauseChanged(false);
 }
 export function rebuildShowcase(){if(state.runMode!=="showcase")return false;resetShowcaseEconomy();installAllLandTerrain();buildShowcaseFixtures();return true;}
 function assertTemporaryBuildingState(building){
@@ -473,13 +498,33 @@ export function validateSimulationInvariants(){
   invariant(Number.isInteger(terrainDescriptor.revision)&&terrainDescriptor.revision>0,"invalid terrain revision");
   invariant(Number.isFinite(state.baseHp)&&state.baseHp>=0&&state.baseHp<=state.baseMax,"illegal base health");
   invariant(typeof state.victory==="boolean"&&typeof state.continuedAfterVictory==="boolean"&&(!state.victory||state.gameOver)&&!(state.victory&&state.continuedAfterVictory),"illegal victory lifecycle");
-  invariant(Number.isInteger(state.xp)&&state.xp>=0,"illegal xp");
-  invariant(Number.isInteger(state.level)&&state.level>=0,"illegal level");
-  invariant(Number.isFinite(state.levelXp)&&state.levelXp>=0&&state.levelXp<levelCost(state.level),"illegal level progress");
-  invariant(["day","night"].includes(state.clock.phase),"illegal phase "+state.clock.phase);
+  invariant(["pre-wave","day","night"].includes(state.clock.phase),"illegal phase "+state.clock.phase);
   invariant(Number.isFinite(state.clock.remaining)&&state.clock.remaining>=0,"illegal phase countdown");
+  // ── the main base ──
+  // baseLevel and the clock are two views of ONE fact: a normal run is in pre-wave exactly while no
+  // base stands. The showcase is the documented exception — a fixture base with no site record.
+  invariant(Number.isInteger(state.baseLevel)&&state.baseLevel>=0&&state.baseLevel<=MAIN_BASE.maxLevel,"illegal base level "+state.baseLevel);
+  if(state.runMode==="normal")invariant((state.clock.phase==="pre-wave")===(state.baseLevel===0),"the pre-wave opening disagrees with the base level");
+  else invariant(state.baseLevel===1&&state.clock.phase!=="pre-wave","the showcase fixture base must simply stand");
+  const mainBases=buildings.filter(building=>building.type==="mainBase");
+  invariant(mainBases.length<=1,"the map holds more than one main base");
+  for(const base of mainBases){
+    invariant(base.x===BASE.x&&base.y===BASE.y,"the main base left its authored anchor");
+    invariant(base.complete===(state.baseLevel>0),"the main base record disagrees with the base level");
+  }
+  // Deliberately NOT asserted: that a standing base still HAS its construction record. baseLevel is
+  // the authority, the record is ordinary construction, and headless harnesses routinely clear
+  // `buildings` wholesale between scenarios.
+  // The active authored recipe: never negative, never over-paid, and empty at both ends of the list
+  // (level 0 charges the construction site instead; the maximum level has no next recipe at all).
+  const nextBaseLevel=MAIN_BASE_LEVELS[state.baseLevel]||null;
+  for(const kind of RESOURCE_KINDS){
+    invariant(Number.isFinite(state.baseDelivered[kind])&&state.baseDelivered[kind]>=0,"illegal base delivery "+kind);
+    invariant(state.baseDelivered[kind]<=(nextBaseLevel?.cost[kind]||0),"the base banked more "+kind+" than its next authored level costs");
+  }
+  if(state.baseLevel===0)invariant(RESOURCE_KINDS.every(kind=>state.baseDelivered[kind]===0),"the level-1 recipe is charged on the construction site, never on state.baseDelivered");
   const offer=state.draft.offer;
-  for(const key of ["queue","dawnQueue","consumableQueue"])invariant(Number.isInteger(state.draft[key])&&state.draft[key]>=0,"illegal draft queue: "+key);
+  for(const key of ["baseQueue","dawnQueue","consumableQueue"])invariant(Number.isInteger(state.draft[key])&&state.draft[key]>=0,"illegal draft queue: "+key);
   invariant(offer===null||(Array.isArray(offer)&&offer.length>0&&offer.length<=3&&new Set(offer).size===offer.length&&offer.every(id=>cardById[id]?.inPool)),"illegal draft offer");
   invariant(offer===null?state.draft.offerKind===null:DRAFT_KINDS.includes(state.draft.offerKind),"draft offer kind disagrees with the pending offer");
   invariant(offer===null||offer.every(id=>DRAFT_CATEGORIES[state.draft.offerKind].includes(cardById[id].category)),"draft offer category disagrees with its kind");
@@ -599,6 +644,10 @@ export function validateSimulationInvariants(){
     // may mint one without a station. Showcase guards are inert display fixtures, exempt by design.
     if(worker.job==="guard"&&state.runMode==="normal")invariant(isGuardStation(worker.jobTarget),"a guard is not posted to a completed garrison");
     if(worker.job==="free")invariant(worker.autonomous&&worker.jobTarget===null&&worker.taskTarget===null&&worker.selfSupply===null,"free worker retains job state");
+    // A hauler is posted to the STANDING base or to a live stockpile — never to a base that has not
+    // been built, which would make the pre-wave map centre a storage destination.
+    if(worker.job==="haul"&&state.runMode==="normal")
+      invariant(worker.jobTarget===BASE?mainBaseStanding():buildings.includes(worker.jobTarget)&&worker.jobTarget.type==="stockpile","a hauler is not posted to the standing base or a stockpile");
     // A production scout is always POSTED: only a completed scout hut mints the job (drop or
     // construction inheritance). Its fog-cell task is checked with the taskTarget rule above.
     if(worker.job==="clearfog"&&state.runMode==="normal")invariant(buildings.includes(worker.jobTarget)&&worker.jobTarget.type==="scoutHut","a scout is not posted to a scout hut");
@@ -606,6 +655,9 @@ export function validateSimulationInvariants(){
   // Guard occupancy is DERIVED from the workers pointing at each garrison — held workers included —
   // so a reservation can never drift from a stored counter or oversubscribe the authored capacity.
   for(const building of buildings)if(building.type==="garrison"&&building.complete)invariant(assignedWorkers(building).length<=GARRISON.capacity,"garrison exceeds its guard capacity");
+  // Same rule, same derivation, for the base's Worker Limit: counted off the workers naming BASE
+  // (held ones included), never off a stored counter, so no reservation path can oversubscribe it.
+  if(state.runMode==="normal")invariant(assignedWorkers(BASE).length<=(mainBaseStanding()?MAIN_BASE.jobSlots:0),"the main base exceeds its authored Worker Limit");
   for(const brute of friendlyBrutes)invariant(brute.hp>0&&brute.hp<=brute.max&&brute.max===FRIENDLY_BRUTE.hp,"illegal friendly brute health");
   invariant(new Set(controlledEnemies).size===controlledEnemies.length,"duplicate controlled enemy ownership");
   for(const unit of controlledEnemies){
@@ -892,8 +944,17 @@ function syncWorkerGarrisonBonus(worker){
 }
 /** Every write of the station-arrival gate goes through here, so the kit can never lag the post. */
 function setWorkerStationArrival(worker,station){worker.staffingArrivedAt=station;syncWorkerGarrisonBonus(worker);}
+// Where a base hauler stands: south of the anchor, clear of the 3x3 footprint. One definition, so
+// the manual drop, construction inheritance and the free-worker scheduler cannot post to different
+// spots at the same station.
+const BASE_HAUL_POST={x:BASE.x,y:BASE.y+25};
 // Canonical completed-building assignment. Construction inheritance, placement, and vacancy filling share it.
 function builtJobAssignment(building){
+  // The completed main base is a durable HAUL post exactly like a stockpile — its jobSlots are
+  // MAIN_BASE.jobSlots — but its runtime identity is the BASE anchor, never the construction record
+  // that raised it. Both spellings resolve here so inheritance, drops and the scheduler share one
+  // two-slot pool at the map centre instead of two pools at the same coordinates.
+  if(building===BASE||building.type==="mainBase")return {job:"haul",jobTarget:BASE,postX:BASE_HAUL_POST.x,postY:BASE_HAUL_POST.y};
   if(building.type==="lumber"||building.type==="quarry")return {job:"staff",jobTarget:building,postX:building.x,postY:building.y+16};
   if(building.type==="stockpile")return {job:"haul",jobTarget:building,postX:building.x,postY:building.y+18};
   // A garrison is a durable post like any other station — its jobSlots ARE the guard slots, so it
@@ -911,12 +972,18 @@ function workerStaffsPost(worker,building){const assignment=builtJobAssignment(b
 function resourceNodeKind(node){return trees.includes(node)?"wood":rocks.includes(node)?"stone":diamonds.includes(node)?"diamond":null;}
 function assignedWorkers(target,excludeWorker=null){
   const candidates=state.workers.concat(heldWorker()&&!state.workers.includes(heldWorker())?[heldWorker()]:[]).filter(worker=>worker!==excludeWorker);
+  // The base's haulers name the BASE anchor, manual and autonomous alike, and a HELD hauler is
+  // still one of them (candidates above) — lifting a worker off the base keeps its slot reserved.
+  if(target===BASE)return candidates.filter(worker=>worker.job==="haul"&&worker.jobTarget===BASE);
   if(buildings.includes(target))return candidates.filter(worker=>target.complete?workerStaffsPost(worker,target):worker.job==="build"&&worker.jobTarget===target);
   return candidates.filter(worker=>(worker.job==="harvest"&&worker.jobTarget?.node===target)||worker.selfSupply?.node===target);
 }
 /** Read-only assignment/reservation status for an active node or completed durable building. */
 function workerOccupancyStatus(target,excludeWorker=null){
   if(state.runMode!=="normal")return null;
+  // The base is a durable post only once it STANDS: the bare anchor and its unfinished site employ
+  // nobody, so an unbuilt centre has no slots to reserve, fill or draw.
+  if(target===BASE)return mainBaseStanding()?{target:BASE,assigned:assignedWorkers(BASE,excludeWorker).length,capacity:MAIN_BASE.jobSlots}:null;
   const kind=resourceNodeKind(target);
   if(kind){if(!resourceIsActive(target,kind))return null;return {target,assigned:assignedWorkers(target,excludeWorker).length,capacity:RESOURCE_NODE_JOB_SLOTS};}
   if(!buildings.includes(target))return null;
@@ -928,6 +995,9 @@ function workerOccupancyAt(x,y){
   let nearest=null,best=Infinity;
   for(const nodes of [trees,rocks,diamonds])for(const node of nodes){const status=workerOccupancyStatus(node),d=distance(x,y,node.x,node.y);if(status&&d<38&&d<best){nearest=status;best=d;}}
   for(const building of buildings){const status=workerOccupancyStatus(building),d=distance(x,y,building.x,building.y);if(status&&d<42&&d<best){nearest=status;best=d;}}
+  // The standing base answers on the same reach its drop rule uses (workerAssignmentAt), so the
+  // hovered slot tray and the drop that fills it agree on where "the base" ends.
+  {const status=workerOccupancyStatus(BASE),d=distance(x,y,BASE.x,BASE.y);if(status&&d<BASE.r+18&&d<best){nearest=status;best=d;}}
   return nearest;
 }
 function installHeldAtOrigin(held){
@@ -959,7 +1029,13 @@ function workerAssignmentAt(worker,x,y){
   // A house holds no post, and open ground is not a post either: both simply MOVE the worker and
   // leave it free for the scheduler. Guard duty comes from a garrison or from nothing.
   if(house)return {job:"free",target:null,postX:house.x,postY:house.y+23,zoneX:house.x,zoneY:house.y+23,zoneRadius:WORKER_LEASH};
-  if(distance(x,y,BASE.x,BASE.y)<BASE.r+18)return {job:"haul",target:BASE,postX:BASE.x,postY:BASE.y+25,zoneX:BASE.x,zoneY:BASE.y,zoneRadius:BASE_ZONE};
+  // Only a STANDING base is a haul post; the bare anchor (or its unfinished site) offers no storage.
+  // A FULL base rejects the drop like a full camp, stockpile or garrison — the held worker returns
+  // to its pickup origin with its prior assignment intact rather than leaking onto the ground.
+  if(mainBaseStanding()&&distance(x,y,BASE.x,BASE.y)<BASE.r+18){
+    const status=workerOccupancyStatus(BASE,worker);if(status.assigned>=status.capacity)return null;
+    return {job:"haul",target:BASE,postX:BASE_HAUL_POST.x,postY:BASE_HAUL_POST.y,zoneX:BASE.x,zoneY:BASE.y,zoneRadius:BASE_ZONE};
+  }
   return {job:"free",target:null,postX:x,postY:y,zoneX:x,zoneY:y,zoneRadius:WORKER_LEASH};
 }
 function assignWorker(worker,x,y){
@@ -1393,7 +1469,9 @@ function collectDrop(silent=false){
 function hoverTarget(){
   const m=state.mouse;
   if(!m.inside)return null;
-  if(distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16)return {kind:"base",object:BASE};
+  // Before the base stands there is no "deposit at base" action at the map centre — the unfinished
+  // site claims the cursor through the ordinary blueprint branch below, exactly like any other build.
+  if(mainBaseStanding()&&distance(m.x,m.y,BASE.x,BASE.y)<BASE.r+16)return {kind:"base",object:BASE};
   for(const building of buildings){
     if(!building.complete&&distance(m.x,m.y,building.x,building.y)<38)return {kind:"building",object:building};
     if(building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<42)return {kind:"stockpile",object:building};
@@ -1509,7 +1587,8 @@ function upgradeButtonHit(building,x,y){const top=building.type==="obelisk"?buil
 
 // Base deposits are pure storage: the caller-owned resource-count record is consumed atomically
 // into state.stored, where builders withdraw from (nearestBuildStorage treats BASE as storage).
-// Depositing grants NOTHING — XP enters the run only through grantXp() below.
+// Depositing grants NOTHING — the run's only progression is the authored base recipe, charged
+// before this by dropToBase() alone, never here.
 function storeAtBase(counts,particleFromX,particleFromY){
   let units=0;
   for(const kind of RESOURCE_KINDS){
@@ -1520,39 +1599,21 @@ function storeAtBase(counts,particleFromX,particleFromY){
   state.basePulse=1;toast("stored "+units);sound(520,.08);
   return units;
 }
-// The sole state.xp writer. XP enters the run HERE and nowhere else, and the only production
-// caller is completeBuilding(): levels — and therefore drafts — can only come from finishing
-// construction, weighted by what it cost (RESOURCE_XP per delivered unit).
-function grantXp(gained){
-  if(gained<=0)return 0;
-  state.xp+=gained;state.levelXp+=gained;
-  // One grant may cross several levels; each crossing queues its own offer.
-  while(state.levelXp>=levelCost(state.level))gainLevel();
-  effects.levelChanged();effects.phaseHudChanged();
-  return gained;
-}
-function buildingXpValue(building){
-  const cost=buildingCost(building);
-  return RESOURCE_KINDS.reduce((sum,kind)=>sum+RESOURCE_XP[kind]*(cost[kind]||0),0);
-}
-function gainLevel(){
-  state.levelXp-=levelCost(state.level);state.level++;
-  if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
-  toast("level "+state.level);sound(660,.16);
-  state.draft.queue++;refillDraft();
-}
 
 // ── the draft ───────────────────────────────────────────────────────────────
-// Four reward sources share this machinery but never mix pools: LEVEL-UP offers hand-bound builds;
-// DAWN offers one permanent buff; CHESTS and CONSUMABLE FORGES offer a consumable. This separation
-// makes XP expand the village while survival, exploration and dust spending strengthen the run. Each offer contains
-// up to three DISTINCT eligible cards drawn by rarity weight. Exactly one offer is live at a time,
-// the rest wait in their queues, and the world is halted while one pends via state.draftPaused.
-// The choice arrives through chooseDraft(); nothing else may write state.draft. What a taken card
-// DOES is routed by takeCard() below, not by the dealer.
-const DRAFT_KINDS=["level","dawn","consumable"];
-const DRAFT_CATEGORIES=Object.freeze({level:Object.freeze(["build"]),dawn:Object.freeze(["buff"]),consumable:Object.freeze(["consumable"])});
-function levelCost(level){return LEVEL_CURVE.base*LEVEL_CURVE.growth**level;}
+// Three reward sources share this machinery: a completed authored BASE level offers BUILDS AND
+// BUFFS mixed; DAWN (a night survived) offers one permanent buff; CHESTS and CONSUMABLE FORGES
+// offer a consumable. Each offer contains up to three DISTINCT eligible cards drawn by rarity
+// weight. Exactly one offer is live at a time, the rest wait in their queues, and the world is
+// halted while one pends via state.draftPaused. The choice arrives through chooseDraft(); nothing
+// else may write state.draft. What a taken card DOES is routed by takeCard() below, not the dealer.
+//
+// WHY "base" MIXES BUILD AND BUFF (Aug 22): builds used to be dealt by the deleted XP level-up
+// draft, which was the run's ONLY source of bpHouse / bpTower / bpStockpile after the opening
+// hand. Folding builds into the base-level reward keeps the village expandable at all; it also
+// caps builds at MAIN_BASE.maxLevel picks per run, which is an owner tuning question, not a law.
+const DRAFT_KINDS=["base","dawn","consumable"];
+const DRAFT_CATEGORIES=Object.freeze({base:Object.freeze(["build","buff"]),dawn:Object.freeze(["buff"]),consumable:Object.freeze(["consumable"])});
 function buffStacks(id){return state.draft.buffs[id]||0;}
 // Consumables and builds carry no `stacks`, so the same test lets them repeat forever and caps
 // only buffs. A build card is deliberately RE-OFFERABLE: what it deals is a construction site, not
@@ -1571,12 +1632,14 @@ function drawDraftOffer(categories=null,exclude=null){
   return picks.length?picks:null;
 }
 // An empty pool consumes its queued reward silently, so a run with nothing left to offer never
-// stalls. Existing level-ups resolve first, then dawn buffs, then chest or forge consumables.
+// stalls. QUEUE PRIORITY, when several are banked at once: base levels, then dawn buffs, then chest
+// or forge consumables. Priority only orders the BACKLOG — whichever reward was queued while no
+// offer was live is the one already on screen.
 function refillDraft(){
   const draft=state.draft;
-  while(!draft.offer&&(draft.queue>0||draft.dawnQueue>0||draft.consumableQueue>0)){
-    const kind=draft.queue>0?"level":draft.dawnQueue>0?"dawn":"consumable";
-    if(kind==="level")draft.queue--;else if(kind==="dawn")draft.dawnQueue--;else draft.consumableQueue--;
+  while(!draft.offer&&(draft.baseQueue>0||draft.dawnQueue>0||draft.consumableQueue>0)){
+    const kind=draft.baseQueue>0?"base":draft.dawnQueue>0?"dawn":"consumable";
+    if(kind==="base")draft.baseQueue--;else if(kind==="dawn")draft.dawnQueue--;else draft.consumableQueue--;
     draft.offer=drawDraftOffer(DRAFT_CATEGORIES[kind]);
     draft.offerKind=draft.offer?kind:null;
   }
@@ -1589,6 +1652,16 @@ function queueConsumableRewards(count=1){
   if(state.runMode!=="normal")return;
   invariant(Number.isInteger(count)&&count>0,"invalid consumable reward count");
   state.draft.consumableQueue+=count;refillDraft();
+}
+/**
+ * One completed authored base level deals ONE pick of three from the mixed build+buff pool (see
+ * DRAFT_CATEGORIES): a buff applies on the spot, a build lands in the hand. THE only caller is
+ * completeMainBaseLevel(), which fires exactly once per level, so no free-cost sweep, repeated
+ * release or oversized deposit can pay this twice.
+ */
+function queueBaseLevelReward(){
+  if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
+  state.draft.baseQueue++;refillDraft();
 }
 /** Wave clearance grants one permanent buff. */
 function queueWaveClearReward(){
@@ -1630,7 +1703,7 @@ function applyBuff(id){
   return true;
 }
 /**
- * THE routing rule for a taken card, shared by level and dawn offers. A buff lands immediately; a
+ * THE routing rule for a taken card, shared by every offer kind. A buff lands immediately; a
  * consumable or build lands in the HAND and does nothing at all until it is played. Nothing
  * leaves the pool: a build card can be offered again, and a second copy simply thickens its stack.
  */
@@ -1665,6 +1738,10 @@ function consumeHandCopy(entry){
 // `site` is the build half of the table (below): the card drops one CONSTRUCTION SITE where a kit
 // drops an authored instant building. A tower variant site combines chassis + variant materials,
 // then produces the named tower in one completion transition.
+// Build cards that place THEMSELVES: no ghost, no click, one authored anchor. Each entry is the
+// command the card runs, returning false when it refuses (a second main base, for instance). These
+// are subtracted from TARGETED_CARDS below, so a card is either aimed or anchored, never both.
+const ANCHORED_BUILD_CARDS={bpMainBase:raiseMainBaseSite};
 const TARGETED_CARDS={
   blastCharge:{type:"blast"},
   spikeKit:{type:"spikes"},
@@ -1678,7 +1755,7 @@ const TARGETED_CARDS={
   // whole set is derived from the registry rather than restated here. "tower:sniper" drops a tower
   // site promised to the sniper variant; "building:obelisk" drops an obelisk site. A build card whose
   // ref is a concept has no table row yet and stays out, so playing one refuses.
-  ...Object.fromEntries(CARDS.filter(card=>card.category==="build").map(card=>[card.id,blueprintPlacement(card.ref)]).filter(([,spec])=>spec))
+  ...Object.fromEntries(CARDS.filter(card=>card.category==="build"&&!ANCHORED_BUILD_CARDS[card.id]).map(card=>[card.id,blueprintPlacement(card.ref)]).filter(([,spec])=>spec))
 };
 function blueprintPlacement(ref){
   const [kind,id]=String(ref||"").split(":");
@@ -1733,6 +1810,135 @@ function fireballImpact(x,y){
   for(let i=0;i<40;i++)particles.push({x,y,vx:rand(-150,150),vy:rand(-170,25),life:rand(.35,1),col:i%3?"#ef7b3f":i%2?"#b84b38":"#ffd36a"});
   addScreenShake(.4);
   toast("fireball impact");sound(52,.38);sound(120,.16);
+}
+// ── the main base ───────────────────────────────────────────────────────────
+// The player's base is BUILT, and this is the whole of its runtime lifecycle:
+//   LEVEL 1  bpMainBase (the opening card) → raiseMainBaseSite() → ordinary blueprint delivery →
+//            completeBuilding() → completeMainBaseLevel() → baseLevel 1, day 1, one buff draft.
+//   LEVEL 2+ carry the next authored recipe to the STANDING base and release →
+//            deliverToMainBaseRecipe() → completeMainBaseLevel() → one buff draft.
+// Where it stands is authored (BASE in data.js) and never chosen, so this card does not aim: there
+// is exactly one legal anchor and canPlace() has always reserved it. What it costs is authored too
+// (MAIN_BASE_LEVELS, level 1 via the BUILDING_TYPES.mainBase row), delivered by hand or by builders
+// like any other site.
+//
+// TWO deliverers, one storage rule. A PLAYER release at the base pays the active recipe first and
+// stores the remainder; a worker hauler deposits into storage and nothing else (depositWorkerLoad),
+// so autonomous logistics can never spend the player's stone on an upgrade they did not choose.
+/** Is a base actually standing? THE predicate for every base service — storage, hover, enemy
+ *  target, damage, the rendered structure. Reads baseLevel, never a building record, so the
+ *  showcase's record-less fixture base answers yes exactly like a finished run base. */
+function mainBaseStanding(){return state.baseLevel>0;}
+/** The unfinished site, or null. There is at most one (validateSimulationInvariants). */
+function mainBaseSite(){return buildings.find(building=>building.type==="mainBase"&&!building.complete)||null;}
+/** The authored recipe the base is CURRENTLY charging — MAIN_BASE_LEVELS[state.baseLevel] — or null
+ *  at the maximum level, where there is no next recipe and every deposit is simply storage. */
+function mainBaseNextLevel(){return MAIN_BASE_LEVELS[state.baseLevel]||null;}
+/** Progress on that recipe, from whichever record owns it: the construction site while the base is
+ *  still being raised, state.baseDelivered once it stands. See state.baseDelivered's note. */
+function mainBaseDelivered(){return mainBaseSite()?.delivered||state.baseDelivered;}
+function mainBaseNeedText(){
+  const next=mainBaseNextLevel();if(!next)return "";
+  const delivered=mainBaseDelivered();
+  return RESOURCE_KINDS.filter(kind=>(next.cost[kind]||0)>(delivered[kind]||0)).map(kind=>((next.cost[kind]||0)-(delivered[kind]||0))+" "+kind).join(" + ");
+}
+/**
+ * THE read-only view of the base's authored progression, for the overlay, the draft copy and tests:
+ * the level that stands, the authored maximum, what the next level costs (null at the maximum) and
+ * how much of it is already delivered. `delivered` is a COPY — callers may not write base progress.
+ * Since XP was deleted (Aug 22) this is also the HUD's run-progress readout: src/ui/draft.js draws
+ * it as the top bar, filling on `delivered` against `cost`.
+ */
+function mainBaseStatus(){
+  const next=mainBaseNextLevel();
+  return {level:state.baseLevel,maxLevel:MAIN_BASE.maxLevel,atMaxLevel:!next,cost:next?next.cost:null,delivered:{...mainBaseDelivered()}};
+}
+/**
+ * THE one transition that raises the base a level, and the only writer of state.baseLevel above
+ * zero. Both payers meet here: the level-1 CONSTRUCTION SITE (completeBuilding, which has already
+ * taken its wood the ordinary blueprint way) and every later recipe delivered at the standing base
+ * (deliverToMainBaseRecipe). Payment is the caller's business; this owns the level number, the
+ * cleared progress, the pre-wave exit and the one draft the level earns.
+ *
+ * Idempotence: the bounds invariant below makes a second call for the same level a hard failure
+ * rather than a duplicate reward, and both callers are single-shot by construction —
+ * completeBuilding returns early on an already-complete site, and a release can only pay a recipe
+ * that still needs something.
+ *
+ * `free` follows completeBuilding's rule verbatim: a completion that spent nothing earns nothing,
+ * so the free-costs toggle and the debug opening skip stand a base without paying out a buff.
+ */
+function completeMainBaseLevel({free=false}={}){
+  const next=mainBaseNextLevel();
+  invariant(next,"the main base is already at its maximum authored level");
+  invariant(next.level===state.baseLevel+1,"the authored base levels are not contiguous");
+  state.baseLevel=next.level;
+  for(const kind of RESOURCE_KINDS)state.baseDelivered[kind]=0;
+  // Ordered so the clock agrees with the level BEFORE any reward can pause the world: level 1 is
+  // also the pre-wave exit, and a run must be started before it can be interrupted.
+  if(state.clock.phase==="pre-wave")beginFirstDay();
+  effects.baseLevelChanged();
+  if(!free)queueBaseLevelReward();
+}
+/**
+ * A PLAYER release at the standing base, paid into the active authored recipe before anything
+ * reaches storage. Takes only what the recipe still needs, so however much is carried a single
+ * release completes AT MOST one level; partial deliveries bank on state.baseDelivered and survive
+ * indefinitely. Returns having consumed part of `counts` — the remainder is the caller's to store.
+ * A no-op at the maximum authored level, and while the base is still a construction site (level 0's
+ * recipe is charged on that site by the ordinary blueprint path).
+ */
+function deliverToMainBaseRecipe(counts,fromX,fromY){
+  const next=mainBaseNextLevel();
+  if(!mainBaseStanding()||!next)return false;
+  let total=0;
+  for(const kind of RESOURCE_KINDS){
+    const amount=Math.min((next.cost[kind]||0)-state.baseDelivered[kind],counts[kind]);
+    if(amount<=0)continue;
+    counts[kind]-=amount;state.baseDelivered[kind]+=amount;total+=amount;
+    handoffParticles(BASE.x,BASE.y,kind,amount,fromX,fromY);
+  }
+  if(!total)return false;
+  state.basePulse=1;sound(480,.08);effects.baseLevelChanged();   // banked progress moves the HUD's base bar
+  if(RESOURCE_KINDS.every(kind=>state.baseDelivered[kind]>=(next.cost[kind]||0))){
+    completeMainBaseLevel();
+    burst(BASE.x,BASE.y-12,"#ead28d",18);
+    fxGroundThump(BASE.x,BASE.y,BASE.footprint,"#c0a170");
+    toast("main base raised to level "+state.baseLevel+(mainBaseNextLevel()?"":" — the authored maximum"));
+    sound(760,.18);effects.buildHudChanged();
+  }else toast("main base level "+next.level+" needs "+mainBaseNeedText());
+  return true;
+}
+/**
+ * Play the opening card: ONE unfinished main-base site on the authored anchor, or a refusal.
+ * Atomic — either the site is in `buildings` and the card is spent, or nothing happened at all.
+ * Duplicates refuse rather than stacking a second base: the map has one centre.
+ */
+function raiseMainBaseSite(){
+  if(mainBaseStanding()){toast("the main base already stands");sound(200,.12);return false;}
+  if(mainBaseSite()){toast("the main base site is already staked out");sound(200,.12);return false;}
+  // The anchor cells have been reserved against every other placement since world load, so this is
+  // an assertion about the map, not a placement test the player can fail.
+  invariant(canPlace(BASE.x,BASE.y,"mainBase")&&footprintFogFree(BASE.x,BASE.y,buildingFootprint("mainBase")),"the authored base anchor is not clear");
+  const site=createBuilding("mainBase",BASE.x,BASE.y);
+  buildings.push(site);clearGrassInFootprint(site.x,site.y,buildingFootprint(site.type));
+  fxGroundThump(site.x,site.y,buildingFootprint(site.type),"#8a7358");
+  toast("main base staked out — carry "+constructionNeedText(site)+" to it");sound(240,.06);sound(104,.15);
+  if(DBG.freeCosts)completeBuilding(site);
+  return true;
+}
+/**
+ * THE pre-wave exit, and the only one: the base standing is what starts the game's clock. Called by
+ * completeMainBaseLevel() the moment the level-1 recipe is delivered, never by a debug phase button
+ * — those refuse while pre-wave (see debugGoToPhase). Day 1 gets the FULL DAY_DURATION, plus any
+ * long-day bonus banked while the clock had no countdown to extend.
+ */
+function beginFirstDay(){
+  const clock=state.clock;
+  invariant(clock.phase==="pre-wave","the first day may only be started from the pre-wave opening");
+  invariant(state.baseLevel>0,"the first day started before a base stood");
+  clock.phase="day";clock.remaining=DAY_DURATION+state.draft.dayBonus;state.draft.dayBonus=0;
+  effects.phaseHudChanged();
 }
 /** Arm the placement flow for one held card. The card STAYS in hand while its charges are spent. */
 function beginCardTargeting(entry){
@@ -1829,12 +2035,20 @@ function towerRangeBeaconBonus(tower){
   return buildings.some(building=>building.complete&&building.type==="rangeBeacon"&&distance(tower.x,tower.y,building.x,building.y)<=beacon.effectRadius)?beacon.rangeBonus:0;
 }
 function towerAttackRadius(tower,variant=towerVariant(tower)){return (variant.range||variant.effectRadius)+CARD_BUFFS.towerRange*buffStacks("towerRange")+towerRangeBeaconBonus(tower);}
-function dropToBase(){storeAtBase(state.carried,state.mouse.x,state.mouse.y);}
+/** A player release over the standing base. The active authored recipe is paid FIRST and takes only
+ *  what it still needs; everything left — the whole load once the base is at its maximum level —
+ *  lands in storage. */
+function dropToBase(){
+  deliverToMainBaseRecipe(state.carried,state.mouse.x,state.mouse.y);
+  storeAtBase(state.carried,state.mouse.x,state.mouse.y);
+}
 
 function buildingCost(building){return building.cost||BUILDING_TYPES[building.type].cost;}
 function constructionComplete(building){const cost=buildingCost(building);return RESOURCE_KINDS.every(kind=>(building.delivered[kind]||0)>=(cost[kind]||0));}
 function constructionNeedText(building){const cost=buildingCost(building);return RESOURCE_KINDS.filter(kind=>(cost[kind]||0)>(building.delivered[kind]||0)).map(kind=>((cost[kind]||0)-(building.delivered[kind]||0))+" "+kind).join(" + ");}
-function completeBuilding(building){
+/** `free` completions (the free-costs debug toggle, the debug base skip) spend nothing and
+ *  therefore earn nothing; everything else is identical. */
+function completeBuilding(building,{free=DBG.freeCosts}={}){
   if(building.complete)return;
   const def=BUILDING_TYPES[building.type];building.complete=true;building.starved=false;
   if(def.resource)state.capacity+=2;
@@ -1846,6 +2060,13 @@ function completeBuilding(building){
   }
   building.plannedVariant=null;
   if(building.type==="house")building.spawnTimer=WORKER_SPAWN_TIME;
+  // The base is the one completion that also moves the run's clock: completeMainBaseLevel() takes
+  // its first authored level, ends the untimed opening and queues the level's draft — the run's
+  // only progression payout now that XP is gone.
+  if(building.type==="mainBase"){
+    invariant(state.baseLevel===0,"a second main base completed");
+    completeMainBaseLevel({free});
+  }
   // Resolve the transition as one transaction. updateWorkerSpawns() runs before workers, so leaving
   // an earlier builder unresolved until the next tick would expose its durable vacancy to autofill.
   resolveBuildingCompletionWorkers(building);
@@ -1858,13 +2079,10 @@ function completeBuilding(building){
   fxGroundThump(building.x,building.y,buildingFootprint(building.type),"#c0a170");
   fxDebris(building.x,building.y-14,"#ead28d",10,{spread:66,lift:135,size:.85});
   sound(300,.11);
-  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="consumableForge"?"consumable forge complete — deliver dust to draft consumables":building.type==="house"?"house complete — worker production started":building.type==="scoutHut"?"scout hut complete — drop a worker on it to scout the fog":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
-  // Completion is the run's only XP moment. Showcase fixtures complete through this same path but
-  // must never pollute the sandbox economy (rebuildShowcase asserts xp stays 0 after its reset),
-  // and a free-cost debug placement spent nothing, so it earns nothing.
-  const gained=state.runMode==="normal"&&!DBG.freeCosts?grantXp(buildingXpValue(building)):0;
-  const xpSuffix=gained>0?" — +"+gained+" xp":"";
-  toast((def.resource?def.name+" complete — staffed workers gather "+def.resource+" faster nearby":readyMessage)+xpSuffix);sound(760,.18);effects.buildHudChanged();
+  const readyMessage=building.type==="mainBase"?"main base complete — day 1 begins":building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="consumableForge"?"consumable forge complete — deliver dust to draft consumables":building.type==="house"?"house complete — worker production started":building.type==="scoutHut"?"scout hut complete — drop a worker on it to scout the fog":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
+  // Finishing an ordinary building pays NOTHING but the building — the XP grant that used to live
+  // here (and the draft it dealt) was deleted Aug 22; base levels are the whole progression.
+  toast(def.resource?def.name+" complete — staffed workers gather "+def.resource+" faster nearby":readyMessage);sound(760,.18);effects.buildHudChanged();
 }
 function dropToBuilding(building){
   const cost=buildingCost(building);let total=0;
@@ -1874,6 +2092,10 @@ function dropToBuilding(building){
   }
   if(!total){toast("this build already has that resource");return;}
   building.pulse=1;sound(480,.08);
+  // The level-1 base recipe is charged on THIS record (mainBaseDelivered reads it), so the HUD's
+  // base bar has to hear about a partial delivery to the site the same way it hears about one to
+  // the standing base.
+  if(building.type==="mainBase")effects.baseLevelChanged();
   if(constructionComplete(building))completeBuilding(building);
   else toast("needs "+constructionNeedText(building));
 }
@@ -1913,8 +2135,11 @@ function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null,ignoreChest=
   const bounds=footprintCellBounds(c.cx,c.cy,footprint);
   // grid.js owns the placement footprint rectangle; fine terrain owns whether every pixel is land.
   if(!terrainWorldRectEntirelyOnLand(rect))return false;
-  // The base is just another occupant: its 3x3 blocks, the cells beside it do not.
-  if(cellBoundsOverlap(bounds,occupiedCellBounds(BASE)))return false;
+  // The base anchor is just another occupant: its 3x3 blocks, the cells beside it do not. The
+  // reservation exists from world load, before anything stands there, so the map centre is still
+  // waiting when the opening card is played. The ONE candidate allowed onto those cells is the main
+  // base itself — and only raiseMainBaseSite() ever names that type, at BASE exactly.
+  if(type!=="mainBase"&&cellBoundsOverlap(bounds,occupiedCellBounds(BASE)))return false;
   // Depleted nodes no longer reserve ground, letting harvesting open construction sites.
   for(const [nodes,kind] of [[trees,"wood"],[rocks,"stone"],[diamonds,"diamond"]])
     for(const node of nodes)
@@ -1936,7 +2161,8 @@ function canPlace(x,y,type=null,ignoreBuilding=null,ignoreProp=null,ignoreChest=
 function completeHouses(){return buildings.filter(building=>building.complete&&building.type==="house");}
 function nextHouseCost(){const count=completeHouses().length;if(count===0)return {...STARTING_HOUSE_COST};return {wood:HOUSE_COST.wood+HOUSE_COST_ESCALATION.wood*count,stone:HOUSE_COST.stone+HOUSE_COST_ESCALATION.stone*count};}
 function sourceWorkerCount(source){const held=heldWorker();return state.workers.filter(worker=>worker.spawnSource===source).length+(held?.spawnSource===source?1:0);}
-/** Durable-post compatibility view adds arrival to shared occupancy. */
+/** Durable-post compatibility view adds arrival to shared occupancy. Accepts the BASE anchor too:
+ *  the standing base is a durable haul post, so it reports vacancies and arrivals like a stockpile. */
 function durablePostStatus(building){
   if(state.runMode!=="normal")return null;
   const status=workerOccupancyStatus(building);if(!status)return null;
@@ -2006,10 +2232,12 @@ function freeWorkerBuildCandidate(worker,radius){
 }
 function haulDestinationFor(drop){
   let choice=null,best=Infinity;
-  for(const storage of [BASE,...buildings.filter(item=>item.complete&&item.type==="stockpile")]){
+  for(const storage of [...(mainBaseStanding()?[BASE]:[]),...buildings.filter(item=>item.complete&&item.type==="stockpile")]){
     const coverage=distance(storage.x,storage.y,drop.x,drop.y);
     if(coverage>storageServiceRadius(storage))continue;
-    if(storage!==BASE){const occupancy=workerOccupancyStatus(storage);if(!occupancy||occupancy.assigned>=occupancy.capacity)continue;}
+    // The base obeys its Worker Limit here like every other post: a full base is not an autonomous
+    // hauling destination, so the scheduler walks the drop to a stockpile or leaves the worker free.
+    const occupancy=workerOccupancyStatus(storage);if(!occupancy||occupancy.assigned>=occupancy.capacity)continue;
     if(coverage<best){choice=storage;best=coverage;}
   }
   return choice;
@@ -2089,7 +2317,8 @@ function assignFreeWorkerWithin(worker,radius){
   const haul=freeWorkerHaulCandidate(worker,radius);
   if(haul){
     worker.job="haul";worker.jobTarget=haul.storage;worker.autonomous=true;
-    worker.postX=haul.storage.x;worker.postY=haul.storage.y+(haul.storage===BASE?25:18);
+    const post=haul.storage===BASE?BASE_HAUL_POST:{x:haul.storage.x,y:haul.storage.y+18};
+    worker.postX=post.x;worker.postY=post.y;
     // Reserve the chosen drop IMMEDIATELY so two free workers can never pick it in one sweep.
     worker.taskTarget=haul.drop;haul.drop.claimedBy=worker;
     return true;
@@ -2228,6 +2457,9 @@ function workerAttack(worker,enemy){
 }
 function depositWorkerLoad(worker){
   // Hauling moves already-physical drops; harvesting itself can only call hitResource() and never reaches storage.
+  // STORAGE ONLY, deliberately: a hauler at the base credits state.stored and never touches the
+  // authored base recipe (deliverToMainBaseRecipe). Spending an upgrade's stone is a decision, so it
+  // stays on the player's own release.
   const storage=worker.jobTarget;
   if(storage===BASE)storeAtBase(worker.carried,worker.x,worker.y);
   else{for(const kind of RESOURCE_KINDS){const amount=worker.carried[kind];if(!amount)continue;storage.storage[kind]+=amount;worker.carried[kind]=0;}storage.pulse=1;}
@@ -2237,7 +2469,8 @@ function storageServiceRadius(storage){return storage===BASE?BASE_ZONE:BUILDING_
 function storageStock(storage){return storage===BASE?state.stored:storage.storage;}
 function nearestBuildStorage(building,worker){
   let choice=null,best=Infinity,covered=false;
-  for(const storage of [BASE,...buildings.filter(item=>item.complete&&item.type==="stockpile")]){const d=distance(storage.x,storage.y,building.x,building.y);if(d>storageServiceRadius(storage))continue;covered=true;const stock=storageStock(storage),available=RESOURCE_KINDS.some(kind=>stock[kind]>0&&buildNeed(building,kind,worker)>0);if(available&&d<best){choice=storage;best=d;}}
+  // Before the base stands the map centre is not storage: builders may only withdraw from stockpiles.
+  for(const storage of [...(mainBaseStanding()?[BASE]:[]),...buildings.filter(item=>item.complete&&item.type==="stockpile")]){const d=distance(storage.x,storage.y,building.x,building.y);if(d>storageServiceRadius(storage))continue;covered=true;const stock=storageStock(storage),available=RESOURCE_KINDS.some(kind=>stock[kind]>0&&buildNeed(building,kind,worker)>0);if(available&&d<best){choice=storage;best=d;}}
   return {storage:choice,covered};
 }
 function buildNeed(building,kind,worker){
@@ -2254,8 +2487,11 @@ function buildNeed(building,kind,worker){
 function inheritBuiltJob(worker,building){
   for(const kind of RESOURCE_KINDS)while(worker.carried[kind]>0){worker.carried[kind]--;spawnResource(kind,building.x+rand(-8,8),building.y+rand(-5,5));}
   clearWorkerSelfSupply(worker);worker.returning=false;worker.starved=false;
-  const assignment=builtJobAssignment(building),occupancy=workerOccupancyStatus(building,worker);
-  if(worker.autonomous||!occupancy||occupancy.assigned>=occupancy.capacity||assignment.jobTarget!==building){releaseWorkerToFree(worker);return;}
+  // Capacity is asked of the POST the assignment names, not of the record just finished: they are
+  // the same object everywhere except the main base, whose level-1 site hands its builders to the
+  // BASE anchor. A base already holding two haulers therefore frees its builders like any full post.
+  const assignment=builtJobAssignment(building),post=assignment.jobTarget,occupancy=post?workerOccupancyStatus(post,worker):null;
+  if(worker.autonomous||!occupancy||occupancy.assigned>=occupancy.capacity){releaseWorkerToFree(worker);return;}
   Object.assign(worker,assignment);
   worker.autonomous=false;setWorkerStationArrival(worker,null);
 }
@@ -2317,7 +2553,9 @@ function updateBuilder(worker,dt){
   if(workerLoad(worker)>0){
     worker.selfSupply=null;worker.starved=false;if(!moveWorker(worker,building.x,building.y,dt,16))return;
     const cost=buildingCost(building);for(const kind of RESOURCE_KINDS){const amount=Math.min(worker.carried[kind],(cost[kind]||0)-(building.delivered[kind]||0));worker.carried[kind]-=amount;building.delivered[kind]+=amount;handoffParticles(building.x,building.y,kind,amount,worker.x,worker.y);}
-    building.pulse=1;if(constructionComplete(building))completeBuilding(building);return;
+    building.pulse=1;
+    if(building.type==="mainBase")effects.baseLevelChanged();   // the HUD base bar tracks the level-1 site too
+    if(constructionComplete(building))completeBuilding(building);return;
   }
   if(worker.selfSupply&&updateBuilderSelfSupply(worker,building,dt))return;
   if(worker.taskTarget&&(!workerCanPickupDrop(worker.taskTarget)||!resourceDrops.includes(worker.taskTarget)||worker.taskTarget.target||worker.taskTarget.claimedBy!==worker))clearWorkerTask(worker);
@@ -2427,17 +2665,32 @@ function updateControlledEnemy(unit,dt){
   if(distance(unit.x,unit.y,yard.x,yard.y)>CAPTURE_YARD.homeRadius)moveToward(yard.x,yard.y);
 }
 
-function updateKing(dt){
-  const king=state.king;king.cooldown-=dt;king.swing=Math.max(0,king.swing-dt);
-  if(king.cooldown>0)return;
-  let target=null,best=KING.range;
-  for(const enemy of state.enemies){
-    if(fogAtPoint(enemy.x,enemy.y))continue;   // the king cannot see into the fog either
-    const d=distance(king.x,king.y,enemy.x,enemy.y);if(d<best){best=d;target=enemy;}
-  }
+// ── the base's own defence ──────────────────────────────────────────────────
+// A completed base defends its own ground: nearest visible enemy, on MAIN_BASE's authored range,
+// damage and cooldown. It is NOT a tower and deliberately gets none of a tower's SHAPE — no
+// variants, no manual fire, no relocation, no ward-totem hp. What it does share is the tower COMBAT
+// RULES, and it shares them by reuse rather than restatement: the same fog-gated target funnel
+// (eachTowerCombatTarget, via nearestTowerTarget), the same three permanent buffs (towerDamage /
+// towerSpeed / towerRange) and the same three auras (War Shrine damage, Haste Totem cooldown, Range
+// Beacon range) that towerDamage/towerCooldown/towerAttackRadius already apply by position. Those
+// helpers only ever read `x`/`y` off their subject and the numbers off the variant record below, so
+// the BASE anchor is a legal subject and base and tower balance can never drift apart.
+// `damageTargetType` mirrors the authored row for completeness; nothing reads it on this path,
+// because a single-target shot never consults it — eachTowerCombatTarget is what makes the base
+// enemies-only, exactly as it does for a basic tower.
+const BASE_ATTACK=Object.freeze({damage:MAIN_BASE.damage,cooldown:MAIN_BASE.rate,range:MAIN_BASE.range,damageTargetType:MAIN_BASE.damageTargetType});
+function updateBaseAttack(dt){
+  const attack=state.baseAttack;
+  attack.cooldown=Math.max(0,attack.cooldown-dt);attack.flash=Math.max(0,attack.flash-dt);
+  // No base, no defence: during the pre-wave opening the map centre shoots at nothing.
+  if(!mainBaseStanding()||attack.cooldown>0)return;
+  const target=nearestTowerTarget(BASE,towerAttackRadius(BASE,BASE_ATTACK));
   if(!target)return;
-  king.cooldown=KING.rate;king.swing=.18;king.targetX=target.x;king.targetY=target.y;
-  damageEnemy(target,KING.damage,"#efe0a0",5);sound(260,.05);
+  attack.cooldown=towerCooldown(BASE,BASE_ATTACK);attack.flash=.2;attack.targetX=target.x;attack.targetY=target.y;
+  // No `source`: retaliation aggro belongs to towers the enemy can walk over and break. The base is
+  // already every enemy's fallback target (selectEnemyTarget), so it needs no taunt of its own.
+  damageCombatTarget(target,towerDamage(BASE,BASE_ATTACK),"#efe0a0",5,null);
+  sound(260,.05);
 }
 function updateHazard(building,dt){
   const hazard=building.hazard;hazard.cooldown-=dt;hazard.flash=Math.max(0,hazard.flash-dt);
@@ -2469,8 +2722,13 @@ function walkingStompContacts(enemy,def,fromWob,fromX,fromY){
   const fromPhase=fromWob*.12,toPhase=enemy.wob*.12,firstContact=Math.floor(fromPhase-.5)+1.5;
   for(let contact=firstContact;contact<=toPhase;contact++){
     const progress=(contact-fromPhase)/(toPhase-fromPhase),x=fromX+(enemy.x-fromX)*progress,y=fromY+(enemy.y-fromY)*progress;
-    const result=applyAreaDamage({centers:[{x,y}],radius:def.stompRadius,damage:def.stompDamage,targetType:def.stompDamageTargetType,color:"#76558f",source:enemy});
-    burst(x,y,"#76558f",18);sound(58,.16);
+    // The boss stomp is the single biggest chunk of enemy-dealt damage in the game and it was VIOLET
+    // — the world's magic colour, which read as "a spell went off" rather than "you are being hit".
+    // Red, matching the brute's own thump annulus (models/reviewed/enemy-shard.js C.ringHot) and the
+    // seams it wears. Literal SWATCH.red2 from render/palette.js: the game layer does not import the
+    // render layer (see ENEMY_VARIANT_BANDS above), so the value is copied and named, not imported.
+    const result=applyAreaDamage({centers:[{x,y}],radius:def.stompRadius,damage:def.stompDamage,targetType:def.stompDamageTargetType,color:"#d4312a",source:enemy});
+    burst(x,y,"#d4312a",18);sound(58,.16);
     if(result.workerDied)toast("worker died — replacement in "+WORKER_SPAWN_TIME+"s");
     if(state.gameOver)return;
   }
@@ -2534,7 +2792,8 @@ function applyAreaDamage({centers,radius,damage,targetType,color="#d25b49",sourc
   for(const brute of [...friendlyBrutes])if(insideAnyDamageArea(brute,centers,radius)){result.hits++;damageFriendlyBrute(brute,damage);}
   for(const unit of [...controlledEnemies])if(insideAnyDamageArea(unit,centers,radius)){result.hits++;damageControlledEnemy(unit,damage);}
   for(const building of [...buildings])if(building.complete&&building.tower?.hp>0&&insideAnyDamageArea(building,centers,radius)){result.hits++;damageTower(building,damage);}
-  if(insideAnyDamageArea(BASE,centers,radius)){result.hits++;if(!DBG.invulnBase){addDamageNumber(BASE,damage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-damage);}state.basePulse=1;if(state.baseHp<=0)endGame();}
+  // A bare anchor has no health to lose: blasts pass straight over the map centre until a base stands.
+  if(mainBaseStanding()&&insideAnyDamageArea(BASE,centers,radius)){result.hits++;if(!DBG.invulnBase){addDamageNumber(BASE,damage,{tone:"received"});state.baseHp=Math.max(0,state.baseHp-damage);}state.basePulse=1;if(state.baseHp<=0)endGame();}
   return result;
 }
 function visitStableTargets(targets,visit){
@@ -2617,8 +2876,11 @@ function updateGuard(worker,dt){
   if(target){worker.combatTarget=target;if(moveWorker(worker,target.x,target.y,dt,WORKER_MELEE-2))workerAttack(worker,target);return;}
   moveWorker(worker,worker.postX,worker.postY,dt);
 }
+/** Where a frightened worker runs. NULL when nothing on the map is safe — before the base stands
+ *  the map centre is bare ground, not a refuge, so a pre-wave worker with no tower simply holds. */
 function nearestWorkerSafety(worker){
-  let safe=BASE,best=distance(worker.x,worker.y,BASE.x,BASE.y);
+  let safe=null,best=Infinity;
+  if(mainBaseStanding()){safe=BASE;best=distance(worker.x,worker.y,BASE.x,BASE.y);}
   for(const building of buildings){if(!building.complete||building.type!=="tower")continue;const d=distance(worker.x,worker.y,building.x,building.y);if(d<best){safe=building;best=d;}}
   return safe;
 }
@@ -2626,7 +2888,7 @@ function updateWorkerFlee(worker,dt){
   let danger=false;for(const enemy of state.enemies)if(distance(worker.x,worker.y,enemy.x,enemy.y)<=WORKER_LEASH*1.5){danger=true;break;}
   worker.fleeSafeTime=danger?0:(worker.fleeSafeTime||0)+dt;
   if(worker.fleeSafeTime>=3){worker.fleeing=false;worker.fleeSafeTime=0;worker.retaliationTarget=null;return false;}
-  worker.combatTarget=null;worker.retaliationTarget=null;const safe=nearestWorkerSafety(worker);moveWorker(worker,safe.x,safe.y,dt);return true;
+  worker.combatTarget=null;worker.retaliationTarget=null;const safe=nearestWorkerSafety(worker);if(safe)moveWorker(worker,safe.x,safe.y,dt);return true;
 }
 function updateHauler(worker,dt){
   const storage=worker.jobTarget;
@@ -2747,10 +3009,13 @@ function updateWorker(worker,dt){
   else releaseWorkerToFree(worker);
 }
 
-// Only this function changes phase identity and owns both phase-boundary side effects. Normal dawn
-// calls it from the post-combat clearance check; debugger commands may intentionally force it.
+// The day↔night flip: it changes phase identity and owns both phase-boundary side effects. Normal
+// dawn calls it from the post-combat clearance check; debugger commands may intentionally force it.
+// The pre-wave→day-1 flip is NOT here — it belongs to beginFirstDay(), because it is not a
+// boundary the world can reach on its own: only a finished base can end the opening.
 function transitionPhase(){
   const clock=state.clock,wave=state.nightWave;
+  invariant(clock.phase!=="pre-wave","the pre-wave opening ends by building the base, not by a phase flip");
   if(clock.phase==="day"){
     clock.phase="night";clock.remaining=0;
     // The plan snapshots budget, pool, order, and timing. Leveling mid-wave can only affect the next
@@ -2773,9 +3038,9 @@ function transitionPhase(){
     // every guard the scheduler mustered during the night. Manual guards keep their posts.
     releaseAutonomousGarrisonGuards();
     wave.activePlan=null;wave.threatBudget=0;wave.spawnedThreat=0;wave.remainingSpawns=0;wave.activeNightNumber=null;
-    // Roll the next forecast after the night ends, so leveling during that night can unlock its pool.
+    // Roll the next forecast after the night ends, so the night just survived counts toward waveTier().
     chooseUpcomingNight();
-    // Surviving the night earns one permanent-buff pick. Existing level rewards stay ahead of it.
+    // Surviving the night earns one permanent-buff pick. A banked base-level reward stays ahead of it.
     queueWaveClearReward();
     // JUICE — and dawn answers dusk, rising where the dusk pair fell. Placed last so the reward
     // queue above is already settled; sound() is a pure output hook either way.
@@ -2785,7 +3050,11 @@ function transitionPhase(){
 function updateClock(dt){
   const clock=state.clock;
   clock.elapsed+=dt;
-  // Only day owns a countdown. Clamp before transition so a large or long-running frame can never
+  // Elapsed run time keeps counting through every phase, including the untimed pre-wave opening: it
+  // is how long the player has been playing, not how long the wave clock has been running.
+  // Only day owns a countdown — pre-wave has none at all and therefore no way to reach night, and
+  // its light target below is the same 0 day uses, so the opening stays fully lit.
+  // Clamp before transition so a large or long-running frame can never
   // leave a negative timer looping across an indefinite night.
   if(clock.phase==="day"){
     clock.remaining=Math.max(0,clock.remaining-dt);
@@ -2820,7 +3089,11 @@ function updateEnemyStatuses(enemy,dt){
 }
 function segmentDistance(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,lengthSquared=dx*dx+dy*dy;if(!lengthSquared)return distance(px,py,x1,y1);const t=clamp(((px-x1)*dx+(py-y1)*dy)/lengthSquared,0,1);return distance(px,py,x1+t*dx,y1+t*dy);}
 function enemyTargetResult(enemy,kind,object){return {kind,object,x:object.x,y:object.y,distance:Math.max(0,distance(enemy.x,enemy.y,object.x,object.y)-(kind==="tower"?26:0))};}
-// Enemy priority is centralized: Aggro taunt, tower retaliation, nearest worker/base, then any tower physically intersecting that route.
+// Enemy priority is centralized: Aggro taunt, tower retaliation, nearest worker/base, then any tower
+// physically intersecting that route.
+// May return NULL. Before the main base stands, an otherwise empty map offers an enemy nothing to
+// walk to or hit — the map centre is bare ground, not a health pool. Debug-spawned enemies are the
+// only way to be in that situation (waves cannot start during pre-wave), and they idle in place.
 function selectEnemyTarget(enemy){
   const canDamage=ENEMY_TYPES[enemy.type].damage>0;
   if(canDamage){
@@ -2829,9 +3102,11 @@ function selectEnemyTarget(enemy){
     const retaliation=enemy.retaliationTower;if(retaliation&&buildings.includes(retaliation)&&retaliation.complete&&retaliation.tower.hp>0)return enemyTargetResult(enemy,"tower",retaliation);
   }
   enemy.retaliationTower=null;
-  let kind="base",object=BASE,best=distance(enemy.x,enemy.y,BASE.x,BASE.y);for(const worker of state.workers){const d=distance(enemy.x,enemy.y,worker.x,worker.y);if(d<best){best=d;kind="worker";object=worker;}}
+  let kind=mainBaseStanding()?"base":null,object=mainBaseStanding()?BASE:null,best=mainBaseStanding()?distance(enemy.x,enemy.y,BASE.x,BASE.y):Infinity;
+  for(const worker of state.workers){const d=distance(enemy.x,enemy.y,worker.x,worker.y);if(d<best){best=d;kind="worker";object=worker;}}
   for(const brute of friendlyBrutes){const d=distance(enemy.x,enemy.y,brute.x,brute.y);if(d<best){best=d;kind="friendly";object=brute;}}
   for(const unit of controlledEnemies){const d=distance(enemy.x,enemy.y,unit.x,unit.y);if(d<best){best=d;kind="controlled";object=unit;}}
+  if(!object)return null;
   if(!canDamage)return enemyTargetResult(enemy,kind,object);
   let blocker=null,bestBlocker=Infinity;for(const building of buildings){if(!building.complete||building.type!=="tower"||building.tower.hp<=0)continue;const d=distance(enemy.x,enemy.y,building.x,building.y);if(d<bestBlocker&&segmentDistance(building.x,building.y,enemy.x,enemy.y,object.x,object.y)<=26){blocker=building;bestBlocker=d;}}
   return blocker?enemyTargetResult(enemy,"tower",blocker):enemyTargetResult(enemy,kind,object);
@@ -2954,9 +3229,11 @@ function updateNormal(dt){
       if(patient){patient.hp=Math.min(patient.max,patient.hp+def.healAmount);enemy.healFlash=.3;enemy.healX=patient.x;enemy.healY=patient.y;burst(patient.x,patient.y,"#75c86d",5);}
       enemy.healCooldown=def.healRate;
     }
+    // May be NULL before the base stands (selectEnemyTarget): nothing on the map is worth walking to.
     const target=selectEnemyTarget(enemy);
     // Bomber: a lit fuse commits in place — it neither moves nor retargets, blinks through the
-    // ordinary hit-flash channel, and detonates as its death. Unlit, it chases like everyone else
+    // ordinary hit-flash channel, and detonates as its death. A lit fuse is resolved BEFORE the
+    // no-target exit below, so an armed bomber always goes off. Unlit, it chases like everyone else
     // (shared movement below) and never reaches the swing branch because arming `continue`s.
     if(def.archetype==="bomber"){
       if(enemy.fuse!==undefined){
@@ -2965,8 +3242,11 @@ function updateNormal(dt){
         if(enemy.fuse<=0){detonateBomber(enemy,def);if(state.gameOver)break;}
         continue;
       }
-      if(target.distance<=def.range){enemy.fuse=def.fuseTime;sound(940,.07);continue;}
+      if(target&&target.distance<=def.range){enemy.fuse=def.fuseTime;sound(940,.07);continue;}
     }
+    // Nothing to march on: the enemy idles in place (statuses, wobble and cooldowns above still
+    // tick) instead of crashing on an absent base or besieging bare ground.
+    if(!target)continue;
     if(target.distance>def.range){
       const angle=Math.atan2(target.y-enemy.y,target.x-enemy.x),speedMultiplier=enemy.status.slow?.multiplier??1;enemy.x+=Math.cos(angle)*def.speed*speedMultiplier*dt;enemy.y+=Math.sin(angle)*def.speed*speedMultiplier*dt;
       walkingStompContacts(enemy,def,fromWob,fromX,fromY);if(state.gameOver)break;
@@ -2985,7 +3265,7 @@ function updateNormal(dt){
     }
   }
   if(state.gameOver)return;
-  updateKing(dt);updateTransientTimers(dt);updateResourceNodes(dt);updateLooseResources(dt,true);
+  updateBaseAttack(dt);updateTransientTimers(dt);updateResourceNodes(dt);updateLooseResources(dt,true);
   // Ordering is the contract: garrison mustering resolves BEFORE the ordinary build/haul/gather
   // sweep, so a worker with a hostile at its back takes the post instead of picking up a job.
   updateWorkerSpawns(dt);updateBuildings(dt,true);updateGarrisonPostings(dt);scheduleFreeWorkers();
@@ -2995,7 +3275,7 @@ function updateNormal(dt){
   for(const building of buildings)if(!building.complete){const builders=state.workers.filter(worker=>worker.job==="build"&&worker.jobTarget===building);building.starved=builders.length>0&&builders.every(worker=>worker.starved);}
   updateFallingMeteors(dt);updateFallingFireballs(dt);updateScreenShake(dt);updateParticles(dt);updateDamageNumbers(dt);
   // Stable completion point: scheduled spawning plus every kill-capable stage (player/status/enemy,
-  // king, towers, hazards, workers) has finished. The phase flip makes this condition false before
+  // the base, towers, hazards, workers) has finished. The phase flip makes this condition false before
   // any later frame, so transitionPhase() owns exactly one dawn reward.
   if(state.clock.phase==="night"&&state.nightWave.remainingSpawns===0&&livingActiveWaveEnemies()===0){
     // TEMPORARY win condition: clearing WIN_WAVE ends the run instead of dawning. See data.js.
@@ -3047,7 +3327,7 @@ function continueAfterVictory(){
   if(!state.gameOver||!state.victory)return false;
   invariant(state.clock.phase==="night"&&state.nightWave.remainingSpawns===0&&livingActiveWaveEnemies()===0,"victory continued before its wave cleared");
   state.gameOver=false;state.victory=false;state.continuedAfterVictory=true;effects.victoryContinued();
-  transitionPhase();toast("the kingdom endures — exploration continues");return true;
+  transitionPhase();toast("the base endures — exploration continues");return true;
 }
 
 function burst(x,y,col,count){for(let i=0;i<count;i++)particles.push({x,y,vx:rand(-55,55),vy:rand(-90,-25),life:rand(.3,.7),col});}
@@ -3182,9 +3462,16 @@ function debugGrant(kinds){
   for(const kind of kinds) state.stored[kind]+=DEBUG_GRANT;
   state.basePulse=1; toast("granted "+DEBUG_GRANT+" "+kinds.join(" + ")); sound(520,.08);
 }
-function debugGrantXp(amount){
-  if(!Number.isSafeInteger(amount)||amount<=0||!Number.isSafeInteger(state.xp+amount))return false;
-  grantXp(amount);return true;
+/** Queue one reward of a named kind through the SAME queue the game uses, so the offer, the pool it
+ *  draws from and the pick all behave exactly as a played run's would. Replaces the deleted
+ *  debugGrantXp: there is no player level to force any more, only a reward to deal. */
+function debugQueueDraft(kind="base"){
+  if(state.runMode!=="normal")return false;
+  if(kind==="base")queueBaseLevelReward();
+  else if(kind==="dawn")queueWaveClearReward();
+  else if(kind==="consumable")queueConsumableRewards(1);
+  else return false;
+  return true;
 }
 /** Deal one card straight into the hand, skipping the offer entirely. Run state only: the catalog,
  *  its pool flags and every authored table are untouched, and the dealt card behaves exactly like a
@@ -3218,18 +3505,39 @@ function debugSweepFreeCosts(){
   for(const building of [...buildings]) if(!building.complete) completeBuilding(building);
   for(const building of [...buildings]) if(building.activeUpgrade) applyFinishedUpgrade(building);
 }
+/** The one refusal every phase command shares: the pre-wave opening has no clock to move, and its
+ *  only exit is a finished base (beginFirstDay). Skipping the opening is debugRaiseMainBase's job. */
+function preWaveBlocksPhaseCommand(){
+  if(state.clock.phase!=="pre-wave")return false;
+  toast("build the main base first — the wave clock has not started");return true;
+}
 /** Phase buttons all go through transitionPhase(), never through clock.phase, so the
  *  night wave setup, chooseUpcomingNight() and the day-side forecast reset all run. */
 function debugGoToPhase(phase){
+  if(preWaveBlocksPhaseCommand())return;
   if(state.clock.phase!==phase) transitionPhase();
   effects.phaseHudChanged();
 }
-function debugAdvancePhase(){ transitionPhase(); effects.phaseHudChanged(); }
+function debugAdvancePhase(){ if(preWaveBlocksPhaseCommand())return; transitionPhase(); effects.phaseHudChanged(); }
+/** Skip the opening: raise the base site and stand it up as if its wood had been delivered, through
+ *  the real path (raiseMainBaseSite + completeBuilding), so baseLevel, the pre-wave exit and every
+ *  invariant are exactly the production ones. It pays NO draft, like every other free-cost
+ *  completion, and it spends the opening card if the hand still holds it. Refuses once a base stands. */
+function debugRaiseMainBase(){
+  if(state.runMode!=="normal"||mainBaseStanding())return false;
+  if(!mainBaseSite()&&!raiseMainBaseSite())return false;
+  const site=mainBaseSite();
+  if(site)completeBuilding(site,{free:true});
+  const card=handEntry("bpMainBase");
+  if(card)consumeHandCopy(card);
+  return true;
+}
 /** Start a freshly composed plan from the chosen authored pool. Force night through the real
  * transition first, retain that night's snapshotted budget, then make its first spawn immediately
  * due. Neither the authored recipe nor the ordinary upcoming plan is modified. */
 function debugStartWave(id){
   const recipe=NIGHT_WAVE_RECIPES.find(item=>item.id===id);if(!recipe)return;
+  if(preWaveBlocksPhaseCommand())return;
   if(state.clock.phase!=="night")transitionPhase();
   const wave=state.nightWave,plan=composeSpawnPlan(recipe,wave.nightNumber,{budget:wave.threatBudget,immediateFirst:true});
   wave.activePlan=plan;wave.threatBudget=plan.threatBudget;wave.spawnedThreat=0;
@@ -3372,8 +3680,6 @@ export function showcaseLabels(){return state.runMode==="showcase"?{revision:sho
 // a mark on screen can never disagree with the rule that produced it.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** XP economy read-only peek; state mutations remain inside grantXp. */
-function xp(){return state.xp;}
 /** Perf/debug census of simulation-owned records. `total` includes short-lived particles and damage
  * numbers because they still consume update/render work; the named fields explain the useful load. */
 export function simulationEntityDiagnostics(){
@@ -3384,11 +3690,9 @@ export function simulationEntityDiagnostics(){
   return {total,workers:state.workers.length,enemies:state.enemies.length,friendlies:friendlyBrutes.length,controlled:controlledEnemies.length,buildings:buildings.length,
     resourceNodes,drops:resourceDrops.length,transients};
 }
-/** The level bar: xp is progress INTO the current level, next is what the following one costs. */
-export function levelState(){return {level:state.level,xp:state.levelXp,next:levelCost(state.level)};}
 /** The live offer as three card ids, or null when no draft is pending. Never mutate the array. */
 export function draftPending(){return state.draft.offer;}
-/** Pending pool — "level", "dawn", or "consumable" — or null. Same offer, same pick. */
+/** Pending pool — "base", "dawn", or "consumable" — or null. Same offer, same pick. */
 export function draftKind(){return state.draft.offer?state.draft.offerKind:null;}
 /**
  * Take card `index` (0-2) of the pending offer. Routes the card through takeCard() — a buff applies,
@@ -3447,6 +3751,10 @@ export function playCard(index){
   if(state.gameOver||state.paused||state.draftPaused||state.buildMode||state.cardTargeting||state.heldObject)return false;
   const entry=state.hand[index],card=cardById[entry.id];
   if(!card)return false;
+  // An anchored build (the main base) commits in one call: it either raises its site and spends the
+  // card, or refuses and leaves the hand untouched. Nothing is armed, so there is no ghost to cancel.
+  const anchored=ANCHORED_BUILD_CARDS[entry.id];
+  if(anchored){if(!anchored())return false;consumeHandCopy(entry);return "applied";}
   if(TARGETED_CARDS[entry.id])return beginCardTargeting(entry);
   const effect=CARD_EFFECTS[entry.id];
   if(!effect)return false;                  // a held card with no effect is a catalog bug, not a click
@@ -3483,7 +3791,7 @@ export {
   workerCoatColor, workerLoad, carriedTotal, resourceIsActive,
   // read-only effective health for presentation; every mutation of it stays inside this module
   workerMaxHp,
-  xp, waveTier, waveThreatBudget, livingActiveWaveEnemies, levelCost, buffStacks,
+  waveTier, waveThreatBudget, livingActiveWaveEnemies, buffStacks,
   // draft eligibility projections — read-only views over the authored catalog and this run's stacks
   draftEligible, cardPrerequisitesMet,
   // the effective vacuum reach, buffs included — the drawn ring should read this, not TUNE alone
@@ -3493,7 +3801,11 @@ export {
   // commands that are plain gameplay functions rather than input adapters
   togglePause, cancelBuildMode, clampCamera, stopGameplayInput, cancelHeldObject, continueAfterVictory,
   spawnEnemy, transitionPhase,
+  // the main base: the one predicate every base service and the renderer ask, and the read-only
+  // authored-progression view the overlay and the draft copy project
+  mainBaseStanding, mainBaseStatus,
   // debug commands (view panel > gameplay)
-  debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase, setWaveThreatCurve,
+  debugGrant, debugQueueDraft, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase, setWaveThreatCurve,
   debugStartWave, debugClearEnemies, debugHealAll, debugDealCard, debugApplyBuff, debugClearHand,
+  debugRaiseMainBase,
 };

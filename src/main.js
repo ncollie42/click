@@ -10,10 +10,10 @@ import {connect as connectScene, resizeRenderer, drawScene, renderScene, combatT
 import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
 import {initHand, renderHand, syncHandTargeting, syncHandPeek, debugHoldFlights} from "./ui/hand.js";
-import {DRAFT_EFFECTS, initDraft, syncLevelHud} from "./ui/draft.js";
+import {DRAFT_EFFECTS, initDraft, syncBaseHud} from "./ui/draft.js";
 import {initInput} from "./input.js";
 import {
-  initViewDebugger, syncViewInputs, syncXpReadout, tickVisibility, tickPerformance, drainScans
+  initViewDebugger, syncViewInputs, syncProgressReadout, tickVisibility, tickPerformance, drainScans
 } from "./debug/view-debugger.js";
 import {initCardSandbox} from "./debug/card-sandbox.js";
 import {initShowcaseUi, updateShowcaseUi} from "./ui/showcase.js";
@@ -37,14 +37,14 @@ function resizeView(){
 // be initialised before the debugger (a binding repaints the dock as it is bound, which needs the
 // surface the HUD was handed), and input before the debugger (its window keydown must stay ahead of
 // the shift+digit handler).
-// handChanged / draftChanged / levelChanged ride in the same record as every other effect, so the
+// handChanged / draftChanged / baseLevelChanged ride in the same record as every other effect, so the
 // card UI is driven entirely by the simulation raising them — nothing polls.
 // The skill tree is deprecated and intentionally absent from runtime composition. Its source
 // snapshot lives in src/deprecated/skill-tree/ in case the design is revisited.
 connectSimulation({...SIM_EFFECTS, ...DRAFT_EFFECTS,
   isCombatTargetOnScreen(target){return combatTargetOnScreen(target);},
   handChanged(){renderHand();},
-  phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();},
+  phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncProgressReadout();},
   // Arming and cancelling a card's placement is a BUILD-hud move in the simulation's eyes: only
   // which card owns the cursor changed, not the hand itself. The hand listens too, so the lifted,
   // rarity-lit card settles back the instant a right-click stows a part-spent kit.
@@ -103,7 +103,7 @@ function draw(){
 
 // ── boot ──────────────────────────────────────────────────────────────
 resizeView();
-syncBuildHud();syncPhaseHud();syncLevelHud();
+syncBuildHud();syncPhaseHud();syncBaseHud();
 let previous=performance.now();
 function frame(now){
   const dt=Math.min(.033,(now-previous)/1000);previous=now;
@@ -124,7 +124,7 @@ toast(requestedMode==="showcase"?"showcase ready — towers use production comba
 // Console and screenshot staging over the REAL simulation — every helper below is a debug COMMAND
 // the simulation already exports, so a staged hand is dealt, played and spent through exactly the
 // paths a run uses. Nothing here fabricates a card, an offer or a level.
-//   window.__draftDemo.deal(n)       level n times over, so real level offers appear
+//   window.__draftDemo.deal(n)       queue n real base-level offers (mixed build + buff)
 //   window.__draftDemo.dawn()        run a night to its end, so the real dawn reward is queued
 //   window.__draftDemo.hand([...])   deal a list of card ids into the hand ("id" or [id, copies])
 //   window.__draftDemo.add(id,n)     deal one card in, the way a draft does
@@ -132,7 +132,7 @@ toast(requestedMode==="showcase"?"showcase ready — towers use production comba
 const DEMO_HAND=[["woodBundle",2],"spikeKit","fireball","bpSniper","calmNight","healBase"];
 function draftDemo(){
   window.__draftDemo={
-    deal(count=1){for(let i=0;i<count;i++){const s=SIMULATION.levelState();SIMULATION.debugGrantXp(Math.max(1,Math.ceil(SIMULATION.levelCost(s.level)-s.xp)));}},
+    deal(count=1){for(let i=0;i<count;i++)SIMULATION.debugQueueDraft("base");},
     dawn(){SIMULATION.debugGoToPhase("night");SIMULATION.debugGoToPhase("day");},
     hand(entries=DEMO_HAND){
       const dealt=[];

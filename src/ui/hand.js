@@ -84,7 +84,7 @@ const REF_GLYPHS={
   "concept:chainLightning":"ϟ","concept:freeHit":"✦","concept:enemyPickup":"☝","concept:loadedDrop":"▣","concept:enemySlam":"↓","concept:retaliation":"↩",
   "concept:workerSpeed":"»","concept:workerResourceDamage":"⛏","concept:workerCombatDamage":"⚔","concept:workerCarry":"▣","concept:houseSlots":"⌂","concept:workerHp":"♥",
   "concept:dawnHeal":"☀","concept:towerDamage":"●","concept:towerSpeed":"↯","concept:towerRange":"◎","concept:towerHp":"♥",
-  "concept:dawnRepair":"▦","concept:baseHp":"⌂","concept:nightGather":"☾","concept:buildXp":"◉",
+  "concept:dawnRepair":"▦","concept:baseHp":"⌂","concept:nightGather":"☾",
   "concept:screenClick":"✊","concept:resourceRecall":"⌁","concept:touchOfDeath":"☠","concept:meteor":"●",
   "concept:fireball":"♨","concept:treants":"♣","concept:healBase":"♥","concept:repairTowers":"▦","concept:rushBuild":"↯",
   "concept:bundle":"▣","concept:tempWorker":"☝","concept:calmNight":"☾","concept:longDay":"☀",
@@ -93,6 +93,8 @@ const REF_GLYPHS={
   "concept:dustSiphon":"⌁","concept:coinPress":"◎","concept:diamondDrill":"◈",
   "building:blast":"●","building:spikes":"▲","building:landmine":"◉","building:tar":"≋","building:obelisk":"▰","building:damageOrbs":"◉","building:summoningCircle":"◎",
   "building:consumableForge":"◫",
+  // The main base: the opening card, so it gets a mark of its own rather than the generic house.
+  "building:mainBase":"▩",
   // The base kit. These five refs are the buildings the shop used to sell; BUILDING_TYPES owns
   // their names and costs but no icon, so — like every other building above — the picture is
   // chosen here, out of the same glyph vocabulary the authored tables use.

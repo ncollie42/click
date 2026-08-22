@@ -7,7 +7,86 @@ import * as data from "../src/game/data.js";
 import {cardById,RARITY_WEIGHTS} from "../src/game/cards.js";
 import {buildingFootprint,cellToWorld,footprintCells,worldToCell} from "../src/game/grid.js";
 
-sim.initializeRunMode("normal");sim.debugClearHand();
+// ── the opening: one card, an untimed pre-wave, and the base that starts day 1 ──
+// Also the setup every check below depends on: the rest of this file assumes an ordinary day.
+sim.initializeRunMode("normal");
+{
+  assert.deepEqual(sim.hand().map(entry=>entry.id),["bpMainBase"],"a normal run must open with the main base card alone");
+  assert.equal(sim.state.clock.phase,"pre-wave");assert.equal(sim.state.baseLevel,0);
+  assert.equal(sim.buildings.length,0,"the world must boot with nothing built");
+  assert.equal(sim.playCard(0),"applied","the opening card places itself — it never arms a ghost");
+  assert.equal(sim.state.buildMode,null);assert.equal(sim.state.cardTargeting,null);
+  const site=sim.buildings.find(building=>building.type==="mainBase");
+  assert.ok(site&&!site.complete,"playing the opening card must leave one unfinished site");
+  assert.deepEqual({x:site.x,y:site.y},{x:data.BASE.x,y:data.BASE.y},"the base site must sit on the authored anchor");
+  assert.deepEqual(site.cost,{...data.MAIN_BASE.cost},"the site must charge the authored level-1 recipe");
+  assert.deepEqual(sim.hand(),[],"the opening card must leave the hand as its site lands");
+  // A second copy refuses and stays in hand: the map has one centre.
+  assert.equal(sim.debugDealCard("bpMainBase"),true);
+  assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpMainBase")),false,"a second main base must refuse");
+  assert.equal(sim.hand().find(entry=>entry.id==="bpMainBase").count,1,"a refused card must not be spent");
+  assert.equal(sim.buildings.filter(building=>building.type==="mainBase").length,1);
+  // Pre-wave is indefinite: no countdown, no night, no wave, and elapsed run time still moves.
+  sim.update(300);
+  assert.equal(sim.state.clock.phase,"pre-wave","pre-wave must never time out into night");
+  assert.equal(sim.state.enemies.length,0,"pre-wave must spawn no wave enemies");
+  assert.equal(sim.state.clock.light,0,"pre-wave must stay fully lit");
+  assert.ok(sim.state.clock.elapsed>=300,"elapsed run time must keep counting during pre-wave");
+  // The ordinary blueprint delivery path finishes it, and finishing it starts day 1. Delivered in
+  // two loads, because partial progress on the active authored recipe has to survive.
+  const zero=()=>Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0]));
+  sim.state.carried.wood=4;
+  sim.setPointerWorld(site.x,site.y);sim.secondaryRelease();
+  assert.deepEqual(sim.mainBaseStatus(),{level:0,maxLevel:data.MAIN_BASE.maxLevel,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[0].cost,delivered:{...zero(),wood:4}},"a part-delivered level-1 recipe must hold its progress");
+  sim.state.carried.wood=data.MAIN_BASE.cost.wood-4;
+  sim.setPointerWorld(site.x,site.y);sim.secondaryRelease();
+  assert.equal(site.complete,true);assert.equal(sim.state.baseLevel,1);
+  assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.remaining,data.DAY_DURATION,"day 1 must get the full day");
+  assert.equal(sim.state.clock.completedNights,0);
+  // Every completed authored base level pays ONE pick from the MIXED build+buff pool (XP and its
+  // build-only level draft were deleted 2026-08-22, so these three levels are the run's only build
+  // source). A drafted buff applies on the spot through applyBuff(); a drafted build enters the hand.
+  // Each stack is a real, permanent change to a run the rest of this file then measures against
+  // authored numbers, so it is scrubbed straight back off — the same tidy-up the tower-range cap
+  // does below (`delete sim.state.draft.buffs.towerRange`). The two buffs that also write run state
+  // (handCarry, baseHp) are restored with it.
+  const takeBaseReward=()=>{
+    assert.equal(sim.draftKind(),"base","a completed base level must deal its own reward kind, not dawn's");
+    const offer=sim.draftPending();
+    assert.equal(offer.length,3);assert.equal(new Set(offer).size,3,"the base offer repeated a card");
+    assert.equal(offer.every(id=>["build","buff"].includes(cardById[id].category)&&cardById[id].inPool),true,"a base reward may only deal builds or permanent buffs");
+    // Prefer a buff when the mixed offer holds one, so the scrub below can undo it; a build-only
+    // offer is taken into the hand and cleared instead.
+    const index=Math.max(0,offer.findIndex(id=>cardById[id].category==="buff"));
+    const id=offer[index],isBuff=cardById[id].category==="buff",stacks=sim.buffStacks(id),held=sim.hand().length;
+    const capacity=sim.state.capacity,baseMax=sim.state.baseMax,baseHp=sim.state.baseHp;
+    assert.equal(sim.chooseDraft(index),true);
+    if(isBuff){
+      assert.equal(sim.buffStacks(id),stacks+1,"a drafted buff must land through applyBuff");
+      assert.equal(sim.hand().length,held,"a drafted buff must never enter the hand");
+      if(stacks)sim.state.draft.buffs[id]=stacks;else delete sim.state.draft.buffs[id];
+    }else{
+      assert.equal(sim.hand().length,held+1,"a drafted build must land in the hand");
+      sim.debugClearHand();
+    }
+    sim.state.capacity=capacity;sim.state.baseMax=baseMax;sim.state.baseHp=baseHp;
+  };
+  takeBaseReward();
+  assert.equal(sim.draftPending(),null,"the base level owes exactly one pick");
+  // Levels 2 and 3 are authored recipes carried to the STANDING base, each paying one more reward.
+  assert.deepEqual(sim.mainBaseStatus().cost,data.MAIN_BASE_LEVELS[1].cost,"a level-1 base must next ask for the authored level-2 recipe");
+  sim.state.carried.stone=data.MAIN_BASE_LEVELS[1].cost.stone;
+  sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
+  assert.equal(sim.state.baseLevel,2);takeBaseReward();
+  assert.deepEqual(sim.mainBaseStatus().cost,data.MAIN_BASE_LEVELS[2].cost,"a level-2 base must next ask for wood AND stone");
+  sim.state.carried.wood=data.MAIN_BASE_LEVELS[2].cost.wood;sim.state.carried.stone=data.MAIN_BASE_LEVELS[2].cost.stone;
+  sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
+  assert.equal(sim.state.baseLevel,3);takeBaseReward();
+  assert.deepEqual(sim.mainBaseStatus(),{level:3,maxLevel:3,atMaxLevel:true,cost:null,delivered:zero()},"the authored level list simply ends");
+  assert.deepEqual({...sim.state.stored},zero(),"exact recipes must leave nothing over");
+  while(sim.draftPending())assert.equal(sim.chooseDraft(0),true);
+}
+sim.debugClearHand();
 sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=sim.friendlyBrutes.length=sim.state.enemies.length=sim.resourceDrops.length=0;
 const counts=()=>Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0]));
 const worker=(x,y)=>({x,y,postX:x,postY:y,spawnSource:null,job:"guard",jobTarget:null,autonomous:false,taskTarget:null,selfSupply:null,returning:false,starved:false,carried:counts(),hp:data.WORKER_HP,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0});
@@ -17,23 +96,36 @@ const findAnchor=(type=sim.state.buildMode,exclude=null)=>{for(let y=96;y<data.H
 const place=id=>{assert.equal(play(id),"targeting");const anchor=findAnchor();sim.setPointerWorld(anchor.x,anchor.y);sim.primaryPress();sim.primaryRelease();return anchor;};
 const findWater=()=>{for(let y=96;y<data.H-96;y+=data.CELL)for(let x=96;x<data.W-96;x+=data.CELL)if(sim.terrainAtWorldPoint(x,y)==="water")return {x,y};assert.fail("no water cell");};
 const originalRandom=Math.random;Math.random=()=>0;
-let visible=new Set(),levelEvents=0;sim.connect({isCombatTargetOnScreen(target){return visible.has(target);},levelChanged(){levelEvents++;}});
+let visible=new Set(),baseLevelEvents=0;sim.connect({isCombatTargetOnScreen(target){return visible.has(target);},baseLevelChanged(){baseLevelEvents++;}});
+// Taking an offer inside this suite must not permanently change the run the rest of the file
+// measures against authored numbers: a drafted buff is scrubbed back off (its stack plus the two
+// that also write run state), a drafted build is dropped out of the hand.
+const takeOfferScrubbed=(index=0)=>{
+  const id=sim.draftPending()[index],category=cardById[id].category;
+  const stacks=sim.buffStacks(id),held=sim.hand().length;
+  const capacity=sim.state.capacity,baseMax=sim.state.baseMax,baseHp=sim.state.baseHp;
+  assert.equal(sim.chooseDraft(index),true);
+  if(category==="buff"){if(stacks)sim.state.draft.buffs[id]=stacks;else delete sim.state.draft.buffs[id];}
+  else if(sim.hand().length>held)sim.debugClearHand();
+  sim.state.capacity=capacity;sim.state.baseMax=baseMax;sim.state.baseHp=baseHp;
+  return id;
+};
 
-// Consumable Forge integration: force its rare build card into an ordinary level offer, construct
+// Consumable Forge integration: force its rare build card into a base-level offer, construct
 // it, then exercise manual dust batching through the shared consumable queue.
-const forgePool=sim.draftEligible(["build"]),forgePoolIndex=forgePool.findIndex(card=>card.id==="bpConsumableForge"),forgeWeight=forgePool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),forgeWeightBefore=forgePool.slice(0,forgePoolIndex).reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0);
+const forgePool=sim.draftEligible(["build","buff"]),forgePoolIndex=forgePool.findIndex(card=>card.id==="bpConsumableForge"),forgeWeight=forgePool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),forgeWeightBefore=forgePool.slice(0,forgePoolIndex).reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0);
 assert.ok(forgePoolIndex>=0,"bpConsumableForge is absent from the live build pool");
 Math.random=()=>(forgeWeightBefore+RARITY_WEIGHTS.rare/2)/forgeWeight;
-assert.equal(sim.debugGrantXp(6),true);const forgeOffer=sim.draftPending();assert.equal(sim.draftKind(),"level");assert.equal(forgeOffer.length,3);assert.ok(forgeOffer.includes("bpConsumableForge"));
+assert.equal(sim.debugQueueDraft("base"),true);const forgeOffer=sim.draftPending();assert.equal(sim.draftKind(),"base");assert.equal(forgeOffer.length,3);assert.ok(forgeOffer.includes("bpConsumableForge"));
 assert.equal(sim.chooseDraft(forgeOffer.indexOf("bpConsumableForge")),true);assert.ok(sim.hand().some(entry=>entry.id==="bpConsumableForge"));assert.equal(sim.draftPending(),null);
 Math.random=()=>0;sim.DBG.freeCosts=true;assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpConsumableForge")),"targeting");const forgeAnchor=findAnchor();sim.setPointerWorld(forgeAnchor.x,forgeAnchor.y);sim.primaryPress();sim.primaryRelease();sim.DBG.freeCosts=false;
 const forge=sim.buildings.find(building=>building.type==="consumableForge");assert.ok(forge?.complete);assert.deepEqual(forge.consumableForge,{dust:0});assert.equal(sim.buildings.includes(forge),true);
 sim.setPointerWorld(forge.x,forge.y);sim.secondaryRelease();assert.equal(forge.consumableForge.dust,0,"empty release changed forge progress");
 sim.state.carried.wood=1;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,0);assert.equal(sim.state.carried.wood,0);assert.equal(sim.resourceDrops.filter(item=>item.kind==="wood").length,1,"non-dust did not use the ground-drop fallback");sim.resourceDrops.length=0;
 sim.state.carried.dust=2;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,2);assert.equal(sim.draftPending(),null,"partial dust queued a draft");
-assert.equal(sim.debugGrantXp(8),true);const priorityOffer=sim.draftPending();assert.equal(sim.draftKind(),"level");
-sim.state.carried.dust=5;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,2);assert.equal(sim.draftPending(),priorityOffer,"forge reward displaced the active level offer");assert.equal(sim.state.draft.consumableQueue,1);assert.equal(sim.state.draftPaused,true);
-assert.equal(sim.chooseDraft(0),true);assert.equal(sim.draftKind(),"consumable","forge reward did not follow the higher-priority level offer");
+assert.equal(sim.debugQueueDraft("base"),true);const priorityOffer=sim.draftPending();assert.equal(sim.draftKind(),"base");
+sim.state.carried.dust=5;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,2);assert.equal(sim.draftPending(),priorityOffer,"forge reward displaced the active base offer");assert.equal(sim.state.draft.consumableQueue,1);assert.equal(sim.state.draftPaused,true);
+takeOfferScrubbed(0);assert.equal(sim.draftKind(),"consumable","forge reward did not follow the higher-priority base offer");
 let forgeDrafts=0;
 const chooseForgeReward=()=>{const offer=sim.draftPending();assert.equal(sim.draftKind(),"consumable");assert.equal(offer.length,3);assert.equal(new Set(offer).size,3);assert.equal(offer.every(id=>cardById[id].category==="consumable"),true);const chosen=offer[0],before=sim.hand().find(entry=>entry.id===chosen)?.count??0;assert.equal(sim.chooseDraft(0),true);assert.equal(sim.hand().find(entry=>entry.id===chosen)?.count,before+1,"chosen forge consumable did not enter the hand");forgeDrafts++;};
 chooseForgeReward();
@@ -76,10 +168,11 @@ assert.equal(play("screenClick"),"applied");assert.equal(near.hp,near.max-1);ass
 sim.state.enemies.length=0;const bossAnchor=findAnchor(null),chestsBeforeBoss=sim.chests.length;sim.spawnEnemy("bruteBoss");const slainBoss=sim.state.enemies.at(-1);slainBoss.x=bossAnchor.x;slainBoss.y=bossAnchor.y;slainBoss.hp=1;
 sim.setPointerWorld(slainBoss.x,slainBoss.y);sim.primaryPress();sim.update(.02);sim.primaryRelease();assert.equal(sim.state.enemies.includes(slainBoss),false);assert.equal(sim.chests.length,chestsBeforeBoss+1);assert.deepEqual({x:sim.chests.at(-1).x,y:sim.chests.at(-1).y},bossAnchor);sim.validateSimulationInvariants();sim.chests.pop();
 
-// Recall releases claims and batches all arrivals into one base deposit: storage changes, XP never does.
+// Recall releases claims and batches all arrivals into one base deposit: storage changes, the
+// authored base recipe never does (a maxed base banks nothing, and haulers never fund a level).
 sim.resourceDrops.length=0;const recallA=drop("wood",100,100),recallB=drop("stone",132,100),claimer=worker(100,100);claimer.taskTarget=recallA;recallA.claimedBy=claimer;sim.state.workers.push(claimer);sim.resourceDrops.push(recallA,recallB);
-const xpBefore=sim.xp(),storedBefore={...sim.state.stored},eventsBefore=levelEvents;assert.equal(play("resourceRecall"),"applied");assert.equal(claimer.taskTarget,null);sim.update(1);
-assert.equal(sim.resourceDrops.length,0);assert.equal(sim.xp(),xpBefore,"a base deposit must never grant xp");assert.deepEqual(sim.state.stored,{...storedBefore,wood:storedBefore.wood+1,stone:storedBefore.stone+1});assert.equal(levelEvents,eventsBefore,"a deposit must not touch the level track");sim.state.workers.length=0;
+const storedBefore={...sim.state.stored},eventsBefore=baseLevelEvents;assert.equal(play("resourceRecall"),"applied");assert.equal(claimer.taskTarget,null);sim.update(1);
+assert.equal(sim.resourceDrops.length,0);assert.deepEqual(sim.state.stored,{...storedBefore,wood:storedBefore.wood+1,stone:storedBefore.stone+1});assert.equal(baseLevelEvents,eventsBefore,"a deposit must not touch the base's authored progression");sim.state.workers.length=0;
 
 // Meteor rejects water, respects occupancy/radius, installs a validated 3x3 rock, and can be mined out.
 assert.equal(play("meteor"),"targeting");const water=findWater(),meteorAnchor=findAnchor();sim.setPointerWorld(water.x,water.y);sim.primaryPress();sim.primaryRelease();assert.ok(sim.hand().some(entry=>entry.id==="meteor"),"invalid cast spent meteor");

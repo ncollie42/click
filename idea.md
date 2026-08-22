@@ -85,7 +85,7 @@ Validate costs by measuring actual time-to-deliver under representative early-, 
 
 **Mechanical anchors the theme commits to:**
 
-- Base delivery = feeding = XP (the sink, never a store).
+- Base delivery = feeding = progress (the sink, never a store). *Status 2026-08-22: XP is gone; the base's own three authored levels are the ladder, and deposits are storage. The theme still wants a sink — see the retirement note under "Base Delivery Grants XP, Not Storage".*
 - Hunger scales the night: waves grow with total fed, not night count — the greed dial.
 - Glow = radius: feeding visibly widens the light circle. Useful (vision, aura, later fog) and dangerous (the beacon they march toward). The dial is drawn on the ground.
 - Enemies are connected to the thing — drawn to it, or made by it. Not random raiders.
@@ -101,7 +101,7 @@ Longer rationale, kept for reference: villagers dig it up, wall it in with their
 - **Tower families already encode the split.** `Starter` and `Ballistics` are villager carpentry and masonry. `Elemental` and `Special` — fire, freeze, teleport, laser, pulse, shock — are salvaged devices switched back on. The distinction is authored in `data.js` and currently carries no fiction.
 - **Base delivery granting XP** becomes a machine that returns knowledge rather than goods, which is exactly what a sink should be.
 - **The archived skill-tree concept** was what the villagers learned from it. The feature is deprecated, but its `✦ ◈ ◆ ◇` visual language still reads precursor if revisited.
-- **The floating orb** is a guardian that woke with the engine, replacing the king with the same role and a coherent origin.
+- **The floating orb** is a guardian that woke with the engine. (The king is already retired — the base itself now owns the defence — so this is a reskin of the base, not a replacement unit.)
 - **Night gloom** is what the machine holds back, or what it attracts.
 
 **Why not the alternatives:** committing to pure medieval means deleting the arcane towers and dust; committing to pure science fiction means deleting the villagers, the timber and the cozy manual gathering loop that is the game's main appeal. This theme keeps both and makes the contrast the point.
@@ -113,6 +113,14 @@ Longer rationale, kept for reference: villagers dig it up, wall it in with their
 ## Base Delivery Grants XP, Not Storage
 
 **Tags:** `Core Gameplay`, `Retention`
+
+> **RETIRED 2026-08-22 — XP no longer exists.** `state.xp`, `state.level`, `LEVEL_CURVE` and
+> `RESOURCE_XP` were deleted from the game. Progression is now the three authored `MAIN_BASE_LEVELS`
+> (each pays one build-or-buff draft) plus one buff per night survived, and wave pools widen with
+> nights survived rather than anything the player feeds. Everything in this section — including the
+> "Decided (2026-08-21)" line and the Machine Hunger sub-idea below — is kept as unbuilt design: the
+> greed dial it argues for would have to be rebuilt on a number that still exists (deposits, base
+> levels) rather than on XP.
 
 Dropping resources at the base converts them to XP instead of storing them. Different kinds are worth different amounts.
 
@@ -143,11 +151,11 @@ Whether the base is a machine or a living creature is deliberately undecided —
 
 **Tags:** `Immersion`, `Game Feel / Juice`
 
-Replace the castle with a black hole that visibly pulls things inward, and replace the king with a floating orb that attacks.
+Replace the castle with a black hole that visibly pulls things inward, and give the base's own automatic attack (the king is retired; the base fires) the look of a floating orb.
 
 The fiction matches the mechanics: a base that consumes what you feed it and returns nothing is the correct read for an XP sink. The pull could be literal, drawing nearby loose drops inward, which also doubles as the auto-collect fantasy.
 
-The orb replaces the king as the base's automatic defender and removes the medieval framing without removing the role.
+The orb is a costume for the base's automatic defence and removes the medieval framing without moving the role off the base.
 
 **Open:** does the pull actually consume drops (a hazard near the base), or is it purely visual? A base that eats resources the player did not intend to spend would be a strong tension but a bad surprise.
 
@@ -439,11 +447,17 @@ Add a large enemy with a clearly telegraphed radial stomp. Its impact uses one w
 
 This makes the battlefield itself vulnerable: fighting near valuable resource clusters can destroy future income. Decide whether the stomp also damages allied enemies, whether resource destruction produces ordinary drops, and whether damage is flat or falls off from the center.
 
-## King and Base Defense
+## King and Base Defense — RESOLVED (no king)
 
-- Add a king who lives at the castle and automatically defends the main base.
-- Decide whether the king can move, receive upgrades, be manually picked up, or be directly commanded.
-- Decide what happens if the king is defeated.
+The role shipped without the unit. The **completed main base** defends itself — nearest visible
+enemy on `MAIN_BASE.range`/`damage`/`rate`, reusing the tower buffs, auras and fog rules — and the
+king record, model and palette roles were deleted. The open questions below are therefore answered
+by construction: the defender cannot move, is not picked up, is not commanded, and cannot be
+"defeated" separately from the base, whose destruction is still the run-loss condition. Base
+upgrades come from `MAIN_BASE_LEVELS`, not from upgrading a unit.
+
+Still open, if the fiction is ever revisited: the floating-orb reskin below would change *what the
+defender looks like*, not who owns the attack.
 
 ## Garrison — SHIPPED
 
@@ -473,7 +487,6 @@ Still unbuilt, and deliberately **not** the Garrison: a barracks would *produce*
 - Manually pick units up and drop them at a destination?
 - Use RTS selection similar to StarCraft II?
 - Use boid-like groups that follow objective points rather than controlling every unit?
-- Can the king command nearby units?
 - How do commands coexist with right-click resource collection and building movement?
 
 ## 3D Hover and Selection Visualization

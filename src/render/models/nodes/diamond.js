@@ -1,7 +1,8 @@
 // Owns: the diamond deposit (reviewed cast). Contract: userData.live=[group], spent, gem.
 import * as THREE from "three";
 import {S, bakeStatic, addPxOutline} from "../kit.js";
-import {GAME_TARGET, relightForGame} from "../game-rig.js";
+import {GAME_TARGET, relightForGame, shadeToFamily} from "../game-rig.js";
+import {TONES} from "../../palette.js";
 import {adoptModel} from "../adopt.js";
 import {MODELS as NODE_MODELS, withGameTarget} from "../reviewed/resource-nodes.js";
 import {nodeMesh} from "./node-mesh.js";
@@ -19,6 +20,7 @@ export function makeDiamond(){
                                               // would keep the crystals out of the fuse below
   bakeStatic(inner, {extraKeep:[crystals], requireShadow:false, shell:false});
   bakeStatic(crystals, {requireShadow:false, shell:false});
+  shadeToFamily(inner, TONES.stone.shadow);   // rock mound + crystals: stone shade, cool not muddy
   adoptModel(inner);
   inner.scale.setScalar(S);
   const spent = nodeMesh("diamond-spent");

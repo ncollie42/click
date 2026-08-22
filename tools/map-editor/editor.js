@@ -332,8 +332,8 @@ function drawPaint(){
     paintContext.fillText(object.kind[0].toUpperCase(), (object.cx + .5) * px, (object.cy + .55) * px);
   }
   {
-    // The game always spawns the main base at the map's center cell (3×3 footprint);
-    // mark that reserved footprint so authors keep it on land.
+    // The map's center cell is the fixed base anchor (3×3 footprint reservation). The player
+    // BUILDS the base there, so mark the reservation and keep it on land regardless.
     const baseCx = Math.floor(doc.width / 2), baseCy = Math.floor(doc.height / 2);
     paintContext.fillStyle = "rgba(255,214,90,0.25)";
     paintContext.fillRect((baseCx - 1) * px, (baseCy - 1) * px, 3 * px, 3 * px);

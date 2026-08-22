@@ -108,6 +108,7 @@
 // 0.80 and total height 57 / 47.5 / 61 / 53, all inside the ±15% the layout allows.
 // The ink adds INK_W = 1.0 sim px all round, or 2 device px, whichever is wider on screen.
 import * as THREE from "three";
+import {SWATCH as S} from "../../palette.js";
 
 // ════════════════════════════════════════════════════════════════════════════
 // 1 · DISPLAY-REFERRED AUTHORING (the viewer's curve + rig, inverted)
@@ -276,6 +277,13 @@ const RAMP = {
 // authored B/R of 1.065 on the stone coming out at 1.129, and an authored 0.933 coming out at
 // 0.872. Two points is a line; solving it for "renders neutral" landed on a hex that is itself
 // very nearly neutral, and the render measures a 3-point channel spread.
+// Aug 22 palette migration: every tint below is a shared swatch (palette.js SWATCH). tintOf()
+// throws luminance away, so a swatch here sets which FAMILY the surface belongs to and the RAMP
+// above still owns every value — the calibration notes kept below describe how the old hand-solved
+// hexes were found and are left as the record of WHY each family was picked, not as live numbers.
+// Two hand overrides over OKLab-nearest (scripts/palette-snap.mjs): the canopy tints snapped to
+// cream1 (they are desaturated for the ACES residual) and were forced back onto the green ramp,
+// and gemSpent took metal0 so a spent deposit keeps a cool cue against the neutral matrix.
 const TINT = {
   // Unlit rendering means a tint is very nearly the hue the pixel comes out as. tintOf()
   // normalises to luminance 1, so the hex sets the HUE and RAMP sets the VALUE, independently.
@@ -286,12 +294,12 @@ const TINT = {
   // (178,206,135)) and pulled the cyan gem toward it (rendered R 172 for an authored 125).
   // Hence per-hue calibration rather than one global correction. Every comment marked
   // "-> RENDERS" states the pixel that was measured coming out the far end.
-  leaf:     tintOf(0xb5c29c),   // -> RENDERS the sheet's canopy pixel (173,200,131)
-  leafDeep: tintOf(0x9eb48a),   // one variant cooler and deeper
-  leafPale: tintOf(0xbec694),   // one variant yellower
-  blossom:  tintOf(0xc7a2bb),   // -> RENDERS the sheet's blossom pixel (207,134,175)
-  bark:     tintOf(0xb4b2a8),   // R3: blue lifted 162 -> 174. Rendered B/R was 0.818 against the
-  barkStump: tintOf(0xb4b2a8),  // re-measured trunk's 0.876 — the bone is a cool bone.
+  leaf:     tintOf(S.green2),   // -> RENDERS the sheet's canopy pixel (173,200,131)
+  leafDeep: tintOf(S.green3),   // one variant cooler and deeper
+  leafPale: tintOf(S.green0),   // one variant yellower
+  blossom:  tintOf(S.arcane0),   // -> RENDERS the sheet's blossom pixel (207,134,175)
+  bark:     tintOf(S.stone1),   // R3: blue lifted 162 -> 174. Rendered B/R was 0.818 against the
+  barkStump: tintOf(S.stone1),  // re-measured trunk's 0.876 — the bone is a cool bone.
   // R4: the stump's dark and mid wood tones both sit on the CHEST's timber hue, and the two
   // rejected hexes bracket why. R3's 0xa19f92 is a grey that is warm by two points and rendered as
   // grey — the judge counted the chips as gray. R4's first try, 0xa5825d, is a real bark brown on
@@ -300,28 +308,28 @@ const TINT = {
   // the-error trick that lands a mild hue lands a strong one two stops past where it was aimed.
   // 0x7f6f5a is the one hex in this file MEASURED coming out at the sheet's timber #7E6143, so the
   // wood on this prop borrows it outright and only the RAMP separates chip from ring from chest.
-  barkDark: tintOf(0x7f6f5a),
-  barkChip: tintOf(0x7f6f5a),
-  endGrain: tintOf(0xe0cfad),
+  barkDark: tintOf(S.grey0),
+  barkChip: tintOf(S.grey0),
+  endGrain: tintOf(S.cream1),
   // R3: WARM, and that is not a typo. The rig+curve adds blue: an authored 0xa9adb4 (B/R 1.065)
   // rendered B/R 1.129, the "#9399A6 blue cast" the judge measured. Dividing the authored ratios
   // by the measured error lands here, and the render comes out neutral.
-  stone:    tintOf(0xb2b3b4),
-  matrix:   tintOf(0x8f9298),
-  gem:      tintOf(0x4ac6e9),   // -> RENDERS PAL.gem 0x71cbd8
-  gemSpent: tintOf(0x8fb2b6),
-  timber:   tintOf(0x7f6f5a),   // R3: G +4, B +16 off 0x7f6d51. The sheet's chest is a grey-brown
+  stone:    tintOf(S.stone1),
+  matrix:   tintOf(S.stone2),
+  gem:      tintOf(S.blue0),   // -> RENDERS PAL.gem 0x71cbd8
+  gemSpent: tintOf(S.metal0),
+  timber:   tintOf(S.grey0),   // R3: G +4, B +16 off 0x7f6d51. The sheet's chest is a grey-brown
                                 // timber (#7E6143), not the orange R2 rendered at (144,107,64).
-  iron:     tintOf(0x8a8a88),
-  brass:    tintOf(0xd0b46a),   // PAL.coin 0xe3b445, pulled back the same way. The latch says
+  iron:     tintOf(S.stone1),
+  brass:    tintOf(S.red0),   // PAL.coin 0xe3b445, pulled back the same way. The latch says
                                 // "treasure" without ever spending white.
-  loot:     tintOf(0xe8c95c),
+  loot:     tintOf(S.red0),
   // R4: DESATURATED, and solved from TWO measurements instead of one — because the ACES residual
   // is a slope, not a constant, which is the same trap the stump's chips fell into a few lines up.
   // R3's 0xa07e58 has an authored B/R of 0.55 and rendered 0.34. Dividing by that error gives
   // 0xa0997e, authored 0.79 — which rendered 0.63, overshooting the 0.49 target from the far side.
   // Two points make a line, and the line puts the authored B/R for a rendered 0.49 at 0.67.
-  lining:   tintOf(0xa08a6c),
+  lining:   tintOf(S.wood0),
 };
 
 // ════════════════════════════════════════════════════════════════════════════

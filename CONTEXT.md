@@ -89,6 +89,50 @@ Three **living** Controlled Enemies per completed yard (`CAPTURE_YARD.capacity`)
 
 The `bpCaptureYard` build card is draft-gated behind the Enemy Pickup buff through authored `requires` metadata; only light enemies (see Enemy Weight Tag) can be carried, so only they can be captured.
 
+## The Opening
+
+### Pre-Wave
+
+The clock state a run **boots into**, alongside day and night (`state.clock.phase === "pre-wave"`, `src/game/simulation.js`). It is the untimed opening: no countdown, full daylight, no wave scheduled or forecast, and no path into night. Everything else runs normally — gathering, cards, camera, construction delivery, elapsed run time and debug inspection.
+
+Pre-Wave is entered once, at world load, and left exactly once, when the Main Base is completed. That is its **only** exit: no timer, no phase button and no debug command can flip it (the phase commands refuse while it lasts). Completing the base sets `state.baseLevel` to 1 and starts **day 1 with the full `DAY_DURATION`**; day/night pacing from then on is unchanged.
+
+### Base Standing
+
+Whether a base exists at all, answered by `state.baseLevel > 0` (`mainBaseStanding()`) and by nothing else — not by the presence of a building record. Every base service reads it: storage deposits and hauling, the health target, enemy target selection, the hover action, the map centre's attack, and the rendered structure. While no base stands the map centre is bare reserved ground; an enemy with no other valid target idles rather than attacking an absent base. The showcase fixture world starts standing (level 1) with no construction record behind it.
+
+## Run Progression
+
+### Base Level
+
+The run's **only** progression number: `state.baseLevel`, 0 before the Main Base stands and then the authored `level` of the `MAIN_BASE_LEVELS` entry it has reached (maximum 3, `MAIN_BASE.maxLevel`). There is no player level and no experience — `state.xp`, `state.level`, `LEVEL_CURVE` and `RESOURCE_XP` were deleted on 2026-08-22 along with the level-up draft they paid. Completing an ordinary building now grants the building and nothing else.
+
+### Reward Draft
+
+A pick-one-of-three offer, in one of three closed kinds. `base` is paid by each completed Base Level and draws the **mixed** build + buff pool — it is the only source of build cards after the opening hand. `dawn` is paid by surviving a night and draws permanent buffs only. `consumable` is paid by a chest or a Consumable Forge batch and draws consumables. Backlog priority is base → dawn → consumable; exactly one offer is live at a time and the world is frozen while it pends.
+
+### Wave Tier
+
+Which authored Spawn Pools the night composer may choose from: `min(4, floor(nights begun / 2))`, so tier 0 covers waves 1-2, tier 1 waves 3-4, and tier 2 waves 5 and up. It rides **nights survived** — never the Base Level, the hand, or anything the player buys. Difficulty size stays with the Threat-Budget Curve; the tier only widens the roster.
+
+## Worker Capacity
+
+### Worker Limit
+
+The maximum number of workers that may be assigned to a **completed** building at once. It is authored per building as `jobSlots` on that building's definition, and absence means zero — a house, tower or obelisk holds nobody. Work camps and quarries author 2, the stockpile 2, the scout hut 2 (`SCOUT_HUT_SLOTS`), and the garrison 3 (`GARRISON.capacity`). The main base authors 2 on `MAIN_BASE.jobSlots` and deliberately **not** on its `BUILDING_TYPES.mainBase` row: that row is the construction *site*, while the completed base's post is the `BASE` anchor (see Base Standing), and a second `jobSlots` there would open a competing pool at the same coordinates. Resource nodes are not buildings and use the single global `RESOURCE_NODE_JOB_SLOTS` instead.
+
+Four rules hold for every Worker Limit, so no building may invent its own staffing machinery:
+
+- **Occupancy is derived, never stored.** A post's assigned count is computed by counting the workers whose job and `jobTarget` match that building. There is no slot counter on the building, so a slot can never leak: a worker that dies, is picked up, is reassigned, or whose building stops being complete simply stops being counted.
+- **Assignment reserves immediately.** Naming a post claims its slot the instant the assignment is recorded, before the worker has travelled a single pixel. Two workers can therefore never claim one slot in the same pass, and a full or unfinished building rejects a drop outright rather than leaking the worker onto the ground beside it.
+- **Held workers keep their reservations.** A worker lifted for dragging is still assigned, so it still occupies its slot. Picking a staffer up does not open its post for someone else, and putting it back does not overfill the post.
+- **Arrival is a separate fact.** Reaching the post is what grants post-specific bonuses (see Fortified Guard Kit); the reservation alone grants nothing.
+
+Worker Limit is **not** either of the two other capacity numbers, and the three must never be merged:
+
+- **Build capacity** is `buildSlots` — how many workers may staff a building *while it is still a construction site*. It is consumed before completion, is the number the buildCapacity buff grows, and drops to zero relevance the moment the building finishes and its Worker Limit takes over.
+- **Population** is `HOUSE_SLOTS` — how many workers one completed house *creates and owns*. Population says where workers come from; Worker Limit says how many may stand somewhere. A house has population and no Worker Limit at all; a garrison has a Worker Limit and no population. Reassigning a worker never changes which house owns it.
+
 ## The Garrison
 
 ### Garrison

@@ -29,19 +29,19 @@
      draft 10, game-over 11. Both full-stage overlays cover every panel above; only
      the end card, which ends the run outright, may cover them. The two are mutually exclusive, so
      they share a layer and the draft's later position in this file settles the tie. */
-  #xpHud{position:absolute;z-index:3;left:50%;top:10px;transform:translateX(-50%);width:min(520px,calc(100% - 540px));min-width:260px;padding:4px;background:#292119ed;border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
-  /* The level bar. Violet rather than the plate's gold, because this is the bar the draft screen
-     comes out of — the same violet the vignette down there uses. */
-  #levelBar{position:relative;display:flex;align-items:center;justify-content:space-between;
+  #baseHud{position:absolute;z-index:3;left:50%;top:10px;transform:translateX(-50%);width:min(520px,calc(100% - 540px));min-width:260px;padding:4px;background:#292119ed;border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
+  /* The base-level bar. Violet rather than the plate's gold, because this is the bar the draft
+     screen comes out of — the same violet the vignette down there uses. */
+  #baseBar{position:relative;display:flex;align-items:center;justify-content:space-between;
     height:16px;padding:0 5px;overflow:hidden;background:#17120d;border:1px solid #0008}
-  #levelBarFill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,#5b3b86,#b18be5);transition:width .18s ease-out}
-  #levelBar b,#levelBar span{position:relative;font-size:10px;font-weight:bold;text-shadow:1px 1px #17120d}
-  #levelBar b{color:#fff1d3}
-  #levelBar span{color:#e2d3f2;opacity:.82;font-variant-numeric:tabular-nums}
-  @keyframes levelUpPulse{40%{filter:brightness(1.75);transform:scale(1.04)}}
-  #levelBar.up{animation:levelUpPulse var(--duration-travel) var(--ease-settle)}
-  #levelBarXp.tick{display:inline-block;animation:xpTick .18s ease-out}
-  @keyframes xpTick{from{transform:scale(1.3);color:#fff1d3}to{transform:scale(1)}}
+  #baseBarFill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,#5b3b86,#b18be5);transition:width .18s ease-out}
+  #baseBar b,#baseBar span{position:relative;font-size:10px;font-weight:bold;text-shadow:1px 1px #17120d}
+  #baseBar b{color:#fff1d3}
+  #baseBar span{color:#e2d3f2;opacity:.82;font-variant-numeric:tabular-nums}
+  @keyframes baseUpPulse{40%{filter:brightness(1.75);transform:scale(1.04)}}
+  #baseBar.up{animation:baseUpPulse var(--duration-travel) var(--ease-settle)}
+  #baseBarNeed.tick{display:inline-block;animation:baseTick .18s ease-out}
+  @keyframes baseTick{from{transform:scale(1.3);color:#fff1d3}to{transform:scale(1)}}
   #phaseHud{position:absolute;z-index:3;right:10px;top:10px;width:245px;padding:8px 9px;background:#292119ed;color:var(--paper);border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
   #phaseHud.night{background:#17213aed;border-color:#c65b4d;color:#dce9ff}
   #phaseHeader{display:flex;justify-content:space-between;font-size:13px}
@@ -64,7 +64,7 @@
   button:disabled{cursor:not-allowed;opacity:.42;filter:saturate(.4)}
   button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
   kbd{background:var(--ink);color:var(--paper);padding:1px 4px;font:inherit}
-  /* Context prompt and transient toast stack below progression; neither may cover the XP bar. */
+  /* Context prompt and transient toast stack below progression; neither may cover the base bar. */
   #toast{position:absolute;z-index:8;left:50%;top:80px;transform:translateX(-50%);background:#292119e8;color:var(--paper);border:2px solid #17120d;padding:5px 9px;opacity:0;transition:opacity var(--duration-fast) var(--ease-enter);pointer-events:none;white-space:nowrap}
   #toast.on{opacity:1}#game.modal-open #toast{opacity:0}
   #buildVersion{position:absolute;z-index:4;right:7px;bottom:5px;color:#c8b68e;font-size:9px;
@@ -100,7 +100,7 @@
   #restart,#victoryRestart,#victoryContinue{background:var(--ink);color:var(--paper);text-align:center;padding:9px}
   #victoryContinue{background:#557a35}
   @container game-frame (max-width:799px){
-    #xpHud{left:6px;top:6px;transform:none;width:calc(50% - 9px);min-width:0}
+    #baseHud{left:6px;top:6px;transform:none;width:calc(50% - 9px);min-width:0}
     #phaseHud{right:6px;top:6px;width:50%;padding:5px 6px;font-size:10px}
     #phaseHeader{font-size:11px}#phaseProgress{margin:4px 0}
     #runTimeRow,#forecastLabel,#forecastRemaining,#recipeSummary{font-size:9px}#recipeSummary{gap:1px 6px}
@@ -383,16 +383,21 @@
     --accent:var(--violet-lit);--band:#4a2f6a}
   #draftOverlay[data-kind="dawn"]{--accent:#f0b45f;--band:#7a4a24;
     background:radial-gradient(112% 82% at 50% 42%,#c97a3a3d,#4c22107a 58%,#26100694)}
+  /* A completed authored base level deals the same buff pool dawn does; the stone-and-timber wash
+     is the only thing that says the reward came from the base rather than from surviving a night. */
+  #draftOverlay[data-kind="base"]{--accent:#c9b27a;--band:#5a4a2c;
+    background:radial-gradient(112% 82% at 50% 42%,#a8895238,#3a2c187a 58%,#1d150994)}
   #draftOverlay[hidden]{display:none}
-  /* The level bar, action prompt, and draft title share the top-centre lane. Only the modal title
+  /* The base bar, action prompt, and draft title share the top-centre lane. Only the modal title
      is relevant while choosing; hide the underlying labels instead of compositing them together. */
-  #game:has(#draftOverlay:not([hidden])) #xpHud,
+  #game:has(#draftOverlay:not([hidden])) #baseHud,
   #game:has(#draftOverlay:not([hidden])) #prompt{visibility:hidden}
   #draftOverlay.resolving{opacity:.26;pointer-events:none;transition:opacity var(--duration-slow) var(--ease-exit)}
   #draftHeader{flex:0 0 auto;text-align:center;padding-top:20px}
   #draftTitle{width:fit-content;margin:0 auto;padding:0 26px 7px;font-size:23px;letter-spacing:.05em;
     color:#fdf2d8;border-bottom:3px solid var(--accent);filter:drop-shadow(0 1px 8px #b48ae899)}
   #draftOverlay[data-kind="dawn"] #draftTitle{filter:drop-shadow(0 1px 8px #f0b45f99)}
+  #draftOverlay[data-kind="base"] #draftTitle{filter:drop-shadow(0 1px 8px #c9b27a99)}
   #draftSub{margin:9px 0 0;font-size:11px;color:#c9b894}
   #draftPicks{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;gap:42px}
   .pick{--cw:236px;display:flex;flex-direction:column;align-items:center;cursor:pointer;
@@ -457,8 +462,8 @@
     /* Fades only. The row still assembles itself — its geometry is where a card IS, not an
        approach to it — but nothing travels: the card jumps to its raised position, the picks
        do not deal in, and both flights are handled in JS, which drops to a plain fade. */
-    #levelBarFill{transition:none}
-    #levelBar.up,#levelBarXp.tick{animation:none}
+    #baseBarFill{transition:none}
+    #baseBar.up,#baseBarNeed.tick{animation:none}
     #handCards{transition:none}
     #handCards .card{transition:opacity var(--duration-reduced) linear}
     #handCards .card.active,#handCards .card.landed,#handCards .card.refused,
@@ -471,7 +476,7 @@
     .csCard.dealt{animation:none}
   }
 
-  /* Compact-frame placement follows the XP bar into its left-side half-width lane. */
+  /* Compact-frame placement follows the base bar into its left-side half-width lane. */
   @container game-frame (max-width:799px){
     #handDock{width:calc(100% - 20px)}
     #prompt{left:25%;top:42px}

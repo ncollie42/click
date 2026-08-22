@@ -1,16 +1,16 @@
 // Owns: the building registry and the frame every building body shares. One file per type in
-// this folder exports build(g, add); this file wraps it with the parts list, the footprint pad
-// (sized from the placement metadata, never restated) and the static bake. Adding a building =
-// add a file here + one registry line. Unknown types get the placeholder box.
+// this folder exports build(g, add); this file wraps it with the parts list and the static bake.
+// Adding a building = add a file here + one registry line. Unknown types get the placeholder box.
 //
-// Contract out (scene.js drives these): userData.floor (the pad — never in parts), userData.parts
-// (hurt-flash / ghost-tint targets: the fused mesh plus whatever authored parts survived the
-// bake), plus whatever hooks the body hung (roof, tip, postMarkers, slotMarkers, orbit/orbs,
-// inner/anims/ashRings) — each body's header names its own.
+// No ground pad (Aug 22, owner). Every building used to get a footprint-sized flat floor mesh
+// here; the terrain now paints PAL.soil under the footprint itself, off the wear field scene.js
+// stamps (rebuildWearStatic), so a body seats straight on the ground at kit.js GROUND_Y.
+//
+// Contract out (scene.js drives these): userData.parts (hurt-flash / ghost-tint targets: the fused
+// mesh plus whatever authored parts survived the bake), plus whatever hooks the body hung (roof,
+// tip, postMarkers, slotMarkers, orbit/orbs, inner/anims/ashRings) — each body's header names its own.
 import * as THREE from "three";
-import {PAL} from "../../palette.js";
-import {buildingFootprint} from "../../../game/grid.js";
-import {bakeStatic, makeFootprintFloor} from "../kit.js";
+import {bakeStatic} from "../kit.js";
 import {build as tower} from "./tower.js";
 import {build as house} from "./house.js";
 import {build as rangeBeacon} from "./range-beacon.js";
@@ -33,13 +33,14 @@ import {build as fireballTarget} from "./fireball-target.js";
 import {build as scoutHut} from "./scout-hut.js";
 import {build as captureYard} from "./capture-yard.js";
 import {build as consumableForge} from "./consumable-forge.js";
+import {build as mainBase} from "./main-base.js";
 import {build as placeholder} from "./placeholder.js";
 
 // Keys are BUILDING_TYPES ids (data.js) — the sim's vocabulary, verbatim.
 export const BUILDING_BUILDERS = Object.freeze({
   tower, house, rangeBeacon, warShrine, wardTotem, hasteTotem, garrison, lumber, quarry,
   stockpile, obelisk, blast, landmine, spikes, tar, damageOrbs, summoningCircle, meteorTarget,
-  fireballTarget, scoutHut, captureYard, consumableForge,
+  fireballTarget, scoutHut, captureYard, consumableForge, mainBase,
 });
 
 export function makeBuilding(type){
@@ -47,12 +48,6 @@ export function makeBuilding(type){
   const parts = [];
   const add = (m)=>{ g.add(m); parts.push(m); return m; };
   (BUILDING_BUILDERS[type] ?? placeholder)(g, add);
-  // Added after `parts` is filled and deliberately NOT pushed into it: the tower hurt-flash and the
-  // ghost tint iterate `parts`/meshes for the MODEL, and the ground pad must not join those effects.
-  const grassTile = type==="house" || type==="tower";
-  const floor = makeFootprintFloor(buildingFootprint(type), grassTile?PAL.grass:PAL.pad);
-  g.add(floor);
-  g.userData.floor = floor;
   g.userData.parts = parts;
   // Everything not hung on userData above fuses into one mesh; the hurt-flash list is rebuilt as
   // the merged mesh plus whichever authored parts survived (they kept their own materials).

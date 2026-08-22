@@ -25,6 +25,8 @@
 //   model      expected income effect PER STACK for the pacing model, or null.
 //              {target:"hand"|"worker"|"global"|"xp", mult:<factor>} — a crude
 //              multiplicative average; the headless bot replaces these later.
+//              "xp" is the RETIRED docs/progression-model.js bucket only (the game's XP system was
+//              deleted 2026-08-22); it names nothing in the simulation.
 //   type       optional consumable tag: "building" | "spell"
 //   charges    number of placements/casts granted by one consumable
 //   durationSeconds  lifetime of a temporary consumable effect, in real seconds
@@ -141,9 +143,8 @@ export const CARDS=[
   {id:"nightOwl",     category:"buff", rarity:"rare",   text:"gathering is 15% faster at night",
    features:["day/night","resources"], stacks:2, ref:"concept:nightGather", model:{target:"global",mult:1.06},
    implemented:false, inPool:false, notes:"raises ARC.nightIncomeFactor in effect"},
-  {id:"xpAppetite",   category:"buff", rarity:"epic",   text:"completed buildings grant 15% more XP",
-   stacks:3, ref:"concept:buildXp", model:{target:"xp",mult:1.15},
-   implemented:false, inPool:false, notes:"must multiply building XP inside grantXp; faster construction then feeds faster drafts"},
+  // xpAppetite ("completed buildings grant 15% more XP") was DELETED 2026-08-22 with the XP system:
+  // there is no XP for a card to multiply. Progression is MAIN_BASE_LEVELS + dawn buffs now.
 
   // ── B · consumables — already in the game as free instant buildings ───────
   {id:"blastCharge",  category:"consumable", rarity:"common", text:"place a blast charge; detonate it for 3 to 5 area damage",
@@ -221,6 +222,17 @@ export const CARDS=[
    type:"building", tags:["aoe","biome","tree","cost"], features:["resources","physical space"], charges:1, durationSeconds:20,
    ref:"concept:wildFoundation", model:null, implemented:false, inPool:false,
    notes:"prototype: matching biome costs 25% less; mismatched biome costs 25% more; biome detection does not exist yet"},
+
+  // ── D · builds — the main base ────────────────────────────────────────
+  // The OPENING card, and the only card a run is dealt (STARTING_HAND in simulation.js).
+  // inPool:false is load-bearing: this is not a menu item, it is the run's start button, and no
+  // draft may ever offer it. It asks WHERE nothing — the base's anchor is authored (BASE in
+  // data.js) — so playing it drops the one unfinished site on the map centre and refuses a second.
+  // Waves cannot begin while that site is unfinished: the clock sits in "pre-wave" until it stands.
+  {id:"bpMainBase", category:"build", rarity:"common", text:"raise the main base",
+   tags:["main base"], features:["day/night","physical space"], charges:1, ref:"building:mainBase", model:null,
+   implemented:true, inPool:false,
+   notes:"one site at the authored BASE anchor, charging the level-1 recipe MAIN_BASE_LEVELS[0] (10 wood) through the ordinary delivery path; completion sets state.baseLevel=1, starts day 1 and deals one 'base' draft (mixed build+buff). Levels 2-3 (10 stone, then 10 wood + 10 stone) are released at the standing base and each deal another base draft — since XP was deleted 2026-08-22 these three are the run's ONLY build-card source"},
 
   // ── D · builds — the base kit ─────────────────────────────────────────
   // The build shop is gone: these ARE the ordinary economy/defense menu, dealt as cards. Each

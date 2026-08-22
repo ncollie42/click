@@ -1,21 +1,23 @@
-// Owns the level bar in the xp HUD and the pick-3 overlay — the level-up draft and the
-// end-of-night dawn payout. Owns no gameplay state.
+// Owns the base-progress bar in the top HUD and the pick-3 overlay — the main-base level payout,
+// the end-of-night dawn payout and chest/forge consumables. Owns no gameplay state.
 // ═══════════════════════════════════════════════════════════════════════════
 // DRAFT ADAPTER
 //
-// One overlay, three reward kinds. "level" deals builds; "dawn" applies the wave-clear permanent
-// buff; "consumable" deals a chest or Consumable Forge reward into the hand. The simulation owns
-// those disjoint pools; this adapter only presents the offer.
+// One overlay, three reward kinds. "base" deals the mixed build+buff pick a completed authored
+// main-base level earns; "dawn" applies the wave-clear permanent buff; "consumable" deals a chest
+// or Consumable Forge reward into the hand. The simulation owns those pools; this adapter only
+// presents the offer. (The XP "level" draft was deleted Aug 22 along with the XP track itself.)
 //
 // Ownership / data flow
-//   Reads:    src/game/simulation.js — draftPending(), draftKind(), chooseDraft(), levelState().
-//             Never the simulation's internals; the overlay is a projection of those four calls.
+//   Reads:    src/game/simulation.js — draftPending(), draftKind(), chooseDraft() and
+//             mainBaseStatus() (both the top bar and the base reward's subtitle).
+//             Never the simulation's internals; the overlay is a projection of those calls alone.
 //             src/game/cards.js for the one display field it needs itself (a pick's category, which
 //             decides where the card is going); the face is drawn by src/ui/hand.js.
-//   Writes:   the DOM under #draftOverlay and #xpHud. The one gameplay change it can make is
+//   Writes:   the DOM under #draftOverlay and #baseHud. The one gameplay change it can make is
 //             chooseDraft().
-//   Supplies: DRAFT_EFFECTS (the draftChanged / levelChanged sinks main.js hands the simulation),
-//             syncLevelHud() (the sync pass boot re-runs) and initDraft() (registration).
+//   Supplies: DRAFT_EFFECTS (the draftChanged / baseLevelChanged sinks main.js hands the
+//             simulation), syncBaseHud() (the sync pass boot re-runs) and initDraft().
 //
 // The pick that lands in the hand is not simply deleted from the screen: the chosen card is
 // handed to src/ui/hand.js, which flies a clone of it into the empty slot the simulation just
@@ -24,11 +26,13 @@
 // extra frames cost the run nothing.
 // ═══════════════════════════════════════════════════════════════════════════
 import {cardById} from "../game/cards.js";
-import {draftPending, draftKind, chooseDraft, levelState, rerollDraft, rerollState} from "../game/simulation.js";
+import {draftPending, draftKind, chooseDraft, rerollDraft, rerollState, mainBaseStatus} from "../game/simulation.js";
 import {cardFace, cardBox, expectArrival, playArrival} from "./hand.js";
 import {syncModalUi} from "./hud.js";
 
-const TITLE = {level:"choose a build",dawn:"choose a permanent upgrade",consumable:"choose a consumable"};
+// "base" and "dawn" deal the same permanent-buff pool; only the copy tells them apart, so the
+// player always knows which thing they did earned the pick.
+const TITLE = {base:"the main base rises",dawn:"choose a permanent upgrade",consumable:"choose a consumable"};
 const goesToHand = category => category!=="buff";
 
 let surface=null;      // <canvas id="overlay"> — the focus target of last resort
@@ -41,31 +45,43 @@ let shownLevel=null;   // pulse only on a CHANGE, so boot and resyncs stay quiet
 
 const focusable=element=>!!element&&element.isConnected&&!element.disabled&&element.getClientRects().length>0;
 
-// ── the level bar ───────────────────────────────────────────────────────────
-/** Repaint the run's one progress bar — the level, and how far into it. */
-export function syncLevelHud(){
-  const level=levelState();
-  if(!level)return;
-  const capped=!(level.next>0),bar=document.getElementById("levelBar");
-  const progress=capped?1:Math.max(0,Math.min(1,level.xp/level.next));
-  document.getElementById("levelBarFill").style.width=(100*progress).toFixed(2)+"%";
-  document.getElementById("levelBarLabel").textContent="lv "+level.level;
-  // The level curve is geometric, so both numbers arrive fractional (the carry into a new level is
-  // whatever the last cost left over). The bar rounds only what it PRINTS and leaves the fill on the
-  // raw pair, so the text can never claim progress the fill has not — and it rounds progress DOWN
-  // against a cost rounded UP, so "8 / 8" is never on screen while the bar is still short.
-  const xpEl=document.getElementById("levelBarXp"),xpText=capped?"max":Math.floor(level.xp)+" / "+Math.ceil(level.next);
+// ── the base bar ────────────────────────────────────────────────────────────
+/**
+ * Repaint the run's one progress bar. Since XP was deleted (Aug 22) the number it counts is the
+ * MAIN BASE's authored level: the label is the level standing out of the authored maximum, the fill
+ * is how much of the next recipe has been delivered (in units, all kinds pooled — the bar is a
+ * feel, the exact per-kind need is printed beside it and drawn in full over the base itself by
+ * src/render/overlay.js), and the right-hand text is what the next level still wants.
+ */
+export function syncBaseHud(){
+  const base=mainBaseStatus();
+  if(!base)return;
+  const bar=document.getElementById("baseBar");
+  let wanted=0,paid=0,need="";
+  if(base.cost){
+    const parts=[];
+    for(const kind of Object.keys(base.cost)){
+      const cost=base.cost[kind]||0,delivered=Math.min(cost,base.delivered[kind]||0);
+      wanted+=cost;paid+=delivered;
+      if(delivered<cost)parts.push((cost-delivered)+" "+kind);
+    }
+    need=parts.join(" + ");
+  }
+  const progress=base.atMaxLevel?1:(wanted?paid/wanted:0);
+  document.getElementById("baseBarFill").style.width=(100*progress).toFixed(2)+"%";
+  document.getElementById("baseBarLabel").textContent="base lv "+base.level+"/"+base.maxLevel;
+  const needEl=document.getElementById("baseBarNeed"),needText=base.atMaxLevel?"max":need||"ready";
   // A tick on every printed change, but not while the whole bar is replaying its level-up pulse —
   // one piece of feedback at a time. Same remove/reflow/add replay trick as the pulse below.
-  if(xpEl.textContent!==xpText){
-    xpEl.textContent=xpText;
-    if(level.level===shownLevel){xpEl.classList.remove("tick");void xpEl.offsetWidth;xpEl.classList.add("tick");}
+  if(needEl.textContent!==needText){
+    needEl.textContent=needText;
+    if(base.level===shownLevel){needEl.classList.remove("tick");void needEl.offsetWidth;needEl.classList.add("tick");}
   }
-  if(level.level===shownLevel)return;
+  if(base.level===shownLevel)return;
   // Reading offsetWidth between remove and add is the reflow that lets the pulse replay on
-  // back-to-back level-ups; without it the class never leaves the element and nothing restarts.
+  // back-to-back levels; without it the class never leaves the element and nothing restarts.
   if(shownLevel!==null){bar.classList.remove("up");void bar.offsetWidth;bar.classList.add("up");}
-  shownLevel=level.level;
+  shownLevel=base.level;
 }
 
 // ── focus containment ───────────────────────────────────────────────────────
@@ -79,10 +95,12 @@ function setFrameInert(on){
 // ── the subtitle ────────────────────────────────────────────────────────────
 // Each kind explains itself with its own numbers rather than a shared "pick one".
 function subtitle(kind){
+  if(kind==="base"){
+    const base=mainBaseStatus();
+    return "the main base stands at level "+base.level+" of "+base.maxLevel+". choose one build or upgrade.";
+  }
   if(kind==="dawn")return "the village held. choose one permanent upgrade.";
-  if(kind==="consumable")return "choose one card to keep until played.";
-  const level=levelState();
-  return "level "+level.level+(level.next>0?" · next at "+Math.ceil(level.next)+" more xp":" · top level")+".";
+  return "choose one card to keep until played.";
 }
 
 export function render(){
@@ -90,7 +108,7 @@ export function render(){
   const offers=draftPending(),kind=draftKind();
   if(!offers||!kind){closeOverlay();return;}
   overlay.dataset.kind=kind;
-  titleEl.textContent=TITLE[kind]||TITLE.level;
+  titleEl.textContent=TITLE[kind]||TITLE.base;
   subEl.textContent=subtitle(kind);
   cursor=0;
   picks.replaceChildren();
@@ -189,7 +207,7 @@ function tryReroll(){ if(!resolving)rerollDraft(); }
 // main.js merges these into the record it hands the simulation's connect(), beside the hand's own.
 export const DRAFT_EFFECTS = {
   draftChanged(){render();},
-  levelChanged(){syncLevelHud();},
+  baseLevelChanged(){syncBaseHud();},
 };
 
 export function initDraft(pointerSurface){
@@ -208,6 +226,6 @@ export function initDraft(pointerSurface){
   // let focus fall to <body>, from where shift+tab walks the document backwards.
   overlay.addEventListener("pointerdown",event=>{if(!event.target.closest(".pick"))overlay.focus();});
   window.addEventListener("keydown",onKeyDownCapture,true);
-  syncLevelHud();
+  syncBaseHud();
   render();
 }
