@@ -39,6 +39,8 @@
 // CANONICAL FRAME for this round: /tools/test-scene.html?t=680&seed=3 — that is what
 // tools/shots/redgiraffe-scene-r1/full.png is, and what the ROUND-LOG's numbers were measured on.
 
+import {PAL} from "../../src/render/palette.js";
+
 export const SEED_DEFAULT = 3;
 
 // ── camera ────────────────────────────────────────────────────────────────────────────────────
@@ -106,7 +108,7 @@ export const CAMERA = {
 export const SUN = {
   azimuthDeg: 0,      // 0 = straight along +X (screen right); positive rotates toward the camera
   elevationDeg: 60,
-  color: 0xfff2d0,    // PAL.sunDay — held FIXED so the exposure solve has one unknown, not four
+  color: PAL.sunDay,  // held FIXED so the exposure solve has one unknown, not four
   intensity: 3.21,    // = S*PI/sin(60 deg), S = 0.885. Paired with HEMI, not free
   distance: 240,      // must clear cloudHeight 60: sin(22)*240 = 90 wu up, above the plane
   shadow: {mapSize: 2048, halfSpan: 95, near: 1, far: 520, bias: -0.0006, normalBias: 0.035,
@@ -126,7 +128,7 @@ export const SUN = {
 // ~42 and lifts p5 toward the reference's 55; the grass-shade sample drifts ~Δ3, accepted.
 // Round 6 (grass calibration): 0.48 -> 0.60. With the meadow bladed, cloud-shade areas measured
 // p25 66 vs the reference's 89 — the shade floor needed the ambient, not the grass, lifted.
-export const HEMI = {skyColor: 0xffde82, groundColor: 0x6b5a4a, intensity: 0.60};
+export const HEMI = {skyColor: PAL.skyLight, groundColor: PAL.bounce, intensity: 0.60};
 
 // ── terrain ───────────────────────────────────────────────────────────────────────────────────
 // The whole frame is ground: at 55 deg pitch the top of the frame still hits the ground ~79 wu
@@ -138,12 +140,13 @@ export const TERRAIN = {
   amplitude: 7.0,     // +-7 wu; the slope spread is what widens the lit-grass luma histogram
   featureLen: 58,     // wu per noise octave-0 cell
   octaves: 3,
-  // Albedos below are LINEAR-solved then written as the sRGB hex a painter would author.
-  grass: 0x55c058,    // renders to (96,186,54) lit / (31,67,22) cloud-shaded
-  grassAlt: 0x85d06e, // BRIGHTER second tone, renders to (138,195,68) — the reference's p95
-                      // grass. Blended by a slow noise; without it our luma p95 sits ~14 short.
-  dirt: 0x837b47,     // renders to ~(120,111,47) lit; brightened 10% linear in round 4 so
-                      // CLOUD-SHADED dirt clears the 40 L black gate (dirt*amb sat at 38)
+  // Albedos are the SHARED palette (src/render/palette.js PAL): LINEAR-solved here, written as
+  // the sRGB hex a painter would author, and read by the game too. Re-solve there, not here.
+  grass: PAL.grass,       // renders to (96,186,54) lit / (31,67,22) cloud-shaded
+  grassAlt: PAL.grassAlt, // BRIGHTER second tone, renders to (138,195,68) — the reference's p95
+                          // grass. Blended by a slow noise; without it our luma p95 sits ~14 short.
+  dirt: PAL.soil,         // renders to ~(120,111,47) lit; brightened 10% linear in round 4 so
+                          // CLOUD-SHADED dirt clears the 40 L black gate (dirt*amb sat at 38)
   dirtHeight: 0.56,   // crest threshold (0..1 over the height range) where dirt starts winning
   dirtSlope: 0.9,     // extra dirt weight from surface slope
   dirtLeftBias: 0.6,  // tilts the dirt mass toward screen-left (reference: 59% in the left

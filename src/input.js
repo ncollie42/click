@@ -8,7 +8,7 @@ import {
   pressKey, releaseKey,
   beginCameraPan, endCameraPan, dragCameraTo, zoomCameraBy,
   offsetCamera, clampCamera,
-  togglePause, cancelBuildMode, closeUpgradeMenu, closeSkillTree
+  togglePause, cancelBuildMode, closeUpgradeMenu
 } from "./game/simulation.js";
 import {placeCamera, groundFromEvent, view} from "./render/scene.js";
 import {addClickRipple} from "./render/overlay.js";
@@ -94,9 +94,7 @@ function onPointerMove(event){
 function onPointerLeave(){ setPointerOutside(); }
 function onPreventDefault(event){ event.preventDefault(); }
 // Priority order, unchanged: middle button claims the event for camera panning before any guard
-// runs, so a pan still works while paused, after the base has fallen, and over the upgrade panel,
-// which leaves most of the canvas exposed. The skill tree is the case this cannot cover: it is a
-// full-stage overlay, so a press over it never reaches the surface and no handler here runs.
+// runs, so a pan still works while paused, after the base has fallen, and over the upgrade panel.
 function onPointerDown(event){
   pointerPosition(event);
   if(event.button===1){event.preventDefault();const g=groundFromEvent(event);beginCameraPan(g?g.x:state.camera.x,g?g.y:state.camera.y);surface.setPointerCapture(event.pointerId);return;}
@@ -124,17 +122,10 @@ function onKeyDown(event){
   // Hold-to-hide is presentation-only. It precedes modal guards so screenshots can hide any UI,
   // and preventing default keeps focus fixed instead of walking the debugger or modal controls.
   if(event.code==="Tab"){event.preventDefault();if(!event.repeat)HOOKS.uiVisibilityChanged(true);return;}
-  // Escape is a dismiss chain, outermost thing first, and each link reports whether it consumed the
-  // press: the skill tree covers the whole stage, so it goes before the panel underneath it.
-  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeSkillTree())return;if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
+  // Escape is a dismiss chain, and each link reports whether it consumed the press.
+  if(event.code==="Escape"){event.preventDefault();if(!event.repeat){if(closeUpgradeMenu())return;if(cancelBuildMode())return;togglePause();}return;}
   // Mute is presentation-only, so it stays available under every modal and guard.
   if(event.code==="KeyM"){if(!event.repeat)toggleMute();return;}
-  // The K skill-tree shortcut is retired while the tree is hidden from production UI (its nodes
-  // have no cost or effect yet); the view panel's "open skill tree" button remains the debug entry.
-  // The skill tree covers the whole stage, so panning under it would scroll a world nobody can see;
-  // openSkillTree() already dropped the held keys and this stops new ones being taken. Escape above
-  // is deliberately ahead of the guard, and the upgrade panel — which hides little — is untouched.
-  if(state.skillTree.open)return;
   if(["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowLeft","ArrowDown","ArrowRight"].includes(event.code)){event.preventDefault();pressKey(event.code);}
 }
 function onKeyUp(event){

@@ -104,7 +104,6 @@ export const RESOURCE_XP={wood:1,stone:1,dust:5,coin:5,diamond:12};
 // THE level curve: going from level n to n+1 costs base*growth**n xp. docs/progression-spec.js
 // re-exports this table, so the design docs and the game can never quote different numbers.
 export const LEVEL_CURVE={base:6,growth:1.19};
-export const SKILL_POINT_LEVELS=4;   // placeholder cadence: one skill point per this many levels
 
 // Closed target policy shared by every authored damage source. Callers choose one supported
 // combination rather than passing ad-hoc booleans that silently invent friendly-fire semantics.
@@ -133,7 +132,9 @@ export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay
 // longer shares), so the target ring and the damage radius can never disagree. Radius halved from
 // 135 Aug 20: a precision slam, not a screen-clearer.
 // fallTime is gameplay: enemies may enter or leave the blast before the ball touches down.
-export const FIREBALL=Object.freeze({damage:5,radius:68,fallTime:.65,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY});
+// rockHp: each slam leaves a small 1x1 stone node (meteor's large rock in miniature) — a third of a
+// normal rock, so three charges ≈ one ordinary stone node of ore scattered where you aimed.
+export const FIREBALL=Object.freeze({damage:5,radius:68,fallTime:.65,rockHp:3,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY});
 // Intentional large-obstacle tuning: the impact reserves 3x3 through meteorTarget and the rock's
 // runtime footprint; its fixed 15 HP keeps the spell-created obstacle durable without inheriting
 // ordinary stone-node balance.
@@ -142,6 +143,7 @@ export const FIREBALL=Object.freeze({damage:5,radius:68,fallTime:.65,damageTarge
 export const METEOR=Object.freeze({damage:20,radius:180,rockHp:15,fallTime:.9,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
 export const DAMAGE_ORBS=Object.freeze({duration:30,minCount:1,maxCount:3,orbitRadius:52,aoeRadius:38,damage:1,cooldown:.6,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES});
 export const SUMMONING_CIRCLE=Object.freeze({duration:120,dustCost:5});
+export const CONSUMABLE_FORGE=Object.freeze({dustCost:5});
 // Rerolling the live draft offer costs gold coins — this is coin's primary sink now that feeding
 // is gone (the shock tower's 1-coin cost is the only other). Read by rerollDraft() in simulation.js.
 export const DRAFT_REROLL=Object.freeze({coinCost:1});
@@ -213,6 +215,7 @@ export const BUILDING_TYPES = {
   // The garrison's jobSlots ARE its guard slots, so the count is read from GARRISON.capacity rather
   // than restated here. Guard stats, radii and the muster timing all live in that record.
   garrison:{name:"garrison",resource:null,cost:{wood:6,stone:6},buildSlots:2,jobSlots:GARRISON.capacity,footprint:FOOTPRINT_1x1},
+  consumableForge:{name:"consumable forge",resource:null,cost:{wood:5,stone:5},buildSlots:2,footprint:FOOTPRINT_1x1},
   blast:{name:"blast charge",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:135,damage:3,innerDamage:5,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,instant:true,footprint:FOOTPRINT_1x1},
   spikes:{name:"spike trap",resource:null,cost:{wood:0,stone:0},buildSlots:0,damage:2,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,cooldown:.55,instant:true,stack:true,footprint:FOOTPRINT_1x1},
   landmine:{name:"land mine",resource:null,cost:{wood:0,stone:0},buildSlots:0,effectRadius:65,damage:8,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,instant:true,stack:true,footprint:FOOTPRINT_1x1},

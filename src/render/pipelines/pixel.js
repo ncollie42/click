@@ -58,28 +58,9 @@
 // driver can render to it; the RGBA8 fallback WILL band in the darks before any quantizer runs),
 // manual sRGB encode in the composite, gated on renderer.outputColorSpace.
 
-// Three authored palettes for quantize mode 2, all built from the game's hue families
-// (night-navy, grass greens, sun-creams, stone greys, wood browns, water blues, portal purple).
-// paletteSize picks one; setting pixelTune.palette to an array of hexes overrides them entirely.
-export const PALETTES = {
-  8: [0x1b2033, 0x2e4a3b, 0x49683f, 0x6f8f4e, 0x9db365, 0xc7cd8d, 0xe8e3b6, 0xfaf3d8],
-  16: [
-    0x1b2033, 0x2e4a3b, 0x49683f, 0x6f8f4e, 0x9db365, 0xc7cd8d, 0xe8e3b6, 0xfaf3d8,
-    0x3a3f4d, 0x6b7280, 0x9aa3ad,             // stone
-    0x5a3d2e, 0x8a6242,                       // wood
-    0x31456b, 0x4b6a8f,                       // water
-    0x6e4a7e,                                 // portal/tree purple
-  ],
-  32: [
-    0x11141f, 0x1b2033, 0x272e47, 0x31456b, 0x4b6a8f, 0x7290ab,             // night + water blues
-    0x24352b, 0x2e4a3b, 0x3d5c3a, 0x49683f, 0x5b7c46, 0x6f8f4e, 0x86a55a,   // greens (dark→light)
-    0x9db365, 0xc7cd8d,
-    0xdbd8a2, 0xe8e3b6, 0xf1ecc9, 0xfaf3d8,                                 // sand → cream
-    0x2c3038, 0x4a4f5a, 0x6b7280, 0x8d95a0, 0xaeb6bf,                       // stone greys
-    0x402c20, 0x5a3d2e, 0x7a5438, 0x8a6242, 0xa87e54,                       // wood browns
-    0x4a3457, 0x6e4a7e, 0x9a6fae,                                           // purples
-  ],
-};
+// Quantize tiers live in palette.js (QUANT_PALETTES) with every other colour; re-exported for
+// callers that still reach for pixel.PALETTES.
+export const PALETTES = QUANT_PALETTES;
 
 /** Live-read every frame. Exported and mirrored on window for console tuning.
  *  Values are the OWNER DEFAULTS, Aug 20: ported wholesale from the test scene's solved
@@ -258,6 +239,7 @@ export const PANEL_SPEC = {
 };
 
 import {createPostStage, POST_VERT, GLSL_DEPTH_HELPERS, GLSL_SRGB_ENCODE} from "./post-stage.js";
+import {QUANT_PALETTES} from "../palette.js";
 import {CLOUD_UNIFORMS_GLSL, CLOUD_FIELD_GLSL, createCloudShadowPlane} from "../cloud-field.js";
 
 const FRAG = /* glsl */`

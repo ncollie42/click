@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import * as sim from "../src/game/simulation.js";
 import * as data from "../src/game/data.js";
-import {cardById} from "../src/game/cards.js";
+import {cardById,RARITY_WEIGHTS} from "../src/game/cards.js";
 import {buildingFootprint,cellToWorld,footprintCells,worldToCell} from "../src/game/grid.js";
 
 sim.initializeRunMode("normal");sim.debugClearHand();
@@ -18,6 +18,30 @@ const place=id=>{assert.equal(play(id),"targeting");const anchor=findAnchor();si
 const findWater=()=>{for(let y=96;y<data.H-96;y+=data.CELL)for(let x=96;x<data.W-96;x+=data.CELL)if(sim.terrainAtWorldPoint(x,y)==="water")return {x,y};assert.fail("no water cell");};
 const originalRandom=Math.random;Math.random=()=>0;
 let visible=new Set(),levelEvents=0;sim.connect({isCombatTargetOnScreen(target){return visible.has(target);},levelChanged(){levelEvents++;}});
+
+// Consumable Forge integration: force its rare build card into an ordinary level offer, construct
+// it, then exercise manual dust batching through the shared consumable queue.
+const forgePool=sim.draftEligible(["build"]),forgePoolIndex=forgePool.findIndex(card=>card.id==="bpConsumableForge"),forgeWeight=forgePool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),forgeWeightBefore=forgePool.slice(0,forgePoolIndex).reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0);
+assert.ok(forgePoolIndex>=0,"bpConsumableForge is absent from the live build pool");
+Math.random=()=>(forgeWeightBefore+RARITY_WEIGHTS.rare/2)/forgeWeight;
+assert.equal(sim.debugGrantXp(6),true);const forgeOffer=sim.draftPending();assert.equal(sim.draftKind(),"level");assert.equal(forgeOffer.length,3);assert.ok(forgeOffer.includes("bpConsumableForge"));
+assert.equal(sim.chooseDraft(forgeOffer.indexOf("bpConsumableForge")),true);assert.ok(sim.hand().some(entry=>entry.id==="bpConsumableForge"));assert.equal(sim.draftPending(),null);
+Math.random=()=>0;sim.DBG.freeCosts=true;assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpConsumableForge")),"targeting");const forgeAnchor=findAnchor();sim.setPointerWorld(forgeAnchor.x,forgeAnchor.y);sim.primaryPress();sim.primaryRelease();sim.DBG.freeCosts=false;
+const forge=sim.buildings.find(building=>building.type==="consumableForge");assert.ok(forge?.complete);assert.deepEqual(forge.consumableForge,{dust:0});assert.equal(sim.buildings.includes(forge),true);
+sim.setPointerWorld(forge.x,forge.y);sim.secondaryRelease();assert.equal(forge.consumableForge.dust,0,"empty release changed forge progress");
+sim.state.carried.wood=1;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,0);assert.equal(sim.state.carried.wood,0);assert.equal(sim.resourceDrops.filter(item=>item.kind==="wood").length,1,"non-dust did not use the ground-drop fallback");sim.resourceDrops.length=0;
+sim.state.carried.dust=2;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,2);assert.equal(sim.draftPending(),null,"partial dust queued a draft");
+assert.equal(sim.debugGrantXp(8),true);const priorityOffer=sim.draftPending();assert.equal(sim.draftKind(),"level");
+sim.state.carried.dust=5;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,2);assert.equal(sim.draftPending(),priorityOffer,"forge reward displaced the active level offer");assert.equal(sim.state.draft.consumableQueue,1);assert.equal(sim.state.draftPaused,true);
+assert.equal(sim.chooseDraft(0),true);assert.equal(sim.draftKind(),"consumable","forge reward did not follow the higher-priority level offer");
+let forgeDrafts=0;
+const chooseForgeReward=()=>{const offer=sim.draftPending();assert.equal(sim.draftKind(),"consumable");assert.equal(offer.length,3);assert.equal(new Set(offer).size,3);assert.equal(offer.every(id=>cardById[id].category==="consumable"),true);const chosen=offer[0],before=sim.hand().find(entry=>entry.id===chosen)?.count??0;assert.equal(sim.chooseDraft(0),true);assert.equal(sim.hand().find(entry=>entry.id===chosen)?.count,before+1,"chosen forge consumable did not enter the hand");forgeDrafts++;};
+chooseForgeReward();
+sim.state.carried.dust=6;sim.setPointerWorld(forge.x,forge.y);sim.secondaryRelease();assert.equal(forge.consumableForge.dust,3,"deposit over five lost its remainder");
+sim.state.carried.dust=17;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,0,"multi-batch delivery lost or invented excess dust");assert.equal(sim.state.draft.consumableQueue,4,"multi-batch delivery queued the wrong number behind the live offer");
+while(sim.draftPending())chooseForgeReward();assert.equal(forgeDrafts,6);assert.equal(sim.state.draftPaused,false);const forgeResumeAt=sim.state.clock.elapsed;sim.update(.01);assert.ok(sim.state.clock.elapsed>forgeResumeAt,"world stayed paused after forge drafts drained");assert.equal(sim.buildings.includes(forge),true,"forge was consumed by a payout");
+forge.consumableForge.dust=5;assert.throws(()=>sim.validateSimulationInvariants(),/illegal consumable-forge state/);forge.consumableForge.dust=1.5;assert.throws(()=>sim.validateSimulationInvariants(),/illegal consumable-forge state/);forge.consumableForge.dust=0;sim.validateSimulationInvariants();
+sim.buildings.splice(sim.buildings.indexOf(forge),1);sim.debugClearHand();
 
 // Tower Range applies to both ranged and area towers, then leaves the draft after five stacks.
 const towerRangeCard=cardById.towerRange,basicRadius=sim.indicatorRadius("tower"),pulse={type:"tower",tower:{variant:"pulse"}};
@@ -70,8 +94,12 @@ for(let i=0;i<data.METEOR.rockHp;i++){sim.setPointerWorld(meteorRock.x,meteorRoc
 assert.equal(cardById.fireball.charges,3);assert.equal(data.FIREBALL.damage,5);assert.equal(play("fireball"),"targeting");const fireballAnchor=findAnchor();
 sim.spawnEnemy("brute");const fireballVictim=sim.state.enemies.at(-1);fireballVictim.x=fireballAnchor.x;fireballVictim.y=fireballAnchor.y;const fireballHp=fireballVictim.hp,fireballBuildings=sim.buildings.length;
 sim.setPointerWorld(fireballAnchor.x,fireballAnchor.y);sim.primaryPress();sim.primaryRelease();assert.equal(fireballVictim.hp,fireballHp,"fireball damaged on cast instead of touchdown");assert.equal(sim.fallingFireballs.length,1);assert.equal(sim.hand().find(entry=>entry.id==="fireball").charges,2);assert.equal(sim.buildings.length,fireballBuildings);
-sim.update(data.FIREBALL.fallTime-.05);fireballVictim.x=fireballAnchor.x;fireballVictim.y=fireballAnchor.y;sim.update(.1);assert.equal(fireballVictim.hp,fireballHp-5);assert.equal(sim.fallingFireballs.length,0);assert.ok(sim.state.screenShake>0);
-for(let i=0;i<2;i++){sim.setPointerWorld(fireballAnchor.x,fireballAnchor.y);sim.primaryPress();sim.primaryRelease();}assert.equal(sim.hand().some(entry=>entry.id==="fireball"),false);assert.equal(sim.state.buildMode,null);assert.equal(sim.fallingFireballs.length,2);sim.state.enemies.length=0;sim.update(data.FIREBALL.fallTime+.01);assert.equal(sim.fallingFireballs.length,0);sim.validateSimulationInvariants();
+const rocksBeforeFireball=sim.rocks.length;sim.update(data.FIREBALL.fallTime-.05);fireballVictim.x=fireballAnchor.x;fireballVictim.y=fireballAnchor.y;sim.update(.1);assert.equal(fireballVictim.hp,fireballHp-5);assert.equal(sim.fallingFireballs.length,0);assert.ok(sim.state.screenShake>0);
+// Touchdown leaves a small 1x1 rock (meteor's rock in miniature) that now occupies the cell, so the
+// remaining casts must aim elsewhere — findAnchor re-scans for the next clear cell.
+const fireballRock=sim.rocks.at(-1);assert.equal(sim.rocks.length,rocksBeforeFireball+1,"fireball touchdown left no rock");assert.equal(fireballRock.fireball,true);assert.equal(fireballRock.x,fireballAnchor.x);assert.equal(fireballRock.y,fireballAnchor.y);assert.equal(fireballRock.max,data.FIREBALL.rockHp);assert.equal(fireballRock.footprint,data.FOOTPRINT_1x1);assert.equal(sim.canPlace(fireballAnchor.x,fireballAnchor.y,"fireballTarget"),false);
+for(let i=0;i<2;i++){const next=findAnchor("fireballTarget");sim.setPointerWorld(next.x,next.y);sim.primaryPress();sim.primaryRelease();sim.update(data.FIREBALL.fallTime+.01);}assert.equal(sim.hand().some(entry=>entry.id==="fireball"),false);assert.equal(sim.state.buildMode,null);assert.equal(sim.fallingFireballs.length,0);assert.equal(sim.rocks.length,rocksBeforeFireball+3,"each fireball slam leaves one rock");sim.state.enemies.length=0;
+for(let i=0;i<data.FIREBALL.rockHp;i++){sim.setPointerWorld(fireballRock.x,fireballRock.y);sim.primaryPress();sim.update(.02);sim.primaryRelease();}assert.equal(fireballRock.depleted,1,"fireball rock is not mineable");sim.validateSimulationInvariants();
 
 // Tar's visible 3x3-wide puddle slows every enemy inside its authored radius, not only the center cell.
 const tarAnchor=place("tarKit"),tar=sim.buildings.find(building=>building.type==="tar"&&building.x===tarAnchor.x&&building.y===tarAnchor.y);sim.cancelBuildMode();

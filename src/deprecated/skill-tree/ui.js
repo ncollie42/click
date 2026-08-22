@@ -1,12 +1,14 @@
-// Owns the skill-tree DOM, focus containment, inert frame state, and delegated listeners.
+// DEPRECATED: Non-runnable source snapshot retained for a possible revisit.
+// Its runtime hooks were deliberately removed. Read README.md before restoring this feature.
+// Previously owned the skill-tree DOM, focus containment, inert state, and delegated listeners.
 // Authored graph units map to one SVG viewBox and percentage-positioned node tiles.
 import {
   // commands — the only writes this file can make into the world
   selectSkillNode, closeSkillTree,
   // queries — pure reads
   skillTreeNodes, skillTreeEdges, skillPoints
-} from "../game/simulation.js";
-import {syncModalUi} from "./hud.js";
+} from "../../game/simulation.js";
+import {syncModalUi} from "../../ui/hud.js";
 
 const SVG_NS="http://www.w3.org/2000/svg";
 const panel=()=>document.getElementById("skillTreePanel");

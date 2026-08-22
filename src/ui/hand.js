@@ -92,6 +92,7 @@ const REF_GLYPHS={
   "concept:warDrum":"⚔","concept:frostTotem":"❄","concept:luckyTotem":"◆","concept:wildFoundation":"♣",
   "concept:dustSiphon":"⌁","concept:coinPress":"◎","concept:diamondDrill":"◈",
   "building:blast":"●","building:spikes":"▲","building:landmine":"◉","building:tar":"≋","building:obelisk":"▰","building:damageOrbs":"◉","building:summoningCircle":"◎",
+  "building:consumableForge":"◫",
   // The base kit. These five refs are the buildings the shop used to sell; BUILDING_TYPES owns
   // their names and costs but no icon, so — like every other building above — the picture is
   // chosen here, out of the same glyph vocabulary the authored tables use.

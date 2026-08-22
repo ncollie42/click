@@ -32,13 +32,14 @@ import {build as meteorTarget} from "./meteor-target.js";
 import {build as fireballTarget} from "./fireball-target.js";
 import {build as scoutHut} from "./scout-hut.js";
 import {build as captureYard} from "./capture-yard.js";
+import {build as consumableForge} from "./consumable-forge.js";
 import {build as placeholder} from "./placeholder.js";
 
 // Keys are BUILDING_TYPES ids (data.js) — the sim's vocabulary, verbatim.
 export const BUILDING_BUILDERS = Object.freeze({
   tower, house, rangeBeacon, warShrine, wardTotem, hasteTotem, garrison, lumber, quarry,
   stockpile, obelisk, blast, landmine, spikes, tar, damageOrbs, summoningCircle, meteorTarget,
-  fireballTarget, scoutHut, captureYard,
+  fireballTarget, scoutHut, captureYard, consumableForge,
 });
 
 export function makeBuilding(type){

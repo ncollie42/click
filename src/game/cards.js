@@ -5,9 +5,9 @@
 //   inPool      — the draft can actually offer it
 // Workflow: add an entry here (implemented:false), point Claude at it, it gets
 // built, the flag flips.
-// Reward pools: level-ups offer BUILDS; cleared waves offer a permanent BUFF then a CONSUMABLE;
-// opened chests offer a CONSUMABLE. A chosen buff applies immediately. Chosen builds and
-// consumables enter the HAND (simulation.js) and only become effects when played.
+// Reward pools: level-ups offer BUILDS; cleared waves offer a permanent BUFF; opened chests and
+// completed Consumable Forge dust batches offer a CONSUMABLE. A chosen buff applies immediately.
+// Chosen builds and consumables enter the HAND (simulation.js) and only become effects when played.
 // docs/cards.html renders this file as a browsable
 // catalog; docs/progression-model.js reads `model` to simulate income
 // compounding; scripts/validate.mjs keeps every ref honest.
@@ -173,9 +173,9 @@ export const CARDS=[
    type:"spell", tags:["aoe"], features:["resources","physical space"], charges:1, ref:"concept:meteor", model:null, implemented:true, inPool:true, notes:"targets a clear 3x3 footprint; the rock falls for METEOR.fallTime (damage resolves on landing, with camera shake and blast rings), then installs a large stone node — unless ground raised under it during the fall shatters it"},
   {id:"summoningCircle", category:"consumable", rarity:"rare", text:"place a 2-minute circle; every 5 dust summons one friendly brute",
    type:"building", tags:["summon"], features:["resources","physical space"], charges:1, durationSeconds:120, ref:"building:summoningCircle", model:null, implemented:true, inPool:true, notes:"the movable circle persists for its full duration, retains partial dust, and can summon repeatedly; one delivery may summon several Brutes"},
-  {id:"fireball",     category:"consumable", rarity:"rare",   text:"slam down 3 fireballs for 5 damage each",
+  {id:"fireball",     category:"consumable", rarity:"rare",   text:"slam down 3 fireballs for 5 damage each, each leaving a small rock",
    type:"spell", tags:["aoe"], features:["fire","physical space"], charges:3, ref:"concept:fireball", model:null, implemented:true, inPool:true,
-   notes:"held in hand; 3 casts aimed with the fireballTarget ghost (ring = damage radius, halved to 68 Aug 20); each ball falls for FIREBALL.fallTime, then deals 5 area damage and leaves no building"},
+   notes:"held in hand; 3 casts aimed with the fireballTarget ghost (ring = damage radius, halved to 68 Aug 20); each ball falls for FIREBALL.fallTime, then deals 5 area damage and leaves a small 1x1 rock (FIREBALL.rockHp), shattering instead if the cell got occupied mid-fall"},
   {id:"raiseTreants", category:"consumable", rarity:"epic",   text:"consume a tree to spawn treants",
    type:"spell", tags:["tree"], features:["resources","workers","physical space"], charges:1, ref:"concept:treants", model:null, implemented:false, inPool:false, notes:""},
   {id:"healBase",     category:"consumable", rarity:"rare",   text:"fully heal the base",
@@ -279,6 +279,13 @@ export const CARDS=[
    tags:["guard"], features:["workers","physical space"], charges:1, ref:"building:garrison", model:null,
    implemented:true, inPool:true,
    notes:"one garrison site at its authored cost; GARRISON in data.js owns the guard slots, muster/threat/guard radii, demobilize delay and arrived-guard stats"},
+
+  // A reusable dust sink. The completed building keeps partial dust and queues one ordinary
+  // consumable draft for every full batch; it is repeatable like every other build plan.
+  {id:"bpConsumableForge", category:"build", rarity:"rare", text:"start building a consumable forge; every 5 delivered dust drafts a consumable",
+   features:["resources","physical space"], charges:1, ref:"building:consumableForge", model:null,
+   implemented:true, inPool:true,
+   notes:"persistent 1x1 forge at 5 wood + 5 stone; manual dust deposits retain their remainder and each full 5-dust batch queues one consumable draft"},
 
   // ── C · builds — workers (don't exist yet) ────────────────────────────
   // Unimplemented and unrelated to the garrison: a barracks would PRODUCE warriors of its own, where

@@ -248,10 +248,6 @@
           <div class="btnrow">
             <button id="vHealAll" type="button">heal all</button>
           </div>
-          <h4>skills</h4>
-          <div class="btnrow">
-            <button id="vOpenSkillTree" type="button">open skill tree</button>
-          </div>
           </div>
           <!-- The card dealer. Empty root: src/debug/view-debugger.js builds one chip per registry
                card from src/game/cards.js, so a card added tomorrow appears here the same day and
@@ -365,7 +361,6 @@
       <header id="phaseHeader"><b id="phaseName">day 1</b><b id="phaseTime">1:15</b></header>
       <div id="phaseProgress"><i id="phaseProgressFill"></i></div>
       <div id="runTimeRow"><span>run time</span><span id="runTime">0:00</span></div>
-      <button id="skillPointBadge" type="button" hidden aria-label="open skill tree"><span id="skillPointCount">0</span> ✦</button>
       <div id="forecastLabel">next attack</div>
       <div id="forecastRemaining"></div>
       <ul id="recipeSummary"></ul>
@@ -421,23 +416,6 @@
       <div id="upgradeOptions"></div>
       <div id="upgradeDetail">select an upgrade</div>
       <div id="upgradeActions"><button id="upgradeAccept">accept</button><button id="upgradeDecline">decline</button></div>
-    </section>
-    <!-- Skill tree. Markup only: the connector <line>s and the node tiles are built by
-         src/ui/skill-tree.js from the authored graph's coordinates, so nothing here names a
-         node. `hidden` is the closed state and is display:none, which keeps the whole panel
-         out of layout, out of the focus order and out of the accessibility tree — so the
-         dialog role below only ever describes an open panel. tabindex=-1 is not a tab stop
-         either: it is there so a press on the panel's own background can focus the panel
-         instead of dropping focus to <body>, from where Shift-Tab walks the document backwards. -->
-    <section id="skillTreePanel" class="hidden" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="skillTreeTitle">
-      <header id="skillTreeHeader"><h2 id="skillTreeTitle">skill tree</h2><p id="skillTreePoints">0 points remaining</p></header>
-      <div id="skillTreeViewport">
-        <div id="skillTreeGraph">
-          <svg id="skillTreeLinks" aria-hidden="true"></svg>
-          <div id="skillTreeNodes"></div>
-        </div>
-      </div>
-      <footer id="skillTreeBar"><button id="skillTreeContinue" type="button">continue</button></footer>
     </section>
     <section id="gameOver" class="off"><div class="endcard"><h2>the base has fallen</h2><p>the kingdom is lost. begin again?</p><button id="restart">restart</button></div></section>
     <!-- Victory opens on clearing WIN_WAVE; the player may restart or continue into later waves. -->

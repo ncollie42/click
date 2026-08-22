@@ -39,6 +39,7 @@ try{
   assert.deepEqual(Object.keys(data.RESOURCE_XP),data.RESOURCE_KINDS);
   assert.deepEqual(data.STAFF_GATHER,{cooldownFactor:.5,yield:1});
   assert.deepEqual(data.DRAFT_REROLL,{coinCost:1});
+  assert.deepEqual(data.CONSUMABLE_FORGE,{dustCost:5});assert.equal(Object.isFrozen(data.CONSUMABLE_FORGE),true);
   assert.deepEqual(Object.fromEntries(data.NIGHT_WAVE_RECIPES.map(recipe=>[recipe.id,recipe.minTier])),{raiderRush:0,archerLine:0,healerEscort:1,bomberRush:1,brutePush:2,twoFront:2});
   assert.deepEqual(data.WAVE_THREAT_CURVE,{startBudget:12,targetBudget:100,targetWave:8,power:1.5});assert.equal(Object.isFrozen(data.WAVE_THREAT_CURVE),true);
   assert.equal(Object.isFrozen(data.ENEMY_TYPES),true);assert.equal(Object.values(data.ENEMY_TYPES).every(enemy=>Object.isFrozen(enemy)&&Number.isInteger(enemy.threatCost)&&enemy.threatCost>0&&enemy.spawnWeight>0&&["light","heavy"].includes(enemy.weightTag)),true);
@@ -46,9 +47,9 @@ try{
   assert.deepEqual(new Set(Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.variantTier===2).map(enemy=>enemy.variantColor)),new Set(["#3568a8"]));assert.deepEqual(new Set(Object.values(data.ENEMY_TYPES).filter(enemy=>enemy.variantTier===3).map(enemy=>enemy.variantColor)),new Set(["#a23e50"]));
   {const boss=data.ENEMY_TYPES.bruteBoss;assert.equal(boss.archetype,"brute");assert.equal(boss.boss,true);assert.equal(boss.minWave,5);assert.equal(boss.modelScale,4);assert.equal(boss.size,data.ENEMY_TYPES.brute.size*4);assert.equal(boss.hp,250);assert.equal(boss.damage,10);assert.equal(boss.stompDamage,10);assert.equal(boss.stompRadius,200);assert.equal(boss.threatCost,20);}assert.deepEqual(data.WAVE_BOSS_SPAWNS,{5:["bruteBoss"],10:["bruteBoss","bruteBoss","bruteBoss"]});
   assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.pool)&&recipe.pool.every(type=>data.ENEMY_TYPES[type])),true);
-  assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});assert.equal(data.SKILL_POINT_LEVELS,4);
+  assert.deepEqual(data.LEVEL_CURVE,{base:6,growth:1.19});
   assert.deepEqual(Object.values(data.DAMAGE_TARGET_TYPE),["enemies-only","resources-only","enemies-resources","player-resources","all"]);assert.equal(data.DAMAGE_ORBS.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);
-  assert.equal(data.FIREBALL.damage,5);assert.equal(data.FIREBALL.fallTime,.65);assert.equal(data.FIREBALL.radius,68,"fireball radius halved Aug 20");assert.equal(data.BUILDING_TYPES.fireballTarget.effectRadius,data.FIREBALL.radius,"the fireball aiming ghost must show the damage radius");assert.equal(data.FOG.blockHp,4,"fog cost is flat 4 across the board");assert.equal(Object.isFrozen(data.FIREBALL),true);assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
+  assert.equal(data.FIREBALL.damage,5);assert.equal(data.FIREBALL.fallTime,.65);assert.equal(data.FIREBALL.radius,68,"fireball radius halved Aug 20");assert.equal(data.FIREBALL.rockHp,3,"fireball leaves a small rock");assert.equal(data.BUILDING_TYPES.fireballTarget.effectRadius,data.FIREBALL.radius,"the fireball aiming ghost must show the damage radius");assert.equal(data.FOG.blockHp,4,"fog cost is flat 4 across the board");assert.equal(Object.isFrozen(data.FIREBALL),true);assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
   assert.equal(Object.values(data.TOWER_VARIANTS).every(variant=>variant.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every tower must author its damage target type");
   assert.equal([data.BUILDING_TYPES.blast,data.BUILDING_TYPES.spikes,data.BUILDING_TYPES.landmine].every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY),true,"every damaging deployable must author its target type");
   assert.equal(Object.values(data.ENEMY_TYPES).every(def=>def.damageTargetType===data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES),true,"every hostile attack must author its target type");assert.equal(data.ENEMY_TYPES.bruteBoss.stompDamageTargetType,data.DAMAGE_TARGET_TYPE.PLAYER_RESOURCES);
@@ -268,6 +269,18 @@ try{
       assert.equal(barracks.implemented,false);assert.equal(barracks.inPool,false);
     }
 
+    // Consumable Forge registry contract. The card is live but remains absent from the opening hand,
+    // which the startup assertion below pins separately.
+    {
+      const forge=data.BUILDING_TYPES.consumableForge,forgeCard=cards.cardById.bpConsumableForge;
+      assert.equal(forge.footprint,data.FOOTPRINT_1x1);assert.deepEqual(forge.cost,{wood:5,stone:5});assert.equal(forge.buildSlots,2);assert.equal(forge.instant,undefined);assert.equal(forge.movable,undefined);
+      assert.equal(data.CONSUMABLE_FORGE.dustCost,5);assert.equal(Object.isFrozen(data.CONSUMABLE_FORGE),true);
+      assert.equal(forgeCard.category,"build");assert.equal(forgeCard.rarity,"rare");assert.equal(forgeCard.charges,1);assert.equal(forgeCard.ref,"building:consumableForge");assert.equal(forgeCard.implemented,true);assert.equal(forgeCard.inPool,true);
+      const modelRegistry=readFileSync(join(root,"src/render/models/buildings/index.js"),"utf8"),forgeModel=readFileSync(join(root,"src/render/models/buildings/consumable-forge.js"),"utf8");
+      assert.match(modelRegistry,/import \{build as consumableForge\} from "\.\/consumable-forge\.js"/);assert.match(modelRegistry,/captureYard, consumableForge,/,"Consumable Forge is not explicitly registered");
+      assert.match(forgeModel,/new THREE\.BoxGeometry\(/,"Consumable Forge model is not a cube body");assert.match(forgeModel,/userData contract: none/);
+    }
+
     const {runModel,MODELED_WAVE_CLEAR_SECONDS}=await import(pathToFileURL(join(root,"docs/progression-model.js")));
     assert.equal(MODELED_WAVE_CLEAR_SECONDS,45,"the docs-only estimate must preserve the prior model output");
     const model=runModel();
@@ -329,8 +342,7 @@ try{
   // The house is placed the only way a house can be placed now: by playing the bpHouse card the
   // opening kit dealt. There is no dock and no toggleBuildMode() to reach for.
   sim.DBG.freeCosts=true;const houseGrass=sim.grass.find(tuft=>sim.canPlace(tuft.x,tuft.y,"house")&&sim.footprintFogFree(tuft.x,tuft.y,data.BUILDING_TYPES.house.footprint)),houseSite=houseGrass&&{x:houseGrass.x,y:houseGrass.y};assert.ok(houseSite);sim.setPointerWorld(houseSite.x,houseSite.y);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),"targeting");assert.equal(sim.state.buildMode,"house");sim.primaryPress();sim.primaryRelease();assert.equal(sim.buildings.some(item=>item.type==="house"&&item.complete),true,"the bpHouse card did not stand a house");assert.equal(sim.grass.includes(houseGrass),false,"successful building placement did not clear overlapping grass");sim.DBG.instantWorkers=true;sim.update(1/60);const worker=sim.state.workers[0],workerOrigin={x:worker.x,y:worker.y};sim.setPointerWorld(worker.x,worker.y);sim.secondaryPress();assert.equal(sim.heldWorker(),worker);sim.pointerCancelled();assert.equal(worker.x,workerOrigin.x);assert.equal(worker.y,workerOrigin.y);assert.equal(sim.state.workers.includes(worker),true);assert.equal(worker.job,"free","a house-born worker must spawn free");assert.equal(worker.autonomous,true);sim.DBG.freeCosts=sim.DBG.instantWorkers=false;
-  // Teardown: the pickup scaffolding must not leak an autonomous economy into the stress run below,
-  // whose skill-budget checks assume the base is never fed before xp is granted explicitly.
+  // Teardown: the pickup scaffolding must not leak an autonomous economy into the stress run below.
   sim.state.workers.length=0;sim.buildings.length=0;sim.validateSimulationInvariants();
 
   // Startup is deterministic authored data; a fixed gameplay seed reproduces it exactly.
@@ -396,7 +408,6 @@ try{
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();sim.setPointerOutside();sim.secondaryRelease();assert.deepEqual({x:chest.x,y:chest.y},placed,"outside release must restore exact origin");
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();sim.pointerCancelled();assert.deepEqual({x:chest.x,y:chest.y},placed);assert.equal(sim.chests.includes(chest),true);
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();sim.windowBlurred();assert.deepEqual({x:chest.x,y:chest.y},placed);assert.equal(sim.chests.includes(chest),true);
-        sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();sim.openSkillTree();assert.deepEqual({x:chest.x,y:chest.y},placed);assert.equal(sim.chests.includes(chest),true);sim.closeSkillTree();
         const shock={type:"tower",x:chest.x,y:chest.y,complete:true,cost:{},delivered:{wood:0,stone:0},storage:counts(),upgrades:{},activeUpgrade:null,tower:{variant:"shock",cooldown:0,flash:0,hitFlash:0,hp:15,maxHp:15},hazard:null,pulse:0},overlapWorker=makeWorker(chest.x,chest.y);sim.buildings.push(shock);sim.state.workers.push(overlapWorker);sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldWorker(),overlapWorker,"worker must outrank tower and chest");sim.pointerCancelled();sim.state.workers.splice(sim.state.workers.indexOf(overlapWorker),1);sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldBuilding(),shock,"movable tower must outrank chest");sim.pointerCancelled();sim.buildings.splice(sim.buildings.indexOf(shock),1);sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();assert.equal(sim.heldChest(),chest,"chest must follow worker and tower priority");sim.pointerCancelled();
         sim.setPointerWorld(chest.x,chest.y);sim.secondaryPress();const beforeBuildCount=sim.buildings.length,beforeHeldHp=chest.hp;assert.equal(sim.debugDealCard("bpHouse"),true);assert.equal(sim.playCard(sim.hand().findIndex(entry=>entry.id==="bpHouse")),false,"a card must not arm a placement while a chest is held");assert.equal(sim.state.buildMode,null);sim.primaryPress();sim.update(1);sim.primaryRelease();assert.equal(sim.buildings.length,beforeBuildCount,"primary/build overlap placed while chest held");assert.equal(chest.hp,beforeHeldHp);sim.pointerCancelled();assert.deepEqual({x:chest.x,y:chest.y},placed);sim.validateSimulationInvariants();
         sim.resourceDrops.length=0;for(const kind of data.RESOURCE_KINDS)sim.state.carried[kind]=0;sim.state.capacity=2;Math.random=()=>0;sim.setPointerWorld(chest.x,chest.y);
@@ -556,7 +567,7 @@ try{
         // cover; fogged nodes are inactive and fogged cells reject placement, so strip the fog once.
         sim.clearAllFog();
         assert.deepEqual(Object.entries(data.BUILDING_TYPES).filter(([,def])=>def.jobSlots).map(([type,def])=>[type,def.jobSlots]),[["lumber",2],["quarry",2],["stockpile",2],["scoutHut",2],["garrison",3]]);assert.equal(data.RESOURCE_NODE_JOB_SLOTS,1);
-        assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{lumber:2,quarry:3,stockpile:2,house:2,scoutHut:2,rangeBeacon:2,warShrine:2,wardTotem:2,hasteTotem:2,obelisk:3,tower:3,captureYard:3,garrison:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0,fireballTarget:0});
+        assert.deepEqual(Object.fromEntries(Object.entries(data.BUILDING_TYPES).map(([type,def])=>[type,def.buildSlots])),{lumber:2,quarry:3,stockpile:2,house:2,scoutHut:2,rangeBeacon:2,warShrine:2,wardTotem:2,hasteTotem:2,obelisk:3,tower:3,captureYard:3,garrison:2,consumableForge:2,blast:0,spikes:0,landmine:0,tar:0,damageOrbs:0,summoningCircle:0,meteorTarget:0,fireballTarget:0});
         assert.equal(sim.DBG.groundSourcing,true);assert.equal(sim.TUNE.builderSourceRadius,400);
         // Camps and quarries are pure WORK buildings: they grow nothing, ever. Their value is the
         // staffed-gather rate on wild nodes inside serviceRadius (covered by the staffing tests).
@@ -1304,7 +1315,7 @@ try{
     cwd:root,encoding:"utf8",input:`
       import assert from "node:assert/strict";
       import * as sim from "./src/game/simulation.js";
-      import {BASE,RESOURCE_XP,RESOURCE_KINDS,LEVEL_CURVE,SKILL_POINT_LEVELS} from "./src/game/data.js";
+      import {BASE,RESOURCE_XP,RESOURCE_KINDS,LEVEL_CURVE} from "./src/game/data.js";
       import {cardById} from "./src/game/cards.js";
       const counts=()=>Object.fromEntries(RESOURCE_KINDS.map(kind=>[kind,0]));
       const worker=(load)=>({x:BASE.x,y:BASE.y,postX:BASE.x,postY:BASE.y,spawnSource:null,job:"haul",jobTarget:BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...counts(),...load},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0});
@@ -1312,7 +1323,7 @@ try{
       // Draining must not disturb the wave checks below, so the two schedule-bending cards are avoided.
       const skip=new Set(["calmNight","longDay"]);
       const drain=()=>{let taken=0;while(sim.draftPending()){const offer=sim.draftPending(),kind=sim.draftKind(),category=kind==="level"?"build":kind==="dawn"?"buff":"consumable";assert.ok(offer.length>0&&offer.length<=3);assert.equal(new Set(offer).size,offer.length,"draft offered a duplicate card");assert.equal(offer.every(id=>cardById[id].inPool&&cardById[id].implemented),true,"draft offered a card that is not in the pool");assert.equal(offer.every(id=>cardById[id].category===category),true,"draft mixed reward pools");assert.equal(sim.chooseDraft(Math.max(0,offer.findIndex(id=>!skip.has(id)))),true);taken++;}return taken;};
-      sim.initializeRunMode("normal");assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);assert.equal(sim.waveTier(),0);
+      sim.initializeRunMode("normal");assert.equal(sim.xp(),0);assert.equal(sim.waveTier(),0);
       assert.deepEqual(sim.levelState(),{level:0,xp:0,next:cost(0)});assert.equal(sim.draftPending(),null);assert.equal(sim.chooseDraft(0),false);
       // Base deposits are storage, never XP: the manual drop and the hauler deposit both credit
       // state.stored and leave the level track untouched.
@@ -1342,16 +1353,14 @@ try{
       assert.equal(drain()>0,true);assert.equal(sim.draftPending(),null);assert.equal(sim.state.draftPaused,false);
       for(let i=0;i<60;i++)sim.update(1/60);assert.ok(sim.state.clock.elapsed>frozen,"the world stayed frozen after the draft was consumed");
       assert.equal(sim.debugGrantXp(0),false);assert.equal(sim.debugGrantXp(-1),false);assert.equal(sim.debugGrantXp(1.5),false);assert.equal(sim.debugGrantXp(Number.MAX_SAFE_INTEGER),false);assert.equal(sim.debugGrantXp(Number.MAX_SAFE_INTEGER+1),false);assert.equal(sim.xp(),17);
-      // One skill point every SKILL_POINT_LEVELS levels, and the wave tier is level/3 capped at 4.
-      assert.equal(sim.skillPoints(),0);while(sim.state.level<SKILL_POINT_LEVELS){sim.debugGrantXp(1);drain();}assert.equal(sim.skillPoints(),1);
-      while(sim.state.level<6){sim.debugGrantXp(1);drain();}assert.equal(sim.waveTier(),2);assert.equal(sim.skillPoints(),1);
-      const first=sim.skillTreeNodes().find(node=>node.status==="available");assert.equal(sim.selectSkillNode(first.id),true);assert.equal(sim.skillPoints(),0);assert.equal(sim.selectSkillNode(sim.skillTreeNodes().find(node=>node.status==="available").id),false);
+      // Wave tier is level/3 capped at 4.
+      while(sim.state.level<6){sim.debugGrantXp(1);drain();}assert.equal(sim.waveTier(),2);
       sim.DBG.invulnBase=true;sim.debugStartWave("twoFront");const wave=sim.state.nightWave,plan=wave.activePlan,budget=wave.threatBudget;assert.equal(budget,sim.waveThreatBudget(1));assert.equal(plan.entries.reduce((sum,entry)=>sum+entry.threatCost,0),budget);sim.update(.01);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber);sim.state.enemies.length=0;sim.update(.01);assert.equal(sim.state.clock.phase,"night","an early clear skipped later scheduled spawns");
       sim.debugGrantXp(2000);drain();assert.equal(sim.waveTier(),4);assert.equal(wave.activePlan,plan,"active wave plan changed after leveling");assert.equal(wave.threatBudget,budget);
       while(wave.remainingSpawns>0){const next=plan.entries[wave.totalSpawns-wave.remainingSpawns];sim.update(Math.max(.001,next.at-wave.elapsed+.001));assert.equal(sim.state.enemies.length,1);assert.equal(sim.state.enemies[0].waveNightNumber,wave.activeNightNumber,"scheduled enemy lost wave membership");sim.state.enemies.length=0;}assert.equal(wave.spawnedThreat,budget);
       // The cap holds however far the level runs.
       sim.debugGrantXp(2000000);drain();assert.ok(sim.state.level>=30);assert.equal(sim.waveTier(),4);
-      sim.validateSimulationInvariants();console.log(JSON.stringify({checks:44,waveSpawns:wave.totalSpawns,waveThreat:budget,level:sim.state.level}));
+      sim.validateSimulationInvariants();console.log(JSON.stringify({checks:37,waveSpawns:wave.totalSpawns,waveThreat:budget,level:sim.state.level}));
     `
   }).trim());
   const tierOneResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
@@ -1438,14 +1447,14 @@ try{
         sim.state.gameOver=true;sim.update(1);assert.equal(sim.state.clock.phase,"night","game over transitioned to dawn");sim.state.gameOver=false;
         sim.togglePause();sim.update(1);assert.equal(sim.state.clock.phase,"night","pause transitioned to dawn");sim.togglePause();
         sim.update(1/60);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.completedNights,1);assert.equal(wave.activeNightNumber,null);assert.equal(sim.state.enemies.includes(manual),true,"manual enemy blocked or disappeared at dawn");
-        assert.equal(sim.draftKind(),"dawn");const reward=sim.draftPending();assert.ok(reward);sim.update(10);assert.equal(sim.state.clock.completedNights,1);assert.equal(sim.draftPending(),reward,"clearance duplicated the dawn reward");
-        sim.chooseDraft(0);assert.equal(sim.draftKind(),"consumable","wave buff was not followed by a consumable");sim.chooseDraft(0);assert.equal(sim.draftPending(),null);
+        assert.equal(sim.draftKind(),"dawn");const reward=sim.draftPending(),handBefore=sim.hand().length;assert.ok(reward);sim.update(10);assert.equal(sim.state.clock.completedNights,1);assert.equal(sim.draftPending(),reward,"clearance duplicated the dawn reward");
+        sim.chooseDraft(0);assert.equal(sim.draftPending(),null,"wave buff did not end the reward sequence");assert.equal(sim.state.draft.consumableQueue,0,"wave clearance queued a consumable");assert.equal(sim.hand().length,handBefore,"wave clearance put a consumable in the hand");
         sim.validateSimulationInvariants();
-        console.log(JSON.stringify({night,elapsed:wave.elapsed,spawns:scheduled,rewards:2,manualSurvived:sim.state.enemies.includes(manual)}));
+        console.log(JSON.stringify({night,elapsed:wave.elapsed,spawns:scheduled,rewards:1,manualSurvived:sim.state.enemies.includes(manual)}));
       }finally{Math.random=old;}
     `
   }).trim());
-  assert.equal(waveClearanceResult.rewards,2);assert.equal(waveClearanceResult.manualSurvived,true);assert.ok(waveClearanceResult.elapsed>45);
+  assert.equal(waveClearanceResult.rewards,1);assert.equal(waveClearanceResult.manualSurvived,true);assert.ok(waveClearanceResult.elapsed>45);
   const hudResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
     cwd:root,encoding:"utf8",input:`
       import assert from "node:assert/strict";
@@ -1561,7 +1570,7 @@ try{
         assert.ok(handEvents>eventsBeforeBlueprint,"a level blueprint should enter the hand");
         drain();assert.equal(sim.state.draftPaused,false);
 
-        // 2 · dawn pays a permanent-buff pick, immediately followed by a consumable pick
+        // 2 · dawn pays one permanent-buff pick and then releases the world
         if(sim.state.clock.phase!=="night")sim.transitionPhase();
         assert.equal(sim.state.clock.phase,"night");
         sim.transitionPhase();
@@ -1574,8 +1583,7 @@ try{
         const dawnCard=dawnOffer[0],eventsBeforeDawn=handEvents,stacksBefore=sim.buffStacks(dawnCard);
         assert.equal(sim.chooseDraft(0),true);assert.equal(sim.buffStacks(dawnCard),stacksBefore+1);
         assert.equal(handEvents,eventsBeforeDawn,"a dawn buff should not enter the hand");
-        assert.equal(sim.draftKind(),"consumable");const consumableOffer=sim.draftPending();assert.equal(consumableOffer.every(id=>cardById[id].category==="consumable"),true);
-        const waveConsumable=consumableOffer[0];assert.equal(sim.chooseDraft(0),true);assert.ok(held(waveConsumable));assert.equal(sim.draftKind(),null);assert.equal(sim.state.draftPaused,false);
+        assert.equal(sim.draftKind(),null);assert.equal(sim.state.draft.consumableQueue,0);assert.equal(sim.state.draftPaused,false);assert.equal(sim.hand().some(entry=>cardById[entry.id].category==="consumable"),false,"dawn granted a hand-bound consumable");
 
         // 3 · an untargeted consumable applies on play and leaves the hand
         assert.equal(sim.debugDealCard("woodBundle"),true);
@@ -1626,9 +1634,13 @@ try{
         sim.update(data.FIREBALL.fallTime-.05);near.x=anchor.x;near.y=anchor.y+50;far.x=anchor.x;far.y=anchor.y+100;sim.update(.1);
         assert.equal(near.hp,nearHp-5,"fireball touchdown did not deal exactly 5 damage");
         assert.equal(far.hp,farHp,"the fireball reached past its radius");assert.equal(sim.fallingFireballs.length,0);
-        place(anchor.x,anchor.y);assert.equal(held("fireball").charges,1);
-        place(anchor.x,anchor.y);assert.equal(held("fireball"),null);assert.equal(sim.state.buildMode,null);assert.equal(sim.fallingFireballs.length,2);
+        // Touchdown leaves a small 1x1 rock on the cell, so the next casts need fresh ground.
+        const fireballRock=sim.rocks.at(-1);assert.equal(fireballRock.fireball,true);assert.equal(fireballRock.max,data.FIREBALL.rockHp);assert.equal(fireballRock.x,anchor.x);assert.equal(fireballRock.y,anchor.y);
+        assert.equal(sim.canPlace(anchor.x,anchor.y,"fireballTarget"),false,"the fireball rock must occupy its cell");
+        const second=placementAnchor(600,300);place(second.x,second.y);assert.equal(held("fireball").charges,1);
         sim.update(data.FIREBALL.fallTime+.01);assert.equal(sim.fallingFireballs.length,0);
+        const third=placementAnchor(600,300);place(third.x,third.y);assert.equal(held("fireball"),null);assert.equal(sim.state.buildMode,null);assert.equal(sim.fallingFireballs.length,1);
+        sim.update(data.FIREBALL.fallTime+.01);assert.equal(sim.fallingFireballs.length,0);assert.equal(sim.rocks.filter(rock=>rock.fireball).length,3,"three slams leave three small rocks");
 
         // 6 · a fancy-tower card lands one CONSTRUCTION SITE. Its one displayed cost is exactly the
         //     basic chassis plus variant materials, and completing it directly produces that variant.
@@ -1807,42 +1819,34 @@ try{
   const elapsedBeforePause=sim.state.clock.elapsed;sim.togglePause();for(let i=0;i<60;i++)sim.update(dt);assert.equal(sim.state.clock.elapsed,elapsedBeforePause);sim.togglePause();
   sim.pressKey("KeyD");
   // The sustained run clears a complete authored schedule once it is fully spawned. Each resulting
-  // dawn deals its own reward, which is taken immediately so the simulation keeps moving.
-  let dawnRewards=0;
+  // dawn buff is taken immediately so the simulation keeps moving.
+  let dawnRewards=0,earnedDawnBuffStacks=0;
   for(let i=0;i<normalSteps;i++){
     if(i===300)sim.releaseKey("KeyD");
     sim.update(dt);
     if(sim.state.clock.phase==="night"&&sim.state.nightWave.remainingSpawns===0&&sim.livingActiveWaveEnemies()>0)sim.debugClearEnemies();
     while(sim.draftPending()){
       const kind=sim.draftKind();assert.ok(["level","dawn","consumable"].includes(kind),"a pending offer must name its kind");
-      if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="buff"),true,"a dawn offer dealt something other than a permanent buff");}
+      let dawnPick=null,dawnStacksBefore=0;
+      if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="buff"),true,"a dawn offer dealt something other than a permanent buff");dawnPick=sim.draftPending()[0];dawnStacksBefore=sim.buffStacks(dawnPick);}
       else if(kind==="consumable")assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="consumable"),true,"a consumable offer dealt something from another pool");
       else assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="build"),true,"a level offer dealt something other than a build");
       assert.equal(sim.chooseDraft(0),true);
+      if(dawnPick){assert.equal(sim.buffStacks(dawnPick),dawnStacksBefore+1,"dawn choice did not add a permanent buff stack");earnedDawnBuffStacks++;}
     }
     if(i%120===0)sim.validateSimulationInvariants();
   }
   assert.equal(sim.state.gameOver,false);assert.ok(sim.state.clock.elapsed>=normalSteps*dt);
   assert.ok(dawnRewards>=1,"the sustained run must clear a complete wave and receive its dawn reward");
-  assert.equal(sim.hand().length>0,true,"the dawn rewards must be sitting in the hand");
+  assert.equal(earnedDawnBuffStacks,dawnRewards,"sustained dawn rewards did not persist as buff stacks");
   for(const entry of sim.hand()){assert.ok(cardCatalog.cardById[entry.id],"hand holds an unknown card");assert.ok(Number.isInteger(entry.count)&&entry.count>=1,"hand stack count must be a positive integer");}
   sim.validateSimulationInvariants();
   assert.equal(sim.damageDummies.length,0);
   assert.equal(sim.showcaseProps.length,0);
 
-  // Levels grant the finite skill-point budget; selections spend exactly that budget. Feeding
-  // deals drafts, so the queue is drained back to a running world before anything else is asked.
-  assert.equal(sim.skillPoints(),0,"the stress run must not have fed the thing");
+  // Feed levels and drain their drafts before checking the capped wave tier.
   while(sim.state.level<12){sim.debugGrantXp(40);while(sim.draftPending())assert.equal(sim.chooseDraft(0),true);}
-  const budget=Math.floor(sim.state.level/data.SKILL_POINT_LEVELS);
-  assert.equal(sim.skillPoints(),budget);assert.equal(sim.waveTier(),4);assert.equal(sim.state.draftPaused,false);
-  let selected=0;
-  while(sim.skillPoints()>0){
-    const available=sim.skillTreeNodes().find(node=>node.status==="available");
-    assert.ok(available);assert.equal(sim.selectSkillNode(available.id),true);selected++;
-  }
-  const remaining=sim.skillTreeNodes().find(node=>node.status==="available");
-  assert.equal(sim.selectSkillNode(remaining.id),false);assert.equal(selected,budget);
+  assert.equal(sim.waveTier(),4);assert.equal(sim.state.draftPaused,false);
   sim.validateSimulationInvariants();
 
   // A clean module process is required to test showcase because run mode is intentionally immutable.
@@ -1860,9 +1864,9 @@ try{
         const check=()=>{sim.validateSimulationInvariants();assert.equal(sim.buildings.length,expected.buildings);assert.equal(sim.chests.length,expected.chests);assert.equal(sim.damageDummies.length,expected.dummies);assert.equal(sim.showcaseProps.length,expected.props);assert.equal(sim.state.enemies.length,expected.enemies);assert.equal(sim.state.workers.length,expected.workers);assert.equal(sim.state.enemies.every(e=>e.displayUnit&&e.waveNightNumber===undefined),true);assert.equal(sim.state.workers.every(w=>w.displayUnit),true);assert.equal(sim.state.nightWave.activeNightNumber,null);assert.equal(sim.livingActiveWaveEnemies(),0);const terrain=sim.terrainMetadata();assert.deepEqual([terrain.terrainCellSize,terrain.terrainCols,terrain.terrainRows],[16,data.W/16,data.H/16]);for(let terrainY=0;terrainY<terrain.terrainRows;terrainY++)for(let terrainX=0;terrainX<terrain.terrainCols;terrainX++)assert.equal(sim.terrainAtRasterCell(terrainX,terrainY),"land","showcase terrain must remain authored all-land");};
         check();
         const authoredEnemies=sim.state.enemies.map(enemy=>({enemy,x:enemy.x,y:enemy.y}));for(let i=0;i<4;i++)assert.equal(sim.spawnEnemy("raider"),undefined,"showcase spawn command changed its return contract");assert.equal(sim.spawnEnemy("brute"),undefined);assert.equal(sim.state.enemies.length,authoredEnemies.length,"showcase debugger spawn added a production enemy");assert.equal(sim.state.enemies.every((enemy,index)=>enemy===authoredEnemies[index].enemy&&enemy.x===authoredEnemies[index].x&&enemy.y===authoredEnemies[index].y),true,"showcase spawn command changed authored enemy identity or position");check();
-        assert.equal(sim.debugGrantXp(105),true);assert.equal(sim.xp(),105);assert.equal(sim.skillPoints(),2);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);check();
+        assert.equal(sim.debugGrantXp(105),true);assert.equal(sim.xp(),105);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);check();
         const firstRevision=sim.showcaseLabels().revision;
-        for(let i=0;i<20;i++){sim.debugGrantXp(40);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);assert.equal(sim.skillPoints(),0);check();}
+        for(let i=0;i<20;i++){sim.debugGrantXp(40);assert.equal(sim.rebuildShowcase(),true);assert.equal(sim.xp(),0);check();}
         assert.ok(sim.showcaseLabels().revision>firstRevision);
         const prop=sim.showcaseProps[0],origin={x:prop.x,y:prop.y};sim.setPointerWorld(prop.x,prop.y);sim.secondaryPress();assert.equal(sim.heldProp(),prop);sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();assert.equal(prop.x,origin.x);assert.equal(prop.y,origin.y);assert.equal(sim.showcaseProps.includes(prop),true);
         const fixtureChest=sim.chests[0],chestOrigin={x:fixtureChest.x,y:fixtureChest.y};sim.setPointerWorld(fixtureChest.x,fixtureChest.y);sim.secondaryPress();assert.equal(sim.heldChest(),fixtureChest);sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();assert.deepEqual({x:fixtureChest.x,y:fixtureChest.y},chestOrigin);assert.equal(sim.chests.includes(fixtureChest),true);
@@ -1886,7 +1890,7 @@ try{
 
   execFileSync(process.execPath,[join(root,"scripts/card-mechanics.test.mjs")],{cwd:root,stdio:"pipe"});
 
-  console.log(`validate ok | syntax ${jsFiles.length} | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level wave threat ${tierOneResult.threat}/${xpResult.waveThreat} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | skills spent ${selected} | labels ${showcaseResult.labels}`);
+  console.log(`validate ok | syntax ${jsFiles.length} | authored world ${authoredWorld.trees.length}t/${authoredWorld.rocks.length}r/${authoredWorld.diamonds.length}d/${authoredWorld.chests.length}c | terrain relocation water ${terrainPlacementResult.water.join(",")} | feature ${featureResult.checks+xpResult.checks+chestResult.checks+handResult.checks} checks | level wave threat ${tierOneResult.threat}/${xpResult.waveThreat} | calm night ${calmResult.plain}->${calmResult.calm} | wave clear ${waveClearanceResult.spawns} after ${waveClearanceResult.elapsed.toFixed(0)}s + reward | hud ${hudResult.spawning}->${hudResult.survivor}->clear | clickSpeed x${buffResult.ratio.toFixed(4)} | hand ${handResult.playable} playable, fireball ${handResult.nearRange}<=${data.FIREBALL.radius}<${handResult.farRange} | dawn rewards ${dawnRewards} | normal ${normalSteps} steps | showcase ${showcaseResult.steps} steps | fixtures ${showcaseResult.buildings} buildings, ${showcaseResult.chests} chests, ${showcaseResult.dummies} dummies, ${showcaseResult.props} props, ${showcaseResult.enemies} enemies, ${showcaseResult.workers} workers | labels ${showcaseResult.labels}`);
 }finally{
   Math.random=originalRandom;
 }

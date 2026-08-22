@@ -20,7 +20,7 @@
 // uniforms object, so the sync is O(1).
 //
 // The injections string-replace against three r160's exact chunk text (verified in
-// vendor/three.module.js: lights_lambert_pars_fragment / lights_toon_pars_fragment). If an
+// vendor/three.module.min.js: lights_lambert_pars_fragment / lights_toon_pars_fragment). If an
 // upgrade changes a pattern, the material is left UNPATCHED and one loud console.error names it —
 // a broken pattern must never take the renderer down.
 

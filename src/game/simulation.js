@@ -5,7 +5,7 @@ import {
   VIEW_W,VIEW_H,W,H,BASE,BASE_ZONE,BUILD_MARGIN,
   CELL,GRID_ORIGIN_X,GRID_ORIGIN_Y,GRID_COLS,GRID_ROWS,
   FOOTPRINT_1x1,FOOTPRINT_3x3,RESOURCE_FOOTPRINT,
-  RESOURCE_KINDS,RESOURCE_NODE_HP,FOG,CHEST,RESOURCE_XP,LEVEL_CURVE,SKILL_POINT_LEVELS,CARD_BUFFS,CARD_CONSUMABLES,
+  RESOURCE_KINDS,RESOURCE_NODE_HP,FOG,CHEST,RESOURCE_XP,LEVEL_CURVE,CARD_BUFFS,CARD_CONSUMABLES,
   HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,STAFF_GATHER,
   BUILDING_TYPES,UPGRADES,TOWER_VARIANTS,
@@ -13,7 +13,7 @@ import {
   ENEMY_POOL,
   NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,WAVE_THREAT_CURVE,WAVE_BOSS_SPAWNS,WIN_WAVE,
   DAY_DURATION,NIGHT_OVERLAY_ALPHA,LIGHT_FADE_TIME,
-  KING,STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_TARGET_TYPE,DAMAGE_ORBS,SUMMONING_CIRCLE,DRAFT_REROLL,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
+  KING,STEADY_HAND_RATE,FIREBALL,METEOR,DAMAGE_TARGET_TYPE,DAMAGE_ORBS,SUMMONING_CIRCLE,CONSUMABLE_FORGE,DRAFT_REROLL,FRIENDLY_BRUTE,CAPTURE_YARD,GARRISON
 } from "./data.js";
 import {
   worldToCell,cellToWorld,snapToCellCenter,buildingFootprint,
@@ -24,8 +24,6 @@ import {
   terrainAtRasterCell as queryTerrainAtRasterCell,terrainAtWorldPoint as queryTerrainAtWorldPoint,
   validateTerrainTags,worldRectEntirelyOnLand
 } from "./authored-map.js";
-// The authored skill graph: shape only. This module owns state.skillTree over it, never the nodes.
-import {SKILL_NODES,SKILL_EDGES,SKILL_TREE_ROOT_ID,SKILL_NODES_BY_ID,SKILL_NEIGHBORS} from "./skill-tree-data.js";
 // Authored showcase coordinates are immutable input; all live fixture objects remain owned here.
 import {SHOWCASE_MANIFEST} from "./showcase-data.js";
 // The authored card catalog: the draft reads it and NEVER writes it — a taken card tallies a
@@ -88,9 +86,6 @@ const NO_EFFECTS = {
   buildHudChanged(){},       // placement mode was armed or cleared (the crosshair, the lifted card)
   upgradeMenuOpened(){},     // state.upgradeMenu is populated; show and render the panel
   upgradeMenuClosed(){},     // state.upgradeMenu is cleared; hide the panel
-  skillTreeOpened(){},       // state.skillTree.open went true; show the panel
-  skillTreeChanged(){},      // the revealed/selected sets moved; repaint the panel
-  skillTreeClosed(){},       // state.skillTree.open went false; hide the panel
   phaseHudChanged(){},       // a debug command jumped the clock; re-read the phase HUD
   isModalOpen(){return false;},   // does a modal currently own input?
   isCombatTargetOnScreen(){return false;}, // renderer injects the active-camera frustum query
@@ -165,8 +160,8 @@ const state = {
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
   // xp is the run TOTAL ever earned; levelXp is only the progress into the current level, so the
   // two never have to be reconstructed from each other. Both are written by grantXp() alone.
-  xp:0,levelXp:0,level:0,skillPoints:0,
-  // The draft's whole run ledger: queued level/build, dawn/buff, and chest-or-wave consumable
+  xp:0,levelXp:0,level:0,
+  // The draft's whole run ledger: queued level/build, dawn/buff, and chest-or-forge consumable
   // rewards; the live 3-card offer and kind; buff stacks; and two banked consumable effects. Blueprints
   // keep no ledger at all — a plan is not an unlock, so the pool may offer the same one again.
   // Authored tables stay untouched.
@@ -189,12 +184,6 @@ const state = {
   nightWave:{upcomingPlan:null,activePlan:null,threatBudget:0,spawnedThreat:0,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,nightNumber:0,activeNightNumber:null},
   camera:{x:BASE.x,y:BASE.y,zoom:1,panning:false,lastX:0,lastY:0}, keys:new Set(),
   upgradeMenu:{building:null,selected:null,kind:null},primaryClick:{held:false,audioCooldown:0},heldObject:null,showcaseFocus:null,
-  // revealed: every node the player can SEE; selected: the subset taken, always a subset of it.
-  // Two id sets over the frozen graph, written only by selectSkillNode() and read only by the
-  // skill tree queries — the nodes have no cost and no effect, so nothing else consults them.
-  // open: whether the skill-tree screen owns input. It is a modal (see modalOpen() in the HUD) but
-  // NOT a pause: update() keeps stepping under it, exactly as it does under the upgrade panel.
-  skillTree:{revealed:new Set([SKILL_TREE_ROOT_ID]),selected:new Set(),open:false},
   king:{x:BASE.x,y:BASE.y+18,cooldown:0,swing:0,targetX:BASE.x,targetY:BASE.y}
 };
 
@@ -444,7 +433,7 @@ function buildShowcaseFixtures(){
 }
 // First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
-function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.skillPoints=0;state.draft={queue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();effects.skillTreeChanged();}
+function resetShowcaseEconomy(){state.xp=0;state.levelXp=0;state.level=0;state.draft={queue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.levelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();}
 // ── STRAWMAN, for owner tuning ──────────────────────────────────────────────
 // With the build shop gone, cards are the ONLY way to put a building on the ground. XP will offer
 // later blueprints, but the opening needs one house (workers) and one basic tower chassis (the first
@@ -472,6 +461,7 @@ export function rebuildShowcase(){if(state.runMode!=="showcase")return false;res
 function assertTemporaryBuildingState(building){
   if(building.orbs)invariant(building.type==="damageOrbs"&&Number.isInteger(building.orbs.count)&&building.orbs.count>=DAMAGE_ORBS.minCount&&building.orbs.count<=DAMAGE_ORBS.maxCount&&building.orbs.remaining>0&&building.orbs.remaining<=DAMAGE_ORBS.duration,"illegal damage-orb state");
   if(building.summoning)invariant(building.type==="summoningCircle"&&Number.isInteger(building.summoning.dust)&&building.summoning.dust>=0&&building.summoning.dust<SUMMONING_CIRCLE.dustCost&&building.summoning.remaining>0&&building.summoning.remaining<=SUMMONING_CIRCLE.duration,"illegal summoning-circle state");
+  if(building.type==="consumableForge")invariant(building.consumableForge&&Number.isInteger(building.consumableForge.dust)&&building.consumableForge.dust>=0&&building.consumableForge.dust<CONSUMABLE_FORGE.dustCost,"illegal consumable-forge state");
 }
 
 export function validateSimulationInvariants(){
@@ -486,7 +476,6 @@ export function validateSimulationInvariants(){
   invariant(Number.isInteger(state.xp)&&state.xp>=0,"illegal xp");
   invariant(Number.isInteger(state.level)&&state.level>=0,"illegal level");
   invariant(Number.isFinite(state.levelXp)&&state.levelXp>=0&&state.levelXp<levelCost(state.level),"illegal level progress");
-  invariant(Number.isInteger(state.skillPoints)&&state.skillPoints>=0,"illegal skill points");
   invariant(["day","night"].includes(state.clock.phase),"illegal phase "+state.clock.phase);
   invariant(Number.isFinite(state.clock.remaining)&&state.clock.remaining>=0,"illegal phase countdown");
   const offer=state.draft.offer;
@@ -562,6 +551,7 @@ export function validateSimulationInvariants(){
     invariant(footprintInWorldBounds(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT),"resource footprint is out of bounds");
     invariant(terrainWorldRectEntirelyOnLand(footprintWorldRect(cell.cx,cell.cy,node.footprint||RESOURCE_FOOTPRINT)),"resource is not on land");
     if(node.meteor)invariant(nodes===rocks&&node.max===METEOR.rockHp&&node.footprint===FOOTPRINT_3x3,"malformed meteor rock");
+    if(node.fireball)invariant(nodes===rocks&&node.max===FIREBALL.rockHp&&node.footprint===FOOTPRINT_1x1,"malformed fireball rock");
   }
   invariant(new Set(chests).size===chests.length,"duplicate chest ownership");
   for(const chest of chests){
@@ -638,8 +628,6 @@ export function validateSimulationInvariants(){
     invariant(building.type==="tower"&&TOWER_VARIANTS[building.plannedVariant],"illegal designated tower variant "+building.plannedVariant);
     invariant(!building.complete,"a designated tower variant outlived its construction");
   }
-  for(const id of state.skillTree.selected)invariant(state.skillTree.revealed.has(id)&&SKILL_NODES_BY_ID[id],"selected skill is not revealed");
-  for(const id of state.skillTree.revealed)invariant(SKILL_NODES_BY_ID[id],"unknown revealed skill "+id);
   if(state.heldObject){const held=state.heldObject,kind=assertHeldKind(held);invariant(Number.isFinite(held.originX)&&Number.isFinite(held.originY),"invalid held origin");if(kind==="worker")invariant(!state.workers.includes(held.object),"held worker still installed");else if(kind==="enemy"){invariant(!state.enemies.includes(held.object),"held enemy still installed");invariant(ENEMY_TYPES[held.object.type]?.weightTag==="light","held enemy is not light");}else if(kind==="building"){invariant(!buildings.includes(held.object),"held building still installed");assertTemporaryBuildingState(held.object);}else if(kind==="chest"){invariant(!chests.includes(held.object),"held chest still installed");invariant(Number.isFinite(held.object.x)&&Number.isFinite(held.object.y),"held chest has non-finite coordinates");invariant(Number.isInteger(held.object.hp)&&held.object.hp>0&&held.object.hp<=held.object.max&&held.object.max===CHEST.maxHp,"held dead chest");invariant(held.object.footprint===CHEST.footprint,"held chest has invalid footprint");}else invariant(showcaseProps.includes(held.object),"held prop lost ownership");}
   if(state.runMode==="normal")invariant(!damageDummies.length&&!showcaseProps.length&&!showcaseLabelRecords.length,"normal mode contains showcase entities");
   else{invariant(grass.length===0&&grassByCell.size===0,"showcase contains production vegetation");
@@ -1060,6 +1048,7 @@ function createBuilding(type,x,y){
   const building={type,x,y,cost,delivered:resourceCounts(),storage:resourceCounts(),upgrades:{},activeUpgrade:null,plannedVariant:null,tower:null,hazard:["spikes","landmine","tar"].includes(type)?{cooldown:0,flash:0}:null,complete:!!def.instant,pulse:1};
   if(type==="damageOrbs")building.orbs={count:Math.floor(rand(DAMAGE_ORBS.minCount,DAMAGE_ORBS.maxCount+1)),angle:0,cooldown:0,remaining:DAMAGE_ORBS.duration};
   if(type==="summoningCircle")building.summoning={dust:0,remaining:SUMMONING_CIRCLE.duration};
+  if(type==="consumableForge")building.consumableForge={dust:0};
   return building;
 }
 
@@ -1217,7 +1206,7 @@ function destroyChest(chest){
   }
   burst(chest.x,chest.y,"#e3b445",34);burst(chest.x,chest.y,"#b98a4e",18);
   toast("chest opened — choose a consumable");sound(880,.3);
-  queueConsumableReward();
+  queueConsumableRewards();
   return true;
 }
 function hitChest(chest,quiet=false){
@@ -1409,6 +1398,7 @@ function hoverTarget(){
     if(!building.complete&&distance(m.x,m.y,building.x,building.y)<38)return {kind:"building",object:building};
     if(building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<42)return {kind:"stockpile",object:building};
     if(building.complete&&building.type==="summoningCircle"&&distance(m.x,m.y,building.x,building.y)<52)return {kind:"summoning",object:building};
+    if(building.complete&&building.type==="consumableForge"&&distance(m.x,m.y,building.x,building.y)<42)return {kind:"consumableForge",object:building};
     if(building.complete&&(building.type==="obelisk"||building.type==="tower")&&building.activeUpgrade&&upgradeButtonHit(building,m.x,m.y))return {kind:"upgrade",object:building};
   }
   return null;
@@ -1430,6 +1420,9 @@ function releaseRightMouse(){
   else if(target&&target.kind==="stockpile")dropToStockpile(target.object);
   else if(target&&target.kind==="summoning"){
     dropToSummoningCircle(target.object);
+    if(carriedTotal())dropCarriedOnGround(true);
+  }else if(target&&target.kind==="consumableForge"){
+    dropToConsumableForge(target.object);
     if(carriedTotal())dropCarriedOnGround(true);
   }else if(target&&target.kind==="upgrade"){
     dropToUpgrade(target.object);
@@ -1454,6 +1447,16 @@ function dropToSummoningCircle(building){
   for(let i=0;i<summonCount;i++)spawnFriendlyBrute(building.x,building.y);
   if(summonCount){burst(building.x,building.y,"#9870c9",30);toast(summonCount+(summonCount===1?" friendly Brute summoned":" friendly Brutes summoned"));sound(100,.35);}
   else toast("summoning circle: "+summon.dust+" / "+SUMMONING_CIRCLE.dustCost+" dust");
+}
+
+function dropToConsumableForge(building){
+  const forge=building.consumableForge,amount=state.carried.dust;
+  if(amount<=0){toast("consumable forge needs dust");return;}
+  state.carried.dust=0;forge.dust+=amount;building.pulse=1;handoffParticles(building.x,building.y,"dust",amount);
+  const batches=Math.floor(forge.dust/CONSUMABLE_FORGE.dustCost);
+  forge.dust%=CONSUMABLE_FORGE.dustCost;
+  if(batches){queueConsumableRewards(batches);burst(building.x,building.y,"#a783df",24);toast(batches+(batches===1?" consumable draft queued":" consumable drafts queued"));sound(620,.18);}
+  else toast("consumable forge: "+forge.dust+" / "+CONSUMABLE_FORGE.dustCost+" dust");
 }
 
 function dropToStockpile(building){
@@ -1534,18 +1537,15 @@ function buildingXpValue(building){
 }
 function gainLevel(){
   state.levelXp-=levelCost(state.level);state.level++;
-  // Points still accrue, silently: the skill tree is hidden from production UI until its nodes
-  // have real costs and effects (badge in hud.js, K shortcut in input.js are the other two spots).
-  if(state.level%SKILL_POINT_LEVELS===0)state.skillPoints++;
   if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
   toast("level "+state.level);sound(660,.16);
   state.draft.queue++;refillDraft();
 }
 
 // ── the draft ───────────────────────────────────────────────────────────────
-// Three reward sources share this machinery but never mix pools: LEVEL-UP offers hand-bound builds;
-// DAWN offers a permanent buff followed immediately by a consumable; CHESTS offer a consumable.
-// This separation makes XP expand the village while survival and exploration strengthen the run. Each offer contains
+// Four reward sources share this machinery but never mix pools: LEVEL-UP offers hand-bound builds;
+// DAWN offers one permanent buff; CHESTS and CONSUMABLE FORGES offer a consumable. This separation
+// makes XP expand the village while survival, exploration and dust spending strengthen the run. Each offer contains
 // up to three DISTINCT eligible cards drawn by rarity weight. Exactly one offer is live at a time,
 // the rest wait in their queues, and the world is halted while one pends via state.draftPaused.
 // The choice arrives through chooseDraft(); nothing else may write state.draft. What a taken card
@@ -1571,8 +1571,7 @@ function drawDraftOffer(categories=null,exclude=null){
   return picks.length?picks:null;
 }
 // An empty pool consumes its queued reward silently, so a run with nothing left to offer never
-// stalls. Existing level-ups resolve first; dawn's buff then consumable are queued atomically, so
-// selecting the buff immediately deals the wave's second reward.
+// stalls. Existing level-ups resolve first, then dawn buffs, then chest or forge consumables.
 function refillDraft(){
   const draft=state.draft;
   while(!draft.offer&&(draft.queue>0||draft.dawnQueue>0||draft.consumableQueue>0)){
@@ -1585,15 +1584,16 @@ function refillDraft(){
   if(state.draftPaused){stopGameplayInput();closeUpgradeMenu();}
   effects.draftChanged();
 }
-/** Chest reward. Showcase fixtures break normally but never enter production progression. */
-function queueConsumableReward(){
+/** Chest or forge rewards. Showcase fixtures never enter production progression. */
+function queueConsumableRewards(count=1){
   if(state.runMode!=="normal")return;
-  state.draft.consumableQueue++;refillDraft();
+  invariant(Number.isInteger(count)&&count>0,"invalid consumable reward count");
+  state.draft.consumableQueue+=count;refillDraft();
 }
-/** Wave-clear rewards are one permanent buff, then one hand-bound consumable. */
-function queueWaveClearRewards(){
+/** Wave clearance grants one permanent buff. */
+function queueWaveClearReward(){
   if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
-  state.draft.dawnQueue++;state.draft.consumableQueue++;refillDraft();
+  state.draft.dawnQueue++;refillDraft();
 }
 // Screen spells snapshot the renderer's actual active-camera frustum answer before damage starts;
 // kills and chain movement during iteration cannot change membership or ordering.
@@ -1661,7 +1661,7 @@ function consumeHandCopy(entry){
 // Consumables that ask WHERE. Each names the authored building type whose ghost, footprint and
 // radius ring the existing placement flow already draws — so targeting needs no render work at all.
 // `cast` is the escape hatch for a spell: fireball aims with its own target-only row (its
-// effectRadius IS FIREBALL.radius) and detonates on placement instead of leaving anything behind.
+// effectRadius IS FIREBALL.radius) and detonates on touchdown, leaving a small 1x1 rock behind.
 // `site` is the build half of the table (below): the card drops one CONSTRUCTION SITE where a kit
 // drops an authored instant building. A tower variant site combines chassis + variant materials,
 // then produces the named tower in one completion transition.
@@ -1721,6 +1721,13 @@ function castFireball(x,y){
 function fireballImpact(x,y){
   applyAreaDamage({centers:[{x,y}],radius:FIREBALL.radius,damage:FIREBALL.damage,targetType:FIREBALL.damageTargetType,color:"#ef7b3f"});
   applyShockwave(x,y,{radius:FIREBALL.radius,force:90});
+  // Small cousin of the meteor rock: an ordinary 1x1 stone node with FIREBALL.rockHp. Same rule as
+  // the meteor — the cell was clear at cast, but if something was raised under it during the fall
+  // the rock shatters and the slam is damage-only.
+  if(canPlace(x,y,"fireballTarget")){
+    rocks.push({x,y,hp:FIREBALL.rockHp,max:FIREBALL.rockHp,depleted:0,shake:1,pop:1,fireball:true,footprint:FOOTPRINT_1x1});
+    clearGrassInFootprint(x,y,FOOTPRINT_1x1);
+  }
   // Juice sized to the halved radius: fewer, tighter embers and a lighter kick, so the punch the
   // player feels matches the ground the blast actually covers (the rings read FIREBALL.radius).
   for(let i=0;i<40;i++)particles.push({x,y,vx:rand(-150,150),vy:rand(-170,25),life:rand(.35,1),col:i%3?"#ef7b3f":i%2?"#b84b38":"#ffd36a"});
@@ -1851,7 +1858,7 @@ function completeBuilding(building){
   fxGroundThump(building.x,building.y,buildingFootprint(building.type),"#c0a170");
   fxDebris(building.x,building.y-14,"#ead28d",10,{spread:66,lift:135,size:.85});
   sound(300,.11);
-  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="house"?"house complete — worker production started":building.type==="scoutHut"?"scout hut complete — drop a worker on it to scout the fog":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
+  const readyMessage=building.type==="stockpile"?"stockpile complete — release resources over it":building.type==="consumableForge"?"consumable forge complete — deliver dust to draft consumables":building.type==="house"?"house complete — worker production started":building.type==="scoutHut"?"scout hut complete — drop a worker on it to scout the fog":building.type==="obelisk"?"obelisk complete — hover it to choose upgrades":building.type==="tower"?(planned?TOWER_VARIANTS[planned].name+" complete":"basic tower complete"):def.name+" complete";
   // Completion is the run's only XP moment. Showcase fixtures complete through this same path but
   // must never pollute the sandbox economy (rebuildShowcase asserts xp stays 0 after its reset),
   // and a free-cost debug placement spent nothing, so it earns nothing.
@@ -2768,9 +2775,8 @@ function transitionPhase(){
     wave.activePlan=null;wave.threatBudget=0;wave.spawnedThreat=0;wave.remainingSpawns=0;wave.activeNightNumber=null;
     // Roll the next forecast after the night ends, so leveling during that night can unlock its pool.
     chooseUpcomingNight();
-    // Surviving the night earns two back-to-back picks: permanent buff, then consumable. Existing
-    // level rewards stay ahead of both rather than being replaced.
-    queueWaveClearRewards();
+    // Surviving the night earns one permanent-buff pick. Existing level rewards stay ahead of it.
+    queueWaveClearReward();
     // JUICE — and dawn answers dusk, rising where the dusk pair fell. Placed last so the reward
     // queue above is already settled; sound() is a pure output hook either way.
     sound(392,.26);sound(523,.4);
@@ -3331,7 +3337,7 @@ export function openUpgradeMenu(building,kind){
 /**
  * Returns whether a menu was actually open, so Escape can consume the keystroke. The building IS
  * the open flag: openUpgradeMenu() is the only thing that sets it and this is the only thing that
- * clears it. It deliberately does not ask isModalOpen() — that answers for the skill tree too.
+ * clears it.
  */
 export function closeUpgradeMenu(){
   const wasOpen=!!state.upgradeMenu.building;
@@ -3352,47 +3358,6 @@ export function acceptUpgrade(){
   return true;
 }
 
-// ── the skill tree ──
-// THE only writer of the two id sets (state.skillTree.revealed / .selected); the `open` flag beside
-// them is written by openSkillTree() / closeSkillTree() below and by nothing else. Taking a node
-// reveals its immediate neighbours — ONE hop, either direction along an edge — and spends one
-// skill point. Refusals are silent no-ops, so a UI may call this on any click without pre-checking.
-export function selectSkillNode(id){
-  const tree=state.skillTree;
-  if(!SKILL_NODES_BY_ID[id])return false;                          // not a node at all
-  if(!tree.revealed.has(id)||tree.selected.has(id)||state.skillPoints<=0)return false;
-  state.skillPoints--;tree.selected.add(id);
-  for(const neighbour of SKILL_NEIGHBORS[id])tree.revealed.add(neighbour);
-  effects.skillTreeChanged();effects.phaseHudChanged();
-  return true;
-}
-/**
- * Show the skill-tree screen. It takes over input, so it lets go of whatever the pointer and the
- * keys were doing and clears placement through the SAME stopGameplayInput(true) the run-over path
- * uses — a build left armed under a full-stage overlay would come back with the screen. The
- * upgrade panel goes first because two modals must never be on screen together.
- * Reports whether it actually opened; a second call while open changes nothing.
- */
-export function openSkillTree(){
-  if(state.skillTree.open)return false;
-  stopGameplayInput(true);
-  closeUpgradeMenu();
-  state.skillTree.open=true;
-  effects.skillTreeOpened();
-  return true;
-}
-/**
- * Hide it again. Selected and revealed ids, resources, the clock, the camera and the pause flag are
- * all left exactly as they were — this command writes one boolean. Returns whether it was open, so
- * Escape can consume the keystroke.
- */
-export function closeSkillTree(){
-  if(!state.skillTree.open)return false;
-  state.skillTree.open=false;
-  effects.skillTreeClosed();
-  return true;
-}
-
 // ── debug-owned writes into ordinary state (view panel > gameplay) ──
 export function setCapacity(value){ state.capacity=value; }
 export function resetDamageDummies(){if(state.runMode!=="showcase")return false;for(const d of damageDummies){d.x=d.homeX;d.y=d.homeY;d.hp=d.max;d.flash=0;d.defeatedTimer=0;d.status={burn:null,slow:null};d.recentDamage=0;d.recentTimer=0;d.hitCount=0;}state.showcaseFocus=damageDummies[0]||null;validateSimulationInvariants();return true;}
@@ -3407,9 +3372,8 @@ export function showcaseLabels(){return state.runMode==="showcase"?{revision:sho
 // a mark on screen can never disagree with the rule that produced it.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** XP economy read-only peeks; state mutations remain inside grantXp and the skill commands. */
+/** XP economy read-only peek; state mutations remain inside grantXp. */
 function xp(){return state.xp;}
-function skillPoints(){return state.skillPoints;}
 /** Perf/debug census of simulation-owned records. `total` includes short-lived particles and damage
  * numbers because they still consume update/render work; the named fields explain the useful load. */
 export function simulationEntityDiagnostics(){
@@ -3494,20 +3458,6 @@ export function heldChopTarget(){ return chopState.target; }
 /** Is the primary button down right now? */
 export function primaryHeld(){ return state.primaryClick.held; }
 
-// ── skill tree projections ──
-// Fresh records over the frozen graph and the two id sets — project them, never mutate them, the
-// same contract the live collections carry. Status is "selected", "available" or "hidden" (unknown
-// ids read as hidden); nodes come in authored order with hidden ones in, edges only when both ends
-// are visible, so a line never points at a node the player has not been shown.
-const skillNodeVisible=id=>state.skillTree.revealed.has(id);
-function skillNodeStatus(id){ return state.skillTree.selected.has(id)?"selected":skillNodeVisible(id)?"available":"hidden"; }
-function skillTreeNodes(){
-  return SKILL_NODES.map(node=>({id:node.id,name:node.name,icon:node.icon,x:node.x,y:node.y,root:!!node.root,status:skillNodeStatus(node.id)}));
-}
-function skillTreeEdges(){
-  return SKILL_EDGES.filter(edge=>skillNodeVisible(edge.a)&&skillNodeVisible(edge.b)).map(edge=>({a:edge.a,b:edge.b}));
-}
-
 export {
   // live collections — iterate, never mutate
   state, trees, rocks, diamonds, grass, fog, fogPops, resourceDrops, chests, buildings, friendlyBrutes, controlledEnemies, damageDummies, showcaseProps, workerCorpses, particles, damageNumbers, lightningArcs, fallingMeteors, fallingFireballs,
@@ -3533,8 +3483,7 @@ export {
   workerCoatColor, workerLoad, carriedTotal, resourceIsActive,
   // read-only effective health for presentation; every mutation of it stays inside this module
   workerMaxHp,
-  // skill tree — read-only projections of the authored graph over this run's two id sets
-  skillTreeNodes, skillTreeEdges, xp, skillPoints, waveTier, waveThreatBudget, livingActiveWaveEnemies, levelCost, buffStacks,
+  xp, waveTier, waveThreatBudget, livingActiveWaveEnemies, levelCost, buffStacks,
   // draft eligibility projections — read-only views over the authored catalog and this run's stacks
   draftEligible, cardPrerequisitesMet,
   // the effective vacuum reach, buffs included — the drawn ring should read this, not TUNE alone

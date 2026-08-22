@@ -57,8 +57,8 @@ import {
 // authored table this panel touches.
 import {CARDS} from "../game/cards.js";
 import {
-  TUNE, DBG, state, xp, waveTier, waveThreatBudget, skillPoints, levelState, simulationEntityDiagnostics, buffStacks,
-  setCameraZoom, setCapacity, openSkillTree, togglePause,
+  TUNE, DBG, state, xp, waveTier, waveThreatBudget, levelState, simulationEntityDiagnostics, buffStacks,
+  setCameraZoom, setCapacity, togglePause,
   // debug entry points (view panel > gameplay)
   spawnEnemy, debugGrant, debugGrantXp, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase,
   setWaveThreatCurve, debugStartWave, debugClearEnemies, debugHealAll, debugDealCard, debugApplyBuff, debugClearHand
@@ -585,11 +585,6 @@ function bindControls(){
   bindV("vInstantWorkers", v=>{ DBG.instantWorkers=v; });
   bindBtn("vHealAll", debugHealAll);
 
-  // skills — the ONLY way into the skill-tree screen for now; it has no production entry point
-  // yet. Not a debug command: this is the same openSkillTree() a real trigger will call, and the
-  // guards that keep two modals off screen at once live in it, not here.
-  bindBtn("vOpenSkillTree", ()=>{ openSkillTree(); });
-
   // cards — the dealer grid is generated from the registry; only the two buttons are bound here.
   buildCardDealer();
   bindBtn("vClearHand", ()=>{ debugClearHand(); });
@@ -599,7 +594,7 @@ function bindControls(){
 // on, and the wave tier is what the night reads off that level.
 export function syncXpReadout(){
   const level=levelState();
-  $v("vXpReadout").textContent="xp "+xp()+" · lv "+level.level+" ("+level.xp.toFixed(1)+"/"+level.next.toFixed(1)+") · tier "+waveTier()+" · "+skillPoints()+" points";
+  $v("vXpReadout").textContent="xp "+xp()+" · lv "+level.level+" ("+level.xp.toFixed(1)+"/"+level.next.toFixed(1)+") · tier "+waveTier();
 }
 /** Push programmatic camera changes (orbit, wheel zoom) back into the sliders. */
 export function syncViewInputs(){
@@ -757,11 +752,8 @@ export function initViewDebugger(hooks={}){
   queueMicrotask(syncShowcaseAction);
 
   // T hides/restores the entire panel without changing any descendant state. Shift+digit switches
-  // tabs; plain digits stay free for the game. Silent while the skill tree is up: it covers this
-  // panel, and the `inert` it hangs on the rest of the frame stops clicks and focus but not a
-  // listener bound to `window`.
+  // tabs; plain digits stay free for the game.
   window.addEventListener("keydown", e=>{
-    if(state.skillTree.open)return;
     if(e.code==="KeyT"&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
       e.preventDefault();if(!e.repeat)togglePanelVisibility();return;
     }

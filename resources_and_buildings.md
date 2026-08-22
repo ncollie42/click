@@ -40,6 +40,7 @@ Everything that is *placed* lands on one shared square lattice. `src/game/data.j
 | Every tower variant | 3x3 | Inherited from the chassis; variants declare no footprint of their own |
 | Capture yard | 3x3 | Constructed; converts dropped light enemies into controlled allies |
 | Garrison | 1x1 | Constructed; converts existing workers into fortified guards |
+| Consumable Forge | 1x1 | Constructed; converts manual 5-dust batches into consumable drafts |
 | Blast charge | 1x1 | |
 | Spike trap | 1x1 | |
 | Land mine | 1x1 | |
@@ -91,7 +92,7 @@ The grid governs *placement only*. Workers, enemies, the player cursor, loose re
 
 ## Showcase Validation
 
-`?mode=showcase` installs an authored gallery: display units stay inert, while towers use production combat against resettable damage dummies and authored props/chests retain their demonstrated pointer interactions. Its fixture manifest validates registry coverage, IDs, sections, footprints, margins, and overlap at import. Run `node scripts/validate.mjs` for deterministic normal/showcase stress, fixture rebuild/reset checks, and complete skill-graph reveal.
+`?mode=showcase` installs an authored gallery: display units stay inert, while towers use production combat against resettable damage dummies and authored props/chests retain their demonstrated pointer interactions. Its fixture manifest validates registry coverage, IDs, sections, footprints, margins, and overlap at import. Run `node scripts/validate.mjs` for deterministic normal/showcase stress and fixture rebuild/reset checks.
 
 ## Building Categories
 
@@ -105,7 +106,8 @@ base
 ├── population
 │   └── house
 ├── progression
-│   └── obelisk
+│   ├── obelisk
+│   └── consumable forge
 ├── defense
 │   ├── towers
 │   │   └── basic tower chassis
@@ -184,6 +186,7 @@ Categories answer **what role does this building serve?** Tags answer **how does
 | Tar | Defense / Deployable | `free`, `contact`, `card`, `charges`, `persistent` |
 | Capture yard | Units | `constructed`, `manual`, `friendly`, `persistent` |
 | Garrison | Defense | `constructed`, `staffed`, `friendly`, `persistent` |
+| Consumable Forge | Progression | `constructed`, `manual`, `persistent` |
 
 Footprints for every row above live in the [Footprints](#footprints) table. All of them are 1x1 except the tower chassis, its variants, and the capture yard.
 
@@ -212,6 +215,12 @@ The kit is granted as a max-HP **delta** and withdrawn as a **clamp**, so a stat
 - **On exit** (pickup, reassignment, demobilization, death of the station, a garrison that leaves the world) the pool clamps back to 5. A guard at 2/10 stays at 2/5; a guard at 10/10 drops to 5/5. Picking a guard up withdraws the kit immediately while keeping its slot reserved.
 
 The bigger pool is not immortality: zero is still death, the ordinary corpse is left behind, and the slot reopens on the spot.
+
+### Consumable Forge
+
+Acquisition: the rare, repeatable `bpConsumableForge` build card. It is part of the level-up build pool, is not in the starting hand, and places one 1x1 construction site costing 5 wood + 5 stone with two build slots.
+
+The completed forge is persistent. Right-release carried dust over it to deposit manually. Partial deposits stay on that forge between deliveries. Every complete 5-dust batch queues one pick-1-of-3 consumable draft through the same queue and card pool used by chests. One large deposit may fund several drafts; leftover dust remains toward the next batch. The forge does not draw from base storage or accept worker hauling.
 
 ## Deployable Cards
 

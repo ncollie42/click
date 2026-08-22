@@ -1,0 +1,22 @@
+<!-- DEPRECATED: The skill tree is disabled. Production markup must not include this fragment. -->
+
+<!-- Former view-debugger entry point. -->
+<h4>skills</h4>
+<div class="btnrow">
+  <button id="vOpenSkillTree" type="button">open skill tree</button>
+</div>
+
+<!-- Former phase-HUD entry point. -->
+<button id="skillPointBadge" type="button" hidden aria-label="open skill tree"><span id="skillPointCount">0</span> ✦</button>
+
+<!-- The implementation builds connector lines and node tiles inside these empty roots. -->
+<section id="skillTreePanel" class="hidden" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="skillTreeTitle">
+  <header id="skillTreeHeader"><h2 id="skillTreeTitle">skill tree</h2><p id="skillTreePoints">0 points remaining</p></header>
+  <div id="skillTreeViewport">
+    <div id="skillTreeGraph">
+      <svg id="skillTreeLinks" aria-hidden="true"></svg>
+      <div id="skillTreeNodes"></div>
+    </div>
+  </div>
+  <footer id="skillTreeBar"><button id="skillTreeContinue" type="button">continue</button></footer>
+</section>

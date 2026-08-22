@@ -26,7 +26,7 @@
      UI surface. Flights live outside the game frame, so they must be named separately. */
   body.ui-hidden #stage > :not(#scene),body.ui-hidden #cardFlights{opacity:0!important}
   /* Frame-local stack: HUD 3, hand 5, prompt/pause 5, upgrade 6, toast 8, viewPanel 9,
-     skill tree 10, draft 10, game-over 11. Both full-stage overlays cover every panel above; only
+     draft 10, game-over 11. Both full-stage overlays cover every panel above; only
      the end card, which ends the run outright, may cover them. The two are mutually exclusive, so
      they share a layer and the draft's later position in this file settles the tie. */
   #xpHud{position:absolute;z-index:3;left:50%;top:10px;transform:translateX(-50%);width:min(520px,calc(100% - 540px));min-width:260px;padding:4px;background:#292119ed;border:2px solid var(--gold);box-shadow:var(--shadow);pointer-events:none}
@@ -50,9 +50,6 @@
   #phaseHud.night #phaseProgressFill{background:#c65b4d}
   #runTimeRow{display:flex;justify-content:space-between;font-size:9px;opacity:.72;margin-bottom:3px}
   #runTime{font-variant-numeric:tabular-nums}
-  #skillPointBadge{width:auto;margin:0 0 4px auto;padding:2px 6px;background:#6d333a;color:#fff1d3;border:1px solid #d8a441;pointer-events:auto;animation:skillPointPulse 1.2s ease-in-out infinite}
-  #skillPointBadge[hidden]{display:none}
-  @keyframes skillPointPulse{50%{filter:brightness(1.45);transform:scale(1.06)}}
   #forecastLabel{font-size:9px;opacity:.72;margin-bottom:3px}
   #forecastRemaining{font-size:9px;color:#d98b75;margin-bottom:3px}
   #recipeSummary{display:flex;flex-wrap:wrap;gap:2px 9px;list-style:none;font-size:10px}
@@ -227,95 +224,6 @@
     background:#8e2924;color:#fff;border-color:#d8c58f}
   #viewPanel.collapsed #vRestart{display:none}
 
-  /* ── skill tree ──────────────────────────────────────────────────────
-     Three bands down the stage: title, graph viewport, action bar. `hidden` is
-     display:none on purpose: no layout, no tab stop, no a11y node.
-     Every selector in this section names an element inside #skillTreePanel, so
-     none of it reaches a generic button, the hand or the view debugger.
-     The backdrop is opaque enough (fa) that the two scenes behind it — bright
-     day and blue night — arrive at the same dark sepia. */
-  #skillTreePanel{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;
-    color:#f0ddb8;background:radial-gradient(108% 80% at 50% 40%,#43210edb,#180d06 74%),#130904fa}
-  #skillTreePanel.hidden{display:none}
-  #skillTreeHeader{flex:0 0 auto;text-align:center}
-  #skillTreeTitle{width:fit-content;margin:16px auto 0;padding:0 26px 6px;
-    font-size:23px;letter-spacing:.05em;text-align:center;color:#fdf2d8;
-    border-bottom:3px solid var(--gold);filter:drop-shadow(0 1px 7px #e8ac3f99)}
-  #skillTreePoints{margin:5px 0 0;color:#d7b779;font-size:11px}
-  /* min-height:0 lets the middle band shrink instead of pushing the bar off-stage. */
-  #skillTreeViewport{flex:1;min-height:0;display:flex;container-type:size}
-  /* THE one scale: min() is a contain fit of the authored box (--graph-ratio is all skill-tree.js
-     hands CSS), so the ratio holds on both axes and 90/80 leave the outermost tiles their margin. */
-  #skillTreeGraph{position:relative;margin:auto;container-type:size;
-    width:min(90cqw,80cqh * var(--graph-ratio));aspect-ratio:var(--graph-ratio)}
-  /* First child of the graph box and never given a z-index, so the tiles that follow it in the
-     markup paint over it. Every tile fill below is opaque, so a settled tile covers the connector
-     ends that meet at its centre; an arriving one is still fading in and briefly does not, which
-     is what makes the line read as reaching it. */
-  #skillTreeLinks{position:absolute;inset:0;width:100%;height:100%;overflow:visible;
-    fill:none;stroke:#a2702f;stroke-width:3.5;stroke-linecap:round}
-  /* Both ends taken — the stretch of the graph the player has actually walked. */
-  #skillTreeLinks .taken{stroke:#eab55e}
-  #skillTreeNodes{position:absolute;inset:0}
-  /* Four tile states, one warm ramp: offered (below) is the dimmest, the cursor and the keyboard
-     brighten it, and taken is the lit end of the ramp. The offered rim is the connectors' own gold,
-     so an untaken tile reads as a bead on the line rather than a second kind of object.
-     cqw is the graph box's own width, so a tile rides the connectors' scale rather than stepping. */
-  #skillTreePanel .skill-node{--tile:6.5cqw;position:absolute;width:var(--tile);height:var(--tile);
-    margin:0;padding:0;display:grid;place-items:center;transform:translate(-50%,-50%);
-    border-radius:calc(var(--tile) * .22);background:linear-gradient(#6d333a,#552930);
-    border:1px solid #b07a56;box-shadow:inset 0 1px 0 #ffffff1a;
-    color:#e8c99c;font-size:calc(var(--tile) * .56);line-height:1}
-  /* Hover and keyboard focus share one answer, and the taken tile is excluded from both, so a tile
-     that lights up under the cursor is always one that can still be taken. The focus-visible
-     outline further down is what separates the keyboard from the pointer. */
-  #skillTreePanel .skill-node:not(.selected):not(.unaffordable):hover,
-  #skillTreePanel .skill-node:not(.selected):not(.unaffordable):focus-visible{
-    background:linear-gradient(#87424b,#6d333a);border-color:#d29a67;color:#fff1d3;
-    box-shadow:inset 0 1px 0 #ffffff26,0 0 9px -2px #eda93a80}
-  /* Taken tiles keep full contrast (they are the reward), but stop offering a pointer: the click
-     is refused from here on — this is the tile carrying aria-disabled, see the note in
-     src/ui/skill-tree.js. Tight blur, no spread: the halo stops before it reaches the connectors
-     leaving the tile or the glyph on the tile beside it. */
-  #skillTreePanel .skill-node.unaffordable{cursor:default;filter:saturate(.25);opacity:.48}
-  #skillTreePanel .skill-node.selected{cursor:default;
-    background:radial-gradient(120% 120% at 50% 28%,#1a1210,#0e0a08);
-    border-color:#f0c264;color:#fff6e0;
-    box-shadow:0 0 9px -1px #efab3a7a,inset 0 0 7px #efab3a26;text-shadow:0 0 6px #f5c16999}
-  /* The root is a diamond landmark; its glyph counter-rotates so it stays upright. */
-  #skillTreePanel .skill-node.root{transform:translate(-50%,-50%) rotate(45deg);border-radius:calc(var(--tile) * .19)}
-  #skillTreePanel .skill-node.root .skill-glyph{transform:rotate(-45deg)}
-  /* ── arrival ──
-     src/ui/skill-tree.js puts `arriving` on the tiles and the connector segments that are on screen
-     for the FIRST time and on nothing else, so taking a node animates the ring it just revealed and
-     leaves the rest of the graph alone. fill-mode is backwards rather than forwards: it covers the
-     delay, and every animation below ends at the element's own settled style, so a finished arrival
-     computes identically to a tile that never animated. */
-  @keyframes skillNodeArrive{from{opacity:0;transform:translate(-50%,-50%) scale(.55)}}
-  @keyframes skillRootArrive{from{opacity:0;transform:translate(-50%,-50%) rotate(45deg) scale(.55)}}
-  @keyframes skillLinkArrive{from{opacity:0;transform:scale(.03)}}
-  #skillTreePanel .skill-node.arriving{animation:skillNodeArrive var(--duration-medium) var(--ease-enter) var(--duration-instant) backwards}
-  #skillTreePanel .skill-node.root.arriving{animation-name:skillRootArrive}
-  /* fill-box is what lets skill-tree.js name the end a segment grows FROM in that segment's own
-     coordinates. The tile delay above is shorter than this, so a tile starts appearing while the
-     line still has some way to run. */
-  #skillTreeLinks .arriving{transform-box:fill-box;animation:skillLinkArrive var(--duration-medium) var(--ease-enter) backwards}
-  @media (prefers-reduced-motion:reduce){
-    /* No motion, same destination — the only thing dropped is the approach. The root is named
-       again here because its rule above is the more specific of the two, and a media query adds
-       no specificity: without it the root keeps its animation-name and still runs an arrival. */
-    #skillTreePanel .skill-node.arriving,#skillTreePanel .skill-node.root.arriving,
-    #skillTreeLinks .arriving{animation:none}
-  }
-  /* Solid, and deliberately DARKER than the warm backdrop above it — that contrast is the band. */
-  #skillTreeBar{flex:0 0 auto;display:flex;align-items:center;justify-content:flex-end;
-    padding:11px 18px;background:#050302;border-top:2px solid #6a4222;box-shadow:0 -7px 16px -8px #000}
-  #skillTreeContinue{width:auto;margin:0;padding:7px 22px;text-align:center;font-size:14px;
-    background:#1b1109;color:#f7e8c2;border:2px solid #d8a441;border-radius:7px}
-  #skillTreeContinue:hover{background:#2a1a0d;border-color:#f3c56a}
-  /* Scoped focus ring: the generic red one all but vanishes on a dark sepia tile. */
-  #skillTreePanel button:focus-visible{outline:2px solid #ffd27a;outline-offset:3px}
-
   /* Must come after the rules above: a container query adds no specificity, so
      the earlier @container block up top cannot override them. */
   @container game-frame (max-width:799px){
@@ -323,12 +231,6 @@
     #vTabs{gap:2px}
     #vTabs button{flex:1 1 calc(33.333% - 2px);padding:3px 2px;font-size:9px}
     .vSubTabs button{padding:3px 1px;font-size:8px}
-    /* Chrome, plus the one screen-space number the tree has: the non-scaling stroke. Tile size and
-       box geometry are written in the graph box's own units, so those ride it at every width. */
-    #skillTreeTitle{margin-top:9px;padding-bottom:4px;font-size:16px;border-bottom-width:2px}
-    #skillTreeLinks{stroke-width:2.5}
-    #skillTreeBar{padding:6px 10px}
-    #skillTreeContinue{padding:5px 14px;font-size:11px}
   }
 
   /* ── cards ────────────────────────────────────────────────────────────
@@ -467,9 +369,9 @@
   #handHint kbd{display:inline-block;padding:0 3px;margin:0 1px;font-size:9px;line-height:1.35;
     background:#f1dfb7cc;color:#17120d}
   /* ── the pick-3 overlay ──
-     One overlay, two headings: the level draft and the dawn payout. Full-stage like the skill
-     tree, so it is a modal in the same sense — src/ui/hud.js reads its `hidden` flag to answer
-     modalOpen(). Dawn recolours the ground from violet to sunrise; nothing else changes.
+     One full-stage modal with two headings: the level draft and the dawn payout. src/ui/hud.js
+     reads its `hidden` flag to answer modalOpen(). Dawn recolours the ground from violet to
+     sunrise; nothing else changes.
 
      The backdrop is a TRANSLUCENT vignette, never a panel: three cards dealt over the world, with
      the ground still plainly readable behind them, because the offer comes from the thing IN that
@@ -556,7 +458,7 @@
        approach to it — but nothing travels: the card jumps to its raised position, the picks
        do not deal in, and both flights are handled in JS, which drops to a plain fade. */
     #levelBarFill{transition:none}
-    #levelBar.up,#levelBarXp.tick,#skillPointBadge{animation:none}
+    #levelBar.up,#levelBarXp.tick{animation:none}
     #handCards{transition:none}
     #handCards .card{transition:opacity var(--duration-reduced) linear}
     #handCards .card.active,#handCards .card.landed,#handCards .card.refused,

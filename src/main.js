@@ -9,7 +9,6 @@ import * as SIMULATION from "./game/simulation.js";
 import {connect as connectScene, resizeRenderer, drawScene, renderScene, combatTargetOnScreen} from "./render/scene.js";
 import {drawOverlay, resizeOverlay} from "./render/overlay.js";
 import {SIM_EFFECTS, initHud, modalOpen, syncBuildHud, syncPhaseHud} from "./ui/hud.js";
-import {SKILL_TREE_EFFECTS, initSkillTree} from "./ui/skill-tree.js";
 import {initHand, renderHand, syncHandTargeting, syncHandPeek, debugHoldFlights} from "./ui/hand.js";
 import {DRAFT_EFFECTS, initDraft, syncLevelHud} from "./ui/draft.js";
 import {initInput} from "./input.js";
@@ -37,11 +36,12 @@ function resizeView(){
 // Two calls are order-dependent: the HUD must
 // be initialised before the debugger (a binding repaints the dock as it is bound, which needs the
 // surface the HUD was handed), and input before the debugger (its window keydown must stay ahead of
-// the shift+digit handler). initSkillTree() only binds listeners to markup that is always there,
-// so its position is free; it sits with the other adapters.
+// the shift+digit handler).
 // handChanged / draftChanged / levelChanged ride in the same record as every other effect, so the
 // card UI is driven entirely by the simulation raising them — nothing polls.
-connectSimulation({...SIM_EFFECTS, ...SKILL_TREE_EFFECTS, ...DRAFT_EFFECTS,
+// The skill tree is deprecated and intentionally absent from runtime composition. Its source
+// snapshot lives in src/deprecated/skill-tree/ in case the design is revisited.
+connectSimulation({...SIM_EFFECTS, ...DRAFT_EFFECTS,
   isCombatTargetOnScreen(target){return combatTargetOnScreen(target);},
   handChanged(){renderHand();},
   phaseHudChanged(){SIM_EFFECTS.phaseHudChanged();syncXpReadout();},
@@ -59,7 +59,6 @@ const requestedMode=search.get("mode")==="showcase"?"showcase":"normal";
 if(search.get("draftDemo")==="1")draftDemo();
 connectScene({isModalOpen(){return modalOpen();}});
 initHud(surface);
-initSkillTree(surface);
 // Both card adapters bind their window keydown BEFORE src/input.js binds its own, which is the
 // whole reason they sit here: the draft overlay has to swallow a press aimed at a stage it
 // completely covers, and the hand has to clear its browse cursor on escape before the pause

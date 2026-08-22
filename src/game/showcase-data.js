@@ -52,6 +52,7 @@ const manifest = {
     {id:"damageOrbs",section:"buildings",x:608,y:896,label:"damage orbs"},
     {id:"summoningCircle",section:"buildings",x:768,y:896,label:"summoning circle"},
     {id:"captureYard",section:"buildings",x:928,y:896,label:"capture yard"},
+    {id:"consumableForge",section:"buildings",x:1376,y:800,label:"consumable forge"},
   ],
   towers:[
     {id:"basic",x:96,y:96},{id:"turret",x:416,y:96},{id:"outpost",x:736,y:96},{id:"watch",x:1056,y:96},{id:"sniper",x:1376,y:96},

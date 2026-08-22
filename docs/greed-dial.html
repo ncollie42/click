@@ -466,7 +466,7 @@ function runGreed(){
     <div class="tile"><div class="k">towers built</div><div class="v num">${towers}</div><div class="s">kill cap ${towers*5+W}</div></div>
     <div class="tile"><div class="k">village</div><div class="v num">${W}</div><div class="s">${houses} houses</div></div>`;
   const c=S();
-  lineChart(document.getElementById('ch-xp'),{title:'XP — the greed line', sub:'dashes are skill-pick tiers; each crossed tier arms the night',
+  lineChart(document.getElementById('ch-xp'),{title:'XP — the greed line', sub:'dashes are level tiers; each crossed tier arms the night',
     series:[{name:'xp',color:c.violet,data:A.xp}], xLabel:'night', yMax:Math.max(120,xp*1.15),
     hlines:TIERS.map((t,i)=>({y:t,label:'tier '+(i+1)}))});
   lineChart(document.getElementById('ch-fight'),{title:'Threat vs kill capacity', sub:'the night wins whenever orange clears blue',

@@ -14,7 +14,7 @@
 //             into them, and never assign into `state`.
 //   Writes:   the DOM only — element text, classes and children under #game. Every gameplay change
 //             this file causes goes through a simulation COMMAND (closeUpgradeMenu, selectUpgrade,
-//             acceptUpgrade, openSkillTree); there is no other way out of this file into the world.
+//             acceptUpgrade); there is no other way out of this file into the world.
 //   Supplies: SIM_EFFECTS  — the effect implementations the simulation calls back into. Invariant
 //                            (consumer end): every hook is a pure sink. It may read simulation
 //                            state, it must never write it, and it must not call back into a
@@ -22,14 +22,14 @@
 //                            synchronously in simulation command/update order.
 //             modalOpen()  — the one host predicate both the simulation and the scene ask for. It
 //                            answers for either modal (see the block below); nothing keeps a copy.
-//             syncModalUi() — repaint that predicate onto #game, for the other modal's adapter.
+//             syncModalUi() — repaint that predicate onto #game for the draft adapter.
 //             syncBuildHud() / syncPhaseHud() — the two sync passes other adapters and boot re-run.
 //             syncBuildHud() is now a single line: with the dock gone the only thing placement
 //             still paints outside the fan is the crosshair on the pointer surface.
 //
 // Imported by: src/main.js (composition), src/input.js (modalOpen, for the pointer-down guard) and
-// src/ui/skill-tree.js (syncModalUi, when its panel opens or closes). Nothing is
-// imported back from any of them — the HUD is the lowest browser adapter, so the
+// src/ui/draft.js (syncModalUi, when its panel opens or closes). Nothing is imported back from any
+// of them — the HUD is the lowest browser adapter, so the
 // pointer surface it needs for the build cursor is HANDED IN by main.js rather than looked up here.
 // That keeps <canvas id="overlay"> at its documented three owners: main.js (listeners, classes and focus),
 // src/render/overlay.js (2D context and backing store) and src/render/scene.js (client rect).
@@ -38,10 +38,10 @@ import {DAY_DURATION} from "../game/data.js";
 import {
   state,
   // commands — the only writes this file can make into the world
-  closeUpgradeMenu, selectUpgrade, acceptUpgrade, openSkillTree, continueAfterVictory,
+  closeUpgradeMenu, selectUpgrade, acceptUpgrade, continueAfterVictory,
   // queries — pure reads
   hoverTarget, costText, upgradeList,
-  skillPoints, livingActiveWaveEnemies, clamp
+  livingActiveWaveEnemies, clamp
 } from "../game/simulation.js";
 
 // The pointer surface (<canvas id="overlay">) — handed in by main.js at init. The HUD touches
@@ -50,25 +50,20 @@ let surface = null;
 
 // ── modal state ─────────────────────────────────────────────────────────────
 function upgradePanelOpen(){return !document.getElementById("upgradePanel").classList.contains("off");}
-// Two modals: the upgrade panel, whose own class is its flag, and the skill-tree screen, whose flag
-// the simulation owns (src/ui/skill-tree.js only mirrors it onto the panel). The old debug modal is
-// gone, and the view debugger is a non-modal side panel that deliberately does NOT suppress
-// gameplay input. Neither modal pauses the run; both stop POINTER input reaching the world — this
-// predicate is the guard input.js's pointer-down asks. Keys are a separate question each modal
-// answers for itself: the skill tree suppresses the camera keys in input.js, the upgrade panel
-// never did.
-// The draft overlay (src/ui/draft.js) is the third one. It is read off the DOM rather than
-// imported, exactly as the upgrade panel above is, so this file keeps its place as the lowest
+// The upgrade panel and draft overlay are the two runtime modals. The old debug modal is gone, and
+// the view debugger is a non-modal side panel that deliberately does not suppress gameplay input.
+// Neither modal pauses the run; both stop pointer input reaching the world through this predicate.
+// The draft overlay is read off the DOM rather than imported, exactly as the upgrade panel above,
+// so this file keeps its place as the lowest
 // browser adapter and draft.js can go on importing syncModalUi() from here without a cycle.
 function draftOverlayOpen(){return !document.getElementById("draftOverlay").hidden;}
-export function modalOpen(){return upgradePanelOpen()||state.skillTree.open||draftOverlayOpen();}
+export function modalOpen(){return upgradePanelOpen()||draftOverlayOpen();}
 /** The `.modal-open` class on #game, which this file owns. Called by whichever modal just moved. */
 export function syncModalUi(){document.getElementById("game").classList.toggle("modal-open",modalOpen());}
 
 // ── effect implementations handed to the simulation ─────────────────────────
-// main.js is the only caller of connect(), and it merges this record with the skill tree's before
-// handing it over. The names here are the simulation's, one for one, they do not overlap with that
-// other record, and nothing in this one reaches back into a command.
+// main.js is the only caller of connect(). The names here are the simulation's, one for one, and
+// nothing in this record reaches back into a command.
 export const SIM_EFFECTS = {
   toast(message){const el=document.getElementById("toast");el.textContent=message;el.classList.add("on");},
   sound(freq,duration){sound(freq,duration);},
@@ -82,7 +77,7 @@ export const SIM_EFFECTS = {
   upgradeMenuOpened(){renderUpgradeMenu();document.getElementById("upgradePanel").classList.remove("off");syncModalUi();},
   upgradeMenuClosed(){document.getElementById("upgradePanel").classList.add("off");syncModalUi();},
   phaseHudChanged(){syncPhaseHud();},
-  // Answers for both modals (see the block above), so the simulation keeps no copy of either flag.
+  // Answers for both runtime modals, so the simulation keeps no copy of either flag.
   isModalOpen(){return modalOpen();},
 };
 
@@ -115,10 +110,6 @@ export function syncPhaseHud(){
   const seconds=Math.max(0,Math.ceil(clock.remaining)),phaseNumber=isDay?clock.completedNights+1:wave.nightNumber,living=isDay?0:livingActiveWaveEnemies();
   setText("phaseName",clock.phase+" "+phaseNumber);setText("phaseTime",isDay?Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"elapsed "+formatDuration(wave.elapsed));
   setText("runTime",formatDuration(clock.elapsed));
-  // The skill tree is hidden from production UI (nodes have no cost or effect yet); the badge
-  // stays off no matter the point count. Debug entry: view panel's "open skill tree".
-  const points=skillPoints(),badge=document.getElementById("skillPointBadge");
-  setText("skillPointCount",String(points));badge.hidden=true;
   panel.classList.toggle("night",!isDay);
   // During night, spawning merely transfers work from the schedule to the battlefield. Only an
   // active-wave defeat advances clearance, while cap-delayed scheduled work keeps the bar bounded.
@@ -147,7 +138,7 @@ export function syncBuildHud(){
 function updatePrompt(){
   const box=document.getElementById("prompt"),label=box.querySelector("span"),target=hoverTarget();
   box.classList.toggle("on",!!target);
-  if(target)label.textContent=target.kind==="base"?"deposit at base":target.kind==="stockpile"?"store in stockpile":target.kind==="upgrade"?"deposit toward upgrade":"deliver to build";
+  if(target)label.textContent=target.kind==="base"?"deposit at base":target.kind==="stockpile"?"store in stockpile":target.kind==="consumableForge"?"deliver dust to the Consumable Forge":target.kind==="upgrade"?"deposit toward upgrade":"deliver to build";
 }
 
 // ── audio ───────────────────────────────────────────────────────────────────
@@ -177,9 +168,6 @@ export function initHud(pointerSurface){
   // upgrade modal
   document.getElementById("upgradeDecline").addEventListener("click", closeUpgradeMenu);
   document.getElementById("upgradeAccept").addEventListener("click", ()=>{acceptUpgrade();});
-
-  // production skill-tree entry; command owns modal/input semantics.
-  document.getElementById("skillPointBadge").addEventListener("click",openSkillTree);
 
   // game over / victory
   document.getElementById("restart").addEventListener("click", ()=>location.reload());

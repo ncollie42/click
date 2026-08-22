@@ -100,7 +100,7 @@ Longer rationale, kept for reference: villagers dig it up, wall it in with their
 - **The obelisk** is precursor technology, and is already the building that grants global upgrades.
 - **Tower families already encode the split.** `Starter` and `Ballistics` are villager carpentry and masonry. `Elemental` and `Special` — fire, freeze, teleport, laser, pulse, shock — are salvaged devices switched back on. The distinction is authored in `data.js` and currently carries no fiction.
 - **Base delivery granting XP** becomes a machine that returns knowledge rather than goods, which is exactly what a sink should be.
-- **The skill tree** is what the villagers learn from it. The existing `✦ ◈ ◆ ◇` glyph set already reads precursor.
+- **The archived skill-tree concept** was what the villagers learned from it. The feature is deprecated, but its `✦ ◈ ◆ ◇` visual language still reads precursor if revisited.
 - **The floating orb** is a guardian that woke with the engine, replacing the king with the same role and a coherent origin.
 - **Night gloom** is what the machine holds back, or what it attracts.
 
@@ -122,13 +122,11 @@ If storage is removed, `dropToBase` is the last remaining writer to `state.store
 
 - Surplus stops being dead weight. Excess wood on the ground is unbanked XP rather than clutter.
 - Rare kinds get a destination. Diamond and dust currently have almost no sinks.
-- It answers the open question in *Skill Tree* about when the player earns picks. XP thresholds are a natural trigger, and the graph is already authored and unwired.
+- It originally answered when the player earned skill picks. That prototype is now deprecated; XP thresholds drive run-local card drafts instead.
 
 **Risk:** if every gathered resource converts to progress, gathering is never the wrong choice and the work-versus-defense tension flattens. Candidate limits: diminishing returns per phase, a cap per day, conversion only during daylight, or rare kinds worth far more so bulk hauling is not the optimal XP route.
 
-**Open:** does XP feed run-local upgrades, the persistent skill tree, or both?
-
-**Decided (2026-08-13):** there is no separate "hunger" stat — **XP is the number.** `state.xp` grows with deposits (authored per-kind values), never decays, and wave difficulty is matched to it. XP thresholds grant skill picks (the skill tree's production trigger). The orb defender does NOT auto-scale with XP — it improves only through explicit upgrades. The glow-ring / crack visual stage-up is deferred (see *Deferred: Glow Radius Stage-Up*).
+**Decided (2026-08-21):** there is no separate "hunger" stat — **XP is the number.** `state.xp` grows with deposits (authored per-kind values), never decays, and wave difficulty is matched to it. XP thresholds grant run-local card drafts. The skill tree is deprecated and disabled. The orb defender does NOT auto-scale with XP — it improves only through explicit upgrades. The glow-ring / crack visual stage-up is deferred (see *Deferred: Glow Radius Stage-Up*).
 
 ### Machine Hunger: Feeding Scales the Night
 
@@ -486,9 +484,11 @@ Still unbuilt, and deliberately **not** the Garrison: a barracks would *produce*
 
 **Purpose:** make interaction state and valid targets easier to visualize.
 
-## Skill Tree
+## Skill Tree (Deprecated)
 
-**Purpose:** retention, replayability, and incremental progression.
+Deprecated and disabled on 2026-08-21. The source snapshot lives in `src/deprecated/skill-tree/` in case the design is revisited.
+
+**Historical purpose:** retention, replayability, and incremental progression.
 
 - Add a skill tree with persistent or run-specific unlocks.
 - Decide when the player gets opportunities to select skills.
@@ -509,7 +509,7 @@ Bring every building and tower up to the key-art style while keeping what alread
 
 **Tags:** `Retention`
 
-The game is a pure static site (~370 KB gzipped total, no backend, no build step) and the repo already lives at `github.com/ncollie42/click`. three.js is vendored at `vendor/three.module.js` so the build has zero external dependencies.
+The game is a pure static site (~370 KB gzipped total, no backend, no build step) and the repo already lives at `github.com/ncollie42/click`. three.js is vendored at `vendor/three.module.min.js` so the build has zero external dependencies.
 
 **Setup (one-time):** repo Settings → Pages → Deploy from a branch → `main` / `(root)`. The game then serves at `https://ncollie42.github.io/click/`, and the Machinations bench at `.../click/docs/greed-dial.html`. Every push to main redeploys automatically.
 

@@ -22,7 +22,7 @@ import {project} from "./scene.js";
 import {
   VIEW_W,VIEW_H,BASE,
   RESOURCE_KINDS,
-  BUILDING_TYPES,TOWER_VARIANTS,UPGRADES,DAMAGE_ORBS,SUMMONING_CIRCLE,CAPTURE_YARD,
+  BUILDING_TYPES,TOWER_VARIANTS,UPGRADES,DAMAGE_ORBS,SUMMONING_CIRCLE,CONSUMABLE_FORGE,CAPTURE_YARD,
   ENEMY_TYPES,
   NIGHT_TELEGRAPH_TIME
 } from "../game/data.js";
@@ -250,6 +250,7 @@ export function drawOverlay(){
     if(b.type==="captureYard"){const held=captureYardOccupancy(b);marks(b.x,b.y,48,58,[{frac:held/CAPTURE_YARD.capacity,fill:"#75c86d"}]);label(held+"/"+CAPTURE_YARD.capacity+" turned",b.x,b.y,70,"#a8e6b0");}
     if(b.orbs){marks(b.x,b.y,44,50,[{frac:b.orbs.remaining/DAMAGE_ORBS.duration,fill:"#8fd9ee"}]);label(Math.ceil(b.orbs.remaining)+"s",b.x,b.y,57,"#bcecff");}
     if(b.summoning){marks(b.x,b.y,48,58,[{frac:b.summoning.remaining/SUMMONING_CIRCLE.duration,fill:"#9870c9"},{frac:b.summoning.dust/SUMMONING_CIRCLE.dustCost,fill:"#c5a1e8"}]);label(b.summoning.dust+"/"+SUMMONING_CIRCLE.dustCost+" dust · "+Math.ceil(b.summoning.remaining)+"s",b.x,b.y,70,"#dec8f4");}
+    if(b.type==="consumableForge"){marks(b.x,b.y,48,58,[{frac:b.consumableForge.dust/CONSUMABLE_FORGE.dustCost,fill:css(PAL.dust)}]);label(b.consumableForge.dust+" / "+CONSUMABLE_FORGE.dustCost+" dust",b.x,b.y,70,css(PAL.dust));}
     if(b.activeUpgrade){
       const job = b.activeUpgrade;
       const up = towerUpgradeList().find(i=>i.id===job.id) || UPGRADES.find(i=>i.id===job.id);

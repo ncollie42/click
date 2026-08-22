@@ -17,7 +17,7 @@
 // written as the seam the game would adopt: hand it a THREE namespace and authored numbers, get
 // back a texture and a material. It imports nothing, touches no global, and holds no state.
 //
-// HOW three r160 ACTUALLY USES THE MAP (verified in vendor/three.module.js, not assumed):
+// HOW three r160 ACTUALLY USES THE MAP (verified in vendor/three.module.min.js, not assumed):
 //   gradientmap_pars_fragment:  coord = vec2(dotNL * 0.5 + 0.5, 0.0); return texture2D(gradientMap, coord).r
 //   lights_toon_pars_fragment:  irradiance = getGradientIrradiance(normal, light.direction) * directLight.color
 // Three consequences that decide how the levels below are authored:
@@ -54,7 +54,7 @@ export function bandDotNLRange(steps, i){
  *                normally be 0 — a surface facing away from the sun has no directional term.
  * @returns a DataTexture the caller owns and must dispose().
  *
- * FORMAT: RedFormat + UnsignedByteType. Verified against vendor/three.module.js getInternalFormat():
+ * FORMAT: RedFormat + UnsignedByteType. Verified against vendor/three.module.min.js getInternalFormat():
  * on WebGL2, gl.RED + UNSIGNED_BYTE resolves to the sized internal format R8. LuminanceFormat also
  * "works" (it stays an unsized gl.LUMINANCE and samples as (L,L,L,1)), but it is a WebGL1-era
  * unsized combination that WebGL2 only keeps for compatibility, and the shader reads .r either way.

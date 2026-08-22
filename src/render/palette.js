@@ -1,22 +1,47 @@
-// Owns: the render layer's colour vocabulary and hex->css conversion. Leaf module — imports nothing.
+// Owns: THE colour vocabulary for every host — game scene, test scene, map-editor preview,
+// pixel-pipeline quantize tiers. Leaf module — imports nothing.
 // ═══════════════════════════════════════════════════════════════════════════
 // PALETTE
 // Single source of truth for every colour in the 3D layer. Entries are hex
 // numbers for three.js; css() converts for the 2D overlay and the baked
 // ground texture. Grouped by role, not by object, so retinting a material
 // family (all timber, all arcane glow) is one edit.
+//
+// LAW (owner, Aug 21): no host authors its own hexes for a shared role. Test scene
+// (tools/test-scene/preset.js) and game (src/render/scene.js) read the SAME ground/light
+// entries, so a look solved in one is the look of the other. Model files still carry
+// per-model ink (see models/reviewed/*) — migrating those is a separate pass.
+//
+// Ground albedos are LINEAR-solved against the Red Giraffe reference under the shared sun/hemi
+// rig below (tools/test-scene/ROUND-LOG.md), written as the sRGB hex a painter would author.
+// They are applied ONCE (vertex tint over a white texture) — never tint-times-texture.
 // ═══════════════════════════════════════════════════════════════════════════
 export const PAL = {
   // ── world ──────────────────────────────────────────────
   sky:        0x1d1c29,
   water:      0x8fb3cf,
   cliff:      0x6a5a41,
-  grass:      0x9db97f,
-  grassAlt:   0x96b177,
-  grassSpeck: 0x8dab70,
-  grassTuft:  [0x33452d, 0x405536, 0x2b3d29, 0x4b6040],
+  grass:      0x55c058,   // renders (96,186,54) lit / (31,67,22) cloud-shaded
+  grassAlt:   0x85d06e,   // BRIGHTER second meadow tone, renders (138,195,68) — the reference's
+                          // p95 grass; blended in sparse noise patches (scene.js groundColorInto)
+  soil:       0x837b47,   // meadow dirt, renders ~(120,111,47) lit; cloud-shaded clears 40 L
+  grassTuft:  [0x33452d, 0x405536, 0x2b3d29, 0x4b6040],   // legacy tuft instancer + editor preview
+  // Per-WFC-variant meadow tints (scene.js tintFor lerps grass toward these).
+  regionForest: 0x6f965c,
+  regionRocky:  0xa8a387,
+  regionOpen:   0xb3c98c,
   dirt:       0xd9c9a3,   // base clearing, paths
   grid:       0x63764c,   // placement lattice; drawn at very low opacity
+  // Depth-foam water shader (scene.js waterUniforms) + its floor/far planes.
+  waterShallow: 0x6fb0dd,
+  waterDeep:    0x22558f,
+  waterFoam:    0xecf6f8,
+  waterFloor:   0x8f855e,
+  waterFar:     0x24568c,
+  // Fog-of-war block shades: authored for the OLD rig then divided by 2.45 linear so the fog
+  // displays byte-near-identical under the Aug 21 rig (scene.js fog section has the numbers).
+  fogLand:    [0x34303c, 0x3a3543, 0x2d2935],
+  fogWater:   [0x2e2d3c, 0x333243, 0x282835],
 
   // ── flora ──────────────────────────────────────────────
   trunk:      0x6b4a2e,
@@ -128,6 +153,30 @@ export const PAL = {
   skyLight:   0xffde82,
   bounce:     0x6b5a4a,
 };
+// ── pixel-pipeline quantize tiers (pixel.js quantizeMode 1 "palette match") ────────────────
+// NOTE: the shipped quantizer is mode 0 (37 OKLab lightness bands, hue untouched) — these tiers
+// only bite when quantizeMode is switched to 1 in the R panel. Built from the hue families above
+// (night-navy, grass greens, sun-creams, stone greys, wood browns, water blues, portal purple).
+export const QUANT_PALETTES = {
+  8: [0x1b2033, 0x2e4a3b, 0x49683f, 0x6f8f4e, 0x9db365, 0xc7cd8d, 0xe8e3b6, 0xfaf3d8],
+  16: [
+    0x1b2033, 0x2e4a3b, 0x49683f, 0x6f8f4e, 0x9db365, 0xc7cd8d, 0xe8e3b6, 0xfaf3d8,
+    0x3a3f4d, 0x6b7280, 0x9aa3ad,             // stone
+    0x5a3d2e, 0x8a6242,                       // wood
+    0x31456b, 0x4b6a8f,                       // water
+    0x6e4a7e,                                 // portal/tree purple
+  ],
+  32: [
+    0x11141f, 0x1b2033, 0x272e47, 0x31456b, 0x4b6a8f, 0x7290ab,             // night + water blues
+    0x24352b, 0x2e4a3b, 0x3d5c3a, 0x49683f, 0x5b7c46, 0x6f8f4e, 0x86a55a,   // greens (dark→light)
+    0x9db365, 0xc7cd8d,
+    0xdbd8a2, 0xe8e3b6, 0xf1ecc9, 0xfaf3d8,                                 // sand → cream
+    0x2c3038, 0x4a4f5a, 0x6b7280, 0x8d95a0, 0xaeb6bf,                       // stone greys
+    0x402c20, 0x5a3d2e, 0x7a5438, 0x8a6242, 0xa87e54,                       // wood browns
+    0x4a3457, 0x6e4a7e, 0x9a6fae,                                           // purples
+  ],
+};
+
 /** Hex number -> css string, for the 2D overlay and canvas textures. */
 export const css = n => "#" + n.toString(16).padStart(6,"0");
 

@@ -60,7 +60,12 @@ const _sunLin = new THREE.Color(PAL.sunDay), _skyLin = new THREE.Color(PAL.skyLi
 // ~unchanged (exposure and irr(up) cancel), the displayed cast brightens WITH the world, and the
 // solved canopy-over-clearing ratio above still holds. The three menu values above are quoted in
 // the OLD rig's scale — multiply by 2.45 to reuse them.
-export const GAME_EXPOSURE = .465;
+// Aug 21 palette unification: the floor is now PAL.grass (0x55c058, the test-scene solve) tinted
+// ONCE over a white texture instead of 0x9db97f squared — clearing luma ×2.06 in linear. Scaled
+// again to hold the canopy-over-clearing ratio: .465 × 2.06 = .958. NAPKIN, not measured; at
+// this exposure more shade-side facets will hit the albedo ceiling in relightGeometry(). Owner
+// to judge in the browser and re-measure against a fresh clearing shot.
+export const GAME_EXPOSURE = .958;
 function gameIrradiance(n, out){
   const nl = Math.max(0, n.dot(GAME_SUN_DIR)), w = .5 + .5*n.y, iw = 1/Math.PI;
   out.r = (_sunLin.r*GAME_SUN_I*nl + (_gndLin.r + (_skyLin.r-_gndLin.r)*w)*GAME_HEMI_I)*iw;

@@ -20,7 +20,7 @@
 //
 // The DOM element <canvas id="overlay"> is shared by three owners, deliberately and read-only here:
 // overlay.js owns its 2D context and backing-store size, the host owns its event listeners and
-// classes and focus (src/main.js looks it up and hands it to input.js, hud.js and skill-tree.js), and this file
+// classes and focus (src/main.js looks it up and hands it to input.js and hud.js), and this file
 // only reads its client rect to build a raycast ray.
 // ═══════════════════════════════════════════════════════════════════════════
 import * as THREE from "three";
@@ -95,7 +95,9 @@ const sceneCanvas = document.getElementById("scene");
 const renderer = new THREE.WebGLRenderer({canvas:sceneCanvas, antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// Plain PCF, not PCFSoft: PCFSoftShadowMap IGNORES shadow.radius, and the radius blur is what
+// keeps cast skirts from reading as hard fake ellipses (test-scene round-4 finding, ported Aug 21).
+renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PAL.sky);
@@ -268,6 +270,7 @@ sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 400;
 sun.shadow.bias = -0.0006;
 sun.shadow.normalBias = 0.035;
+sun.shadow.radius = 8;   // PCF blur kernel, tools/test-scene/preset.js SUN.shadow.radius
 scene.add(sun, sun.target);
 
 // ─────────────────────────────────────────────────────────── terrain
@@ -278,11 +281,12 @@ const GRASS_TILE_PX=64,GRASS_TEXTURE_BYTES=GRASS_TILE_PX*GRASS_TILE_PX*4;
 const grassLayer=document.createElement("canvas");grassLayer.width=grassLayer.height=GRASS_TILE_PX;
 (function bakeGrass(){
   // Flat fill (owner pick, Aug 19): the old 8px checker + speck noise read as dirt once the pixel
-  // pipeline quantizes it. The ground stays one colour and the REGION_COLORS vertex tints below
-  // carry all macro variation — the blade layer on top is the meadow (syncMeadow below, built on
-  // src/render/grass.js). The old bake is in git history if the speckled look is ever wanted back.
+  // pipeline quantizes it. WHITE, not PAL.grass: the vertex colours below carry the albedo, and
+  // filling the texture with grass too rendered the floor as grass SQUARED (2x darker in linear
+  // than the blades — the olive floor game-rig.js documents). The blade layer on top is the
+  // meadow (syncMeadow below, built on src/render/grass.js).
   const c=grassLayer.getContext("2d");c.imageSmoothingEnabled=false;
-  c.fillStyle=css(PAL.grass);c.fillRect(0,0,GRASS_TILE_PX,GRASS_TILE_PX);
+  c.fillStyle="#ffffff";c.fillRect(0,0,GRASS_TILE_PX,GRASS_TILE_PX);
 })();
 const grassTex=new THREE.CanvasTexture(grassLayer);
 grassTex.wrapS=grassTex.wrapT=THREE.RepeatWrapping;grassTex.repeat.set(W/GRASS_TILE_PX,H/GRASS_TILE_PX);
@@ -291,7 +295,45 @@ const landMat=flat(0xffffff,{map:grassTex,vertexColors:true});
 // Terrain stays SMOOTH under the toon ramp (measured in the test-scene audition: banding the
 // ground caps its only highlights and draws contour rings). Cloud shade still applies to it.
 landMat.userData.noToonRamp=true;
-const REGION_COLORS={forest:new THREE.Color(0x6f965c),rocky:new THREE.Color(0xa8a387),open:new THREE.Color(0xb3c98c),coast:new THREE.Color(PAL.cliff)};
+const REGION_COLORS={forest:new THREE.Color(PAL.regionForest),rocky:new THREE.Color(PAL.regionRocky),open:new THREE.Color(PAL.regionOpen),coast:new THREE.Color(PAL.cliff)};
+// ── ground colour law: ONE function for the terrain mesh and the grass blades ──────────────
+// Ported from the test scene (tools/test-scene/terrain.js groundColorInto): blades sample the
+// host's own ground colour so the meadow stays continuous across blades and floor. Inputs:
+//   · cell tint — the per-dual-cell WFC variant tint (tintFor below), recorded into
+//     terrainTintMap by rebuildTerrainPresentation so meadowSample can read it;
+//   · a SPARSE bright patch (grassBright) gated on a slow value noise — gate opens at 0.55,
+//     saturates at 0.80 (~15%/~2% of the field). Wide gates lift the whole meadow (measured there).
+// Coordinates are WORLD UNITS (gx/gz space); the noise period is 120 wu like the test scene.
+// Second meadow tone = PAL.grassAlt, the test scene's solved bright patch. Has to be a REAL
+// second colour — a +16%-toward-white lerp averaged ~3% L over the field and vanished under the
+// 37-band quantizer (measured Aug 21). Strength/gate live in groundTune (R panel "ground").
+const GRASS_BRIGHT=new THREE.Color(PAL.grassAlt);
+export const groundTune={
+  patchStrength:1,   // 0..1 lerp toward GRASS_BRIGHT inside a fully-open patch
+  patchOpen:.5,      // noise tone where the patch gate starts opening
+  patchWidth:.25,    // tone span from open to saturated (test scene: .55 → .80)
+  patchScale:120,    // wu per noise cell (second octave at half this)
+};
+const GROUND_PANEL={sliders:[["patchStrength","patch strength",0,1,.05],["patchOpen","patch gate open",.3,.8,.01],
+  ["patchWidth","patch gate width",.05,.5,.01],["patchScale","patch scale wu",30,300,5]],
+  tips:{patchStrength:"rebuilds terrain + meadow on change: blend toward the bright second grass tone inside patches"}};
+const groundKey=()=>`${groundTune.patchStrength},${groundTune.patchOpen},${groundTune.patchWidth},${groundTune.patchScale}`;
+function hashWU(ix,iz,seed){let h=(ix*374761393+iz*668265263+seed*1442695041)|0;h=Math.imul(h^(h>>>13),1274126177);return((h^(h>>>16))>>>0)/4294967296;}
+function valueNoise(x,z,seed){
+  const ix=Math.floor(x),iz=Math.floor(z),fx=x-ix,fz=z-iz,ux=fx*fx*(3-2*fx),uz=fz*fz*(3-2*fz);
+  const a=hashWU(ix,iz,seed),b=hashWU(ix+1,iz,seed),c=hashWU(ix,iz+1,seed),d=hashWU(ix+1,iz+1,seed);
+  return a+(b-a)*ux+(c-a)*uz+(a-b-c+d)*ux*uz;
+}
+function patchTone(x,z,seed){const L=groundTune.patchScale;return .6*valueNoise(x/L-3.7,z/L+5.2,seed)+.4*valueNoise(x/(L*.5)+1.3,z/(L*.5)-2.9,seed+17);}
+/** Cell tint → ground albedo at (x,z) wu, written into `out`. */
+function groundColorInto(out,cellTint,x,z,seed){
+  const t=patchTone(x,z,seed);
+  const gate=Math.max(0,Math.min(1,(t-groundTune.patchOpen)/groundTune.patchWidth));
+  return out.copy(cellTint).lerp(GRASS_BRIGHT,gate*groundTune.patchStrength);
+}
+// Per-dual-cell tint, refreshed by rebuildTerrainPresentation. Dual cell (dx,dy) covers world px
+// [(dx-1)*CELL,dx*CELL) — the +1 in the lookup is that offset. Raised cells overwrite ground.
+let terrainTintMap={cols:0,rows:0,rgb:new Float32Array(0),has:new Uint8Array(0)};
 const shoreMat=flat(PAL.cliff,{side:THREE.DoubleSide});
 
 // ── water: depth-foam shader (winner of the map-editor audition; see tools/map-editor water select) ──
@@ -310,8 +352,8 @@ const waterUniforms={
   uAmp:{value:.16},uFoamMul:{value:1},uFade:{value:.45},   // slider values locked in the editor audition
   uDepth:{value:null},uResolution:{value:new THREE.Vector2(1,1)},
   uNear:{value:.5},uFar:{value:600},uOrtho:{value:0},
-  uShallow:{value:new THREE.Color(0x6fb0dd)},uDeep:{value:new THREE.Color(0x22558f)},
-  uFoam:{value:new THREE.Color(0xecf6f8)},uSun:{value:new THREE.Vector3(.35,.85,.3).normalize()},
+  uShallow:{value:new THREE.Color(PAL.waterShallow)},uDeep:{value:new THREE.Color(PAL.waterDeep)},
+  uFoam:{value:new THREE.Color(PAL.waterFoam)},uSun:{value:new THREE.Vector3(.35,.85,.3).normalize()},
 };
 const waterMat=new THREE.ShaderMaterial({
   transparent:true,depthWrite:false,uniforms:waterUniforms,
@@ -367,11 +409,11 @@ const WATER_SEGS_X=200,WATER_SEGS_Y=Math.round(WATER_SEGS_X*(HU+2*WATER_MARGIN)/
 const water=new THREE.Mesh(new THREE.PlaneGeometry(WU+2*WATER_MARGIN,HU+2*WATER_MARGIN,WATER_SEGS_X,WATER_SEGS_Y),waterMat);
 water.rotation.x=-Math.PI/2;water.position.set(WU/2,WATER_Y,HU/2);water.raycast=NO_RAYCAST;scene.add(water);
 // Sand floor at shore-wall depth: read through the shallows, keeps thickness finite.
-const waterFloor=meshOf(new THREE.PlaneGeometry(WU+2*WATER_MARGIN,HU+2*WATER_MARGIN),flat(0x8f855e),false,false);
+const waterFloor=meshOf(new THREE.PlaneGeometry(WU+2*WATER_MARGIN,HU+2*WATER_MARGIN),flat(PAL.waterFloor),false,false);
 waterFloor.rotation.x=-Math.PI/2;waterFloor.position.set(WU/2,SHORE_BOTTOM,HU/2);
 waterFloor.raycast=NO_RAYCAST;waterFloor.layers.enable(WATER_DEPTH_LAYER);scene.add(waterFloor);
 // Horizon fill beyond the detailed mesh; sits under the floor and reads as deep water.
-const waterFar=meshOf(new THREE.PlaneGeometry(WU*5,HU*6),flat(0x24568c),false,false);
+const waterFar=meshOf(new THREE.PlaneGeometry(WU*5,HU*6),flat(PAL.waterFar),false,false);
 waterFar.rotation.x=-Math.PI/2;waterFar.position.set(WU/2,SHORE_BOTTOM-1,HU/2);
 waterFar.raycast=NO_RAYCAST;waterFar.layers.enable(WATER_DEPTH_LAYER);scene.add(waterFar);
 
@@ -485,16 +527,20 @@ function authoredCellGrid(metadata){
   return {width:GRID_COLS,height:GRID_ROWS,land,raised};
 }
 
+let builtGroundKey="";
 function rebuildTerrainPresentation(){
   const metadata=terrainMetadata();
-  if(metadata.revision!==builtTerrainRevision){
+  if(metadata.revision!==builtTerrainRevision||groundKey()!==builtGroundKey){
+    builtGroundKey=groundKey();
     const grid=authoredCellGrid(metadata),seed=metadata.seed??0;
     const solves=[
       {solve:solveTerrainWfc({doc:grid,catalog:GROUND_CATALOG,layer:"ground",seed,salt:GROUND_SALT}),topY:0,bottomY:SHORE_BOTTOM},
       {solve:solveTerrainWfc({doc:grid,catalog:RAISED_CATALOG,layer:"raised",seed,salt:RAISED_SALT}),topY:RAISED_TOP,bottomY:0},
     ];
     for(const {solve} of solves)if(solve.status!=="solved")throw new Error(`terrain WFC ${solve.layer} contradiction with the complete module catalog`);
-    const top=[],uv=[],colors=[],skirts=[],tint=new THREE.Color();
+    const top=[],uv=[],colors=[],skirts=[],tint=new THREE.Color(),vtx=new THREE.Color();
+    {const cols=grid.width+1,rows=grid.height+1;
+     terrainTintMap={cols,rows,rgb:new Float32Array(cols*rows*3),has:new Uint8Array(cols*rows)};}
     // Vertex tints multiply the shared grass texture, exactly like the old per-cell tinting:
     // full-tile variants vary the meadow tone, edge modules keep the coast tint, raised reads lighter.
     const tintFor=(layer,shape,variant)=>{
@@ -511,7 +557,8 @@ function rebuildTerrainPresentation(){
       for(let i=0;i<points.length;i++){const [ax,az]=points[i],[bx,bz]=points[(i+1)%points.length];area+=ax*bz-bx*az;}
       const ordered=area>0?[...points].reverse():points;
       for(let i=1;i<ordered.length-1;i++)for(const [px,pz] of [ordered[0],ordered[i],ordered[i+1]]){
-        top.push(px,y,pz);uv.push(px/WU,1-pz/HU);colors.push(color.r,color.g,color.b);
+        groundColorInto(vtx,color,px,pz,seed);
+        top.push(px,y,pz);uv.push(px/WU,1-pz/HU);colors.push(vtx.r,vtx.g,vtx.b);
       }
     };
     const pushWallSegment=([[ax,az],[bx,bz]],yTop,yBottom)=>skirts.push(
@@ -526,6 +573,8 @@ function rebuildTerrainPresentation(){
       const originX=gx((cell.dx-1)*CELL),originZ=gz((cell.dy-1)*CELL);
       const place=point=>{const [x,z]=rotateShapePoint(point,cell.rotation);return [originX+x*tileUnits,originZ+z*tileUnits];};
       const color=tintFor(solve.layer,cell.shape,cell.variant);
+      {const i=cell.dy*terrainTintMap.cols+cell.dx;terrainTintMap.has[i]=1;
+       terrainTintMap.rgb[i*3]=color.r;terrainTintMap.rgb[i*3+1]=color.g;terrainTintMap.rgb[i*3+2]=color.b;}
       for(const polygon of tops)pushTopPolygon(polygon.map(place),topY,color);
       for(const segment of walls)pushWallSegment(segment.map(place),topY,bottomY);
     }
@@ -641,6 +690,7 @@ function syncGrass(){
 const meadowSample = (() => {
   const base = new THREE.Color(PAL.grass);
   const raisedTint = base.clone().lerp(new THREE.Color(0xffffff), .12);
+  const cellTint = new THREE.Color(), c = new THREE.Color();
   const SKIP = {skip: true}, UP = [0, 1, 0];
   return (x, z) => {
     const px = x / S, py = z / S;
@@ -648,7 +698,12 @@ const meadowSample = (() => {
     if(terrainAtRasterCell(Math.floor(px / TERRAIN_CELL_SIZE), Math.floor(py / TERRAIN_CELL_SIZE)) !== LAND) return SKIP;
     if(fogAtPoint(px, py)) return SKIP;
     const lift = terrainLiftAt(px, py);
-    const c = lift > 0 ? raisedTint : base;
+    // Same law as the terrain mesh (groundColorInto): the cell's WFC tint, then the bright patch.
+    const m = terrainTintMap, dx = Math.floor(px / CELL) + 1, dy = Math.floor(py / CELL) + 1;   // CELL (32px) = the WFC dual grid pitch, not TERRAIN_CELL_SIZE
+    const i = dy * m.cols + dx;
+    if(dx >= 0 && dy >= 0 && dx < m.cols && dy < m.rows && m.has[i]) cellTint.setRGB(m.rgb[i*3], m.rgb[i*3+1], m.rgb[i*3+2]);
+    else cellTint.copy(lift > 0 ? raisedTint : base);
+    groundColorInto(c, cellTint, x, z, terrainMetadata().seed ?? 0);
     // +0.03 keeps blade roots from z-fighting the terrain top at grazing camera pitches.
     return {height: lift + .03, normal: UP, color: [c.r, c.g, c.b], dirt: 0};
   };
@@ -743,7 +798,7 @@ function syncWear(time, pushers){
 
 let meadow = null, meadowKey = "";
 function syncMeadow(time){
-  const key = terrainMetadata().revision + ":" + fogMetadata().revision;
+  const key = terrainMetadata().revision + ":" + fogMetadata().revision + ":" + groundKey();
   if(!meadow){
     meadow = createGrass(THREE, {seed: (terrainMetadata().seed ?? 1) | 0,
                                  region: {x0: 0, z0: 0, x1: WU, z1: HU}, sample: meadowSample});
@@ -870,8 +925,10 @@ const syncTrees = list => syncScatter(treeLayer, list, t => {
 });
 const syncRocks = list => syncScatter(rockLayer, list, r => {
   // A landed meteor rock swells past its resting 2.25x while its sim-owned `pop` decays — the
-  // touchdown compression. Ordinary click shakes never write `pop`, so mining doesn't re-pop it.
-  const spent = r.depleted>0, meteor = r.meteor ? 2.25*(1 + .3*(r.pop||0)**2) : 1;
+  // touchdown compression. A fireball's small rock gets the same overshoot at resting 1x so it
+  // punches out of the ground instead of just appearing under the embers. Ordinary click shakes
+  // never write `pop`, so mining doesn't re-pop either.
+  const spent = r.depleted>0, meteor = r.meteor ? 2.25*(1 + .3*(r.pop||0)**2) : r.fireball ? 1 + .3*(r.pop||0)**2 : 1;
   if(spent && r.collapse>0){
     // The crumble: the live boulder settles into the ground and spreads as it goes, so the rubble
     // it becomes appears to be what is left of it rather than a swapped-in prop.
@@ -946,10 +1003,10 @@ const FOG_BLOCK_H=2.5;
 // the lights comment above): these are the original owner-picked hexes (52 4c 5e / 5a 54 68 /
 // 48 42 53, water 49 48 5e / 50 4f 68 / 41 40 53) divided by 2.45 in linear, so the fog DISPLAYS
 // byte-near-identical to the pre-relight build and keeps receding instead of riding the new sun.
-const FOG_SHADES=[new THREE.Color(0x34303c),new THREE.Color(0x3a3543),new THREE.Color(0x2d2935)];
+const FOG_SHADES=PAL.fogLand.map(h=>new THREE.Color(h));
 // Blocks standing in open water shade cooler and sit down at the water surface, so the fog field
 // reads as one sheet draped over an unknown silhouette rather than floating slabs.
-const FOG_WATER_SHADES=[new THREE.Color(0x2e2d3c),new THREE.Color(0x333243),new THREE.Color(0x282835)];
+const FOG_WATER_SHADES=PAL.fogWater.map(h=>new THREE.Color(h));
 const fogGeo=new THREE.BoxGeometry(CELL*S,1,CELL*S);fogGeo.translate(0,.5,0);
 const fogMat=new THREE.MeshLambertMaterial({color:0xffffff,flatShading:true});
 // Fog is a gameplay surface a third of the screen wide — banding it is a look decision the owner
@@ -2568,7 +2625,8 @@ configurePipelines({
   view,
   // The R panel's pinned "grass" section — same section the test scene shows, over the same
   // live grassTune, so a tuning found in either host applies to both.
-  panelSections: [{title: "grass", tune: grassTune, spec: GRASS_PANEL}],
+  panelSections: [{title: "grass", tune: grassTune, spec: GRASS_PANEL},
+                  {title: "ground", tune: groundTune, spec: GROUND_PANEL}],
   // The R panel's "camera / sun" section (debug-panel.js) — shared UI with the test scene.
   // Writes go through the SAME paths the view-debugger uses (view fields + placeCamera /
   // setOrthoCamera / setCameraZoom), so the two panels can never disagree about ownership.
@@ -2579,6 +2637,7 @@ configurePipelines({
       ["zoom", "zoom", 0.1, 5, 0.05], ["fov", "fov", 8, 70, 0.25],
       ["zoomMin", "zoom clamp min", 0.02, 1, 0.01], ["zoomMax", "zoom clamp max", 1, 20, 0.5],
       ["sunAz", "sun azimuth", -180, 180, 1], ["sunEl", "sun elevation", 10, 85, 1],
+      ["shadowBlur", "shadow blur (PCF radius)", 0, 16, 0.5],
     ],
     checks: [["ortho", "orthographic"], ["ball", "scale ball"], ["zoomClamp", "clamp zoom"]],
     buttons: [["iso", "isometric"]],
@@ -2595,6 +2654,7 @@ configurePipelines({
         case "zoomClamp": return ZOOM_LIMITS.clamp;
         case "sunAz": return sunPose.az;
         case "sunEl": return sunPose.el;
+        case "shadowBlur": return sun.shadow.radius;
       }
     },
     set(k, v){
@@ -2610,6 +2670,7 @@ configurePipelines({
         case "zoomClamp": ZOOM_LIMITS.clamp = v; return;
         case "sunAz": sunPose.az = v; return;   // sun is placed per frame in drawScene
         case "sunEl": sunPose.el = v; return;
+        case "shadowBlur": sun.shadow.radius = v; return;
       }
       placeCamera();
     },

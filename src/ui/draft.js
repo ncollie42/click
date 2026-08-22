@@ -3,9 +3,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // DRAFT ADAPTER
 //
-// One overlay, three reward kinds. "level" deals builds; "dawn" applies the first wave-clear
-// reward (a permanent buff); "consumable" deals the second wave-clear reward or a chest reward into
-// the hand. The simulation owns those disjoint pools; this adapter only presents the offer.
+// One overlay, three reward kinds. "level" deals builds; "dawn" applies the wave-clear permanent
+// buff; "consumable" deals a chest or Consumable Forge reward into the hand. The simulation owns
+// those disjoint pools; this adapter only presents the offer.
 //
 // Ownership / data flow
 //   Reads:    src/game/simulation.js — draftPending(), draftKind(), chooseDraft(), levelState().
@@ -69,8 +69,7 @@ export function syncLevelHud(){
 }
 
 // ── focus containment ───────────────────────────────────────────────────────
-// Inert every sibling subtree except game-over while the full-stage screen owns input. Same shape
-// as the skill tree's: the two screens are mutually exclusive, so neither ever unsets the other's.
+// Inert every sibling subtree except game-over while this full-stage screen owns input.
 function setFrameInert(on){
   for(let node=overlay;node?.parentElement&&node.id!=="game";node=node.parentElement)
     for(const other of node.parentElement.children)
@@ -80,7 +79,7 @@ function setFrameInert(on){
 // ── the subtitle ────────────────────────────────────────────────────────────
 // Each kind explains itself with its own numbers rather than a shared "pick one".
 function subtitle(kind){
-  if(kind==="dawn")return "the village held. first, choose one permanent upgrade.";
+  if(kind==="dawn")return "the village held. choose one permanent upgrade.";
   if(kind==="consumable")return "choose one card to keep until played.";
   const level=levelState();
   return "level "+level.level+(level.next>0?" · next at "+Math.ceil(level.next)+" more xp":" · top level")+".";

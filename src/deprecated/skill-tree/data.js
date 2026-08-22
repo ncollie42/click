@@ -1,5 +1,8 @@
+// DEPRECATED: Disabled feature; not a production entrypoint. Retained for a possible revisit.
 // Owns the frozen authored skill graph and validates it at import.
-// Coordinates are graph units, not world pixels; runtime reveal/selection belongs to simulation.js.
+// Coordinates are historical graph units, not world pixels. No active runtime imports this module.
+export const SKILL_POINT_LEVELS=4; // Historical placeholder cadence.
+
 const NODES=[
   {id:"root",name:"origin",icon:"✦",x:0,y:0,root:true},
   // depth 1 — the three branches that leave the root, thrown wide apart
@@ -69,7 +72,7 @@ function validateSkillTree(graph){
 }
 
 const PROBLEMS=validateSkillTree({nodes:NODES,edges:EDGES});
-if(PROBLEMS.length)throw new Error("skill-tree-data.js: "+PROBLEMS.join("; "));
+if(PROBLEMS.length)throw new Error("deprecated skill-tree data: "+PROBLEMS.join("; "));
 
 export const SKILL_NODES=Object.freeze(NODES.map(node=>Object.freeze({...node})));
 export const SKILL_EDGES=Object.freeze(EDGES.map(edge=>Object.freeze({...edge})));
