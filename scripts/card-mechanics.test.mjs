@@ -44,11 +44,11 @@ sim.initializeRunMode("normal");
   assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.remaining,data.DAY_DURATION,"day 1 must get the full day");
   assert.equal(sim.state.clock.completedNights,0);
   // Every completed authored base level pays ONE pick from the build-only pool. XP and its old
-  // level draft are gone, so these three levels are the run's only building-card source.
+  // level draft is gone, so these 30 levels are the run's only building-card source.
   const takeBaseReward=()=>{
     assert.equal(sim.draftKind(),"base","a completed base level must deal its own reward kind, not dawn's");
     const offer=sim.draftPending();
-    assert.equal(offer.length,3);assert.equal(new Set(offer).size,3,"the base offer repeated a card");
+    assert.ok(offer.length>=1&&offer.length<=3);assert.equal(new Set(offer).size,offer.length,"the base offer repeated a card");
     assert.equal(offer.every(id=>cardById[id].category==="build"&&cardById[id].inPool),true,"a base reward may only deal buildings");
     const id=offer[0],held=sim.hand().length;
     assert.equal(sim.chooseDraft(0),true);
@@ -58,7 +58,7 @@ sim.initializeRunMode("normal");
   };
   takeBaseReward();
   assert.equal(sim.draftPending(),null,"the base level owes exactly one pick");
-  // Levels 2 and 3 are authored recipes carried to the STANDING base, each paying one more reward.
+  // Levels 2 and 3 prove later authored recipes use the standing-base delivery path.
   assert.deepEqual(sim.mainBaseStatus().cost,data.MAIN_BASE_LEVELS[1].cost,"a level-1 base must next ask for the authored level-2 recipe");
   sim.state.carried.stone=data.MAIN_BASE_LEVELS[1].cost.stone;
   sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
@@ -67,9 +67,24 @@ sim.initializeRunMode("normal");
   sim.state.carried.wood=data.MAIN_BASE_LEVELS[2].cost.wood;sim.state.carried.stone=data.MAIN_BASE_LEVELS[2].cost.stone;
   sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
   assert.equal(sim.state.baseLevel,3);takeBaseReward();
-  assert.deepEqual(sim.mainBaseStatus(),{level:3,maxLevel:3,atMaxLevel:true,cost:null,delivered:zero()},"the authored level list simply ends");
+  assert.deepEqual(sim.mainBaseStatus(),{level:3,maxLevel:30,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[3].cost,delivered:zero()});
   assert.deepEqual({...sim.state.stored},zero(),"exact recipes must leave nothing over");
-  while(sim.draftPending())assert.equal(sim.chooseDraft(0),true);
+  // Buy every remaining literal recipe. This is deliberately the gameplay path, so a malformed
+  // late row fails where a player would hit it rather than passing a data-only shape check.
+  for(let targetLevel=4;targetLevel<=30;targetLevel++){
+    const recipe=data.MAIN_BASE_LEVELS[targetLevel-1];
+    for(const kind of data.RESOURCE_KINDS)sim.state.carried[kind]=recipe.cost[kind]||0;
+    sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
+    assert.equal(sim.state.baseLevel,targetLevel,"base failed to buy authored level "+targetLevel);
+    // Earlier levels already prove reward delivery. Discard here so this progression walk does not
+    // consume the finite build pool needed by the independent card checks below.
+    sim.debugClearDraft();
+    assert.deepEqual({...sim.state.stored},zero(),"exact level "+targetLevel+" recipe left resources over");
+  }
+  assert.deepEqual(sim.mainBaseStatus(),{level:30,maxLevel:30,atMaxLevel:true,cost:null,delivered:zero()},"the authored level list simply ends");
+  sim.state.baseLevel=31;
+  assert.throws(()=>sim.mainBaseStatus(),/illegal base level 31/,"a level past the authored table must crash");
+  sim.state.baseLevel=30;
 }
 sim.debugClearHand();
 sim.trees.length=sim.rocks.length=sim.diamonds.length=sim.chests.length=sim.buildings.length=sim.friendlyBrutes.length=sim.state.enemies.length=sim.resourceDrops.length=0;

@@ -85,7 +85,7 @@ Validate costs by measuring actual time-to-deliver under representative early-, 
 
 **Mechanical anchors the theme commits to:**
 
-- Base delivery = feeding = progress (the sink, never a store). *Status 2026-08-22: XP is gone; the base's own three authored levels are the ladder, and deposits are storage. The theme still wants a sink — see the retirement note under "Base Delivery Grants XP, Not Storage".*
+- Base delivery = feeding = progress (the sink, never a store). *Status 2026-08-22: XP is gone; the base's own 30 authored levels are the ladder, and deposits are storage. The theme still wants a sink — see the retirement note under "Base Delivery Grants XP, Not Storage".*
 - Hunger scales the night: waves grow with total fed, not night count — the greed dial.
 - Glow = radius: feeding visibly widens the light circle. Useful (vision, aura, later fog) and dangerous (the beacon they march toward). The dial is drawn on the ground.
 - Enemies are connected to the thing — drawn to it, or made by it. Not random raiders.
@@ -115,7 +115,7 @@ Longer rationale, kept for reference: villagers dig it up, wall it in with their
 **Tags:** `Core Gameplay`, `Retention`
 
 > **RETIRED 2026-08-22 — XP no longer exists.** `state.xp`, `state.level`, `LEVEL_CURVE` and
-> `RESOURCE_XP` were deleted from the game. Progression is now the three authored `MAIN_BASE_LEVELS`
+> `RESOURCE_XP` were deleted from the game. Progression is now the 30 authored `MAIN_BASE_LEVELS`
 > (each pays one building draft) plus one buff per night survived, and wave pools widen with
 > nights survived rather than anything the player feeds. Everything in this section — including the
 > "Decided (2026-08-21)" line and the Machine Hunger sub-idea below — is kept as unbuilt design: the

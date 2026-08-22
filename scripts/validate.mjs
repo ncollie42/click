@@ -76,7 +76,7 @@ try{
     assert.ok(Object.isFrozen(MAIN_BASE),"main base tuning must be immutable");
     assert.deepEqual({...MAIN_BASE},{maxHp:100,storageRadius:600,buildSlots:2,jobSlots:2,
       range:95,damage:2,rate:.85,damageTargetType:data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY,
-      cost:{wood:10},maxLevel:3});
+      cost:{wood:10},maxLevel:30});
     assert.equal(MAIN_BASE.storageRadius,data.BASE_ZONE,"the base's storage reach is the zone already drawn, never a second number");
 
     // Map-centre attack balance is PRESERVED across the handover, not re-tuned: these are the exact
@@ -84,12 +84,22 @@ try{
     assert.deepEqual([MAIN_BASE.range,MAIN_BASE.damage,MAIN_BASE.rate],[95,2,.85],"the base's attack balance drifted from the defence it inherited");
     assert.equal(data.KING,undefined,"the king is retired: no unit record may shadow the base's attack");
 
-    // Authored levels: exactly three, deeply frozen, and the list simply ENDS.
+    // Authored levels: exactly 30, deeply frozen, and the list simply ENDS.
+    const expectedCosts=[
+      {wood:10},{stone:10},{wood:5,stone:5},{wood:10,stone:10},{wood:15},{stone:15},
+      {dust:2},{diamond:1},{wood:10,stone:10},{coin:1},{wood:20},{stone:20},
+      {wood:15,stone:15},{diamond:2},{wood:20,stone:20,dust:2},{wood:25},{stone:25},
+      {wood:20,stone:20},{coin:2},{wood:25,stone:25,diamond:2},{wood:30},{stone:30},
+      {wood:25,stone:25},{dust:4},{wood:30,stone:30,coin:2},{wood:40},{stone:40},
+      {wood:35,stone:35},{diamond:4},{wood:50,stone:50,dust:5,coin:3,diamond:3}
+    ];
     assert.deepEqual(MAIN_BASE_LEVELS.map(entry=>({...entry,cost:{...entry.cost}})),
-      [{level:1,cost:{wood:10}},{level:2,cost:{stone:10}},{level:3,cost:{wood:10,stone:10}}]);
+      expectedCosts.map((cost,index)=>({level:index+1,cost})));
     assert.ok(Object.isFrozen(MAIN_BASE_LEVELS)&&MAIN_BASE_LEVELS.every(entry=>Object.isFrozen(entry)&&Object.isFrozen(entry.cost)),"the authored level list must be deeply frozen");
     assert.throws(()=>{MAIN_BASE_LEVELS[0].cost.wood=1;},TypeError,"an authored level cost must reject writes");
-    assert.deepEqual(MAIN_BASE_LEVELS.map(entry=>entry.level),[1,2,3],"authored levels are 1-based and contiguous");
+    assert.deepEqual(MAIN_BASE_LEVELS.map(entry=>entry.level),Array.from({length:30},(_,index)=>index+1),"authored levels are 1-based and contiguous");
+    assert.equal(MAIN_BASE_LEVELS.slice(0,7).every(entry=>!("diamond" in entry.cost)),true,"diamond must not appear before level 8");
+    assert.equal(MAIN_BASE_LEVELS[7].cost.diamond,1,"level 8 must introduce diamond");
     assert.equal(MAIN_BASE.maxLevel,MAIN_BASE_LEVELS.length,"maxLevel must be derived from the authored list");
     assert.equal(MAIN_BASE_LEVELS[MAIN_BASE.maxLevel],undefined,"nothing may extrapolate a level past the authored list");
     for(const entry of MAIN_BASE_LEVELS)assert.deepEqual(Object.keys(entry.cost).filter(kind=>!data.RESOURCE_KINDS.includes(kind)),[],"level costs are resource records");
@@ -525,7 +535,7 @@ try{
     takeRewardOffer("base");
     assert.equal(sim.draftPending(),null,"a completed base level owes exactly one pick");
     // A completed level-1 base asks for the authored level-2 recipe next, and nothing else.
-    assert.deepEqual(sim.mainBaseStatus(),{level:1,maxLevel:3,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[1].cost,delivered:zero()});
+    assert.deepEqual(sim.mainBaseStatus(),{level:1,maxLevel:30,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[1].cost,delivered:zero()});
     // Worker hauling is storage, never a silent upgrade: a hauler arrives with exactly what the
     // recipe wants and the recipe stays empty.
     const hauler={x:data.BASE.x,y:data.BASE.y,postX:data.BASE.x,postY:data.BASE.y,spawnSource:null,job:"haul",jobTarget:data.BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...zero(),stone:10},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0};
@@ -546,7 +556,7 @@ try{
     sim.state.carried.stone=30;
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
     assert.equal(sim.state.baseLevel,2,"an oversized release must complete exactly one level");
-    assert.deepEqual(sim.mainBaseStatus(),{level:2,maxLevel:3,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[2].cost,delivered:zero()},"a completed level must clear its progress and charge the next recipe");
+    assert.deepEqual(sim.mainBaseStatus(),{level:2,maxLevel:30,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[2].cost,delivered:zero()},"a completed level must clear its progress and charge the next recipe");
     assert.deepEqual({...sim.state.stored},{...zero(),wood:7,stone:24},"the remainder of a level-completing release must land in storage");
     takeRewardOffer("base");
     // Repeating the release at a level that is already paid changes nothing but storage.
@@ -554,14 +564,16 @@ try{
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
     assert.deepEqual(sim.mainBaseStatus().delivered,{...zero(),stone:5});
     assert.equal(sim.state.baseLevel,2);assert.equal(sim.draftPending(),null,"a repeated release duplicated a base reward");
-    // Level 3 wants BOTH resources; the top of the authored list has no next recipe at all.
+    // Level 3 wants BOTH resources. Later recipes remain authored rather than extrapolated.
     sim.state.carried.wood=data.MAIN_BASE_LEVELS[2].cost.wood;sim.state.carried.stone=data.MAIN_BASE_LEVELS[2].cost.stone;
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
     assert.equal(sim.state.baseLevel,3);
-    assert.deepEqual(sim.mainBaseStatus(),{level:3,maxLevel:3,atMaxLevel:true,cost:null,delivered:zero()},"a maxed base must report no next recipe");
+    assert.deepEqual(sim.mainBaseStatus(),{level:3,maxLevel:30,atMaxLevel:false,cost:data.MAIN_BASE_LEVELS[3].cost,delivered:zero()});
     assert.deepEqual({...sim.state.stored},{...zero(),wood:7,stone:24+5},"level 3 must consume exactly its recipe, five of it already banked");
     takeRewardOffer("base");
-    // At the maximum level every deposit is storage, however large, and nothing is ever rewarded again.
+    // At level 30 every deposit is storage, however large, and nothing is ever rewarded again.
+    sim.state.baseLevel=30;
+    assert.deepEqual(sim.mainBaseStatus(),{level:30,maxLevel:30,atMaxLevel:true,cost:null,delivered:zero()});
     sim.state.carried.wood=40;sim.state.carried.stone=40;
     sim.setPointerWorld(data.BASE.x,data.BASE.y);sim.secondaryRelease();
     assert.deepEqual({...sim.state.stored},{...zero(),wood:47,stone:69});
@@ -569,7 +581,10 @@ try{
     assert.equal(sim.draftPending(),null,"a maxed base kept paying rewards");
     // A free-cost sweep cannot re-complete a standing base, so it cannot re-pay one either.
     sim.DBG.freeCosts=true;sim.debugSweepFreeCosts();sim.DBG.freeCosts=false;
-    assert.equal(sim.state.baseLevel,3);assert.equal(sim.draftPending(),null,"the free-cost sweep duplicated a base reward");
+    assert.equal(sim.state.baseLevel,30);assert.equal(sim.draftPending(),null,"the free-cost sweep duplicated a base reward");
+    sim.state.baseLevel=31;
+    assert.throws(()=>sim.mainBaseStatus(),/illegal base level 31/,"a level past the authored table must crash");
+    sim.state.baseLevel=30;
     for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;
     // Queue priority when several rewards are banked behind one live offer: base levels, then dawn,
     // then consumables. Start with a consumable on screen, then bank the other three kinds.

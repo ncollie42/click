@@ -8,7 +8,7 @@
 // live in src/game/cards.js. Edit the game, refresh, the charts move.
 //
 // RETIRED (2026-08-22): THE GAME HAS NO XP. state.xp / state.level / LEVEL_CURVE / RESOURCE_XP
-// were deleted; progression is now the three authored MAIN_BASE_LEVELS, each paying one draft, plus
+// were deleted; progression is now the 30 authored MAIN_BASE_LEVELS, each paying one draft, plus
 // one dawn buff per night survived. Everything below that mentions XP, levels or draft cadence
 // models a loop that no longer runs — it is kept as the historical pacing bench (and because the
 // structural BEATS, PHASES and ARC are still the design intent) until a base-level model replaces

@@ -190,8 +190,8 @@ export const STAFF_GATHER=Object.freeze({cooldownFactor:.5,yield:1});
 // then the authored `level` of the entry the base has reached. Nothing else may claim the base is up.
 //
 // LEVELS ARE AUTHORED, NOT A CURVE. Each entry is one hand-priced upgrade, and the list simply
-// ENDS: level MAIN_BASE_LEVELS.length is the maximum, and no consumer may extrapolate a level 4
-// cost by extending a pattern.
+// ENDS: level MAIN_BASE_LEVELS.length is the maximum. The repeated shapes below are authoring
+// rhythm, not a formula: no consumer may extrapolate a level 31 cost from them.
 //
 // THE run's only progression ladder. The XP level (state.level / LEVEL_CURVE / RESOURCE_XP) was
 // deleted Aug 22; state.baseLevel is what "how far along is this run" means now, and each level
@@ -200,7 +200,34 @@ const freezeMainBaseLevel=entry=>Object.freeze({...entry,cost:Object.freeze({...
 export const MAIN_BASE_LEVELS=Object.freeze([
   {level:1,cost:{wood:10}},
   {level:2,cost:{stone:10}},
-  {level:3,cost:{wood:10,stone:10}}
+  {level:3,cost:{wood:5,stone:5}},
+  {level:4,cost:{wood:10,stone:10}},
+  {level:5,cost:{wood:15}},
+  {level:6,cost:{stone:15}},
+  {level:7,cost:{dust:2}},
+  {level:8,cost:{diamond:1}},
+  {level:9,cost:{wood:10,stone:10}},
+  {level:10,cost:{coin:1}},
+  {level:11,cost:{wood:20}},
+  {level:12,cost:{stone:20}},
+  {level:13,cost:{wood:15,stone:15}},
+  {level:14,cost:{diamond:2}},
+  {level:15,cost:{wood:20,stone:20,dust:2}},
+  {level:16,cost:{wood:25}},
+  {level:17,cost:{stone:25}},
+  {level:18,cost:{wood:20,stone:20}},
+  {level:19,cost:{coin:2}},
+  {level:20,cost:{wood:25,stone:25,diamond:2}},
+  {level:21,cost:{wood:30}},
+  {level:22,cost:{stone:30}},
+  {level:23,cost:{wood:25,stone:25}},
+  {level:24,cost:{dust:4}},
+  {level:25,cost:{wood:30,stone:30,coin:2}},
+  {level:26,cost:{wood:40}},
+  {level:27,cost:{stone:40}},
+  {level:28,cost:{wood:35,stone:35}},
+  {level:29,cost:{diamond:4}},
+  {level:30,cost:{wood:50,stone:50,dust:5,coin:3,diamond:3}}
 ].map(freezeMainBaseLevel));
 
 // What the built structure owns, so no other module restates a base number:

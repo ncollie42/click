@@ -230,7 +230,7 @@ export const CARDS=[
   {id:"bpMainBase", category:"build", rarity:"common", text:"raise the main base",
    tags:["main base"], features:["day/night","physical space"], charges:1, ref:"building:mainBase", model:null,
    implemented:true, inPool:false,
-   notes:"one site at the authored BASE anchor, charging the level-1 recipe MAIN_BASE_LEVELS[0] (10 wood) through the ordinary delivery path; completion sets state.baseLevel=1, starts day 1 and deals one build-only 'base' draft. Levels 2-3 (10 stone, then 10 wood + 10 stone) are released at the standing base and each deal another base draft — since XP was deleted 2026-08-22 these three are the run's ONLY build-card source"},
+   notes:"one site at the authored BASE anchor, charging the level-1 recipe MAIN_BASE_LEVELS[0] (10 wood) through the ordinary delivery path; completion sets state.baseLevel=1, starts day 1 and deals one build-only 'base' draft. Levels 2-30 use explicit resource recipes released at the standing base and each deal another base draft — since XP was deleted 2026-08-22 these levels are the run's ONLY build-card source"},
 
   // ── D · builds — the base kit ─────────────────────────────────────────
   // The build shop is gone: these ARE the ordinary economy/defense menu, dealt as cards. Each

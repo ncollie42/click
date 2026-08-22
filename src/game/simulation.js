@@ -517,7 +517,8 @@ export function validateSimulationInvariants(){
   // `buildings` wholesale between scenarios.
   // The active authored recipe: never negative, never over-paid, and empty at both ends of the list
   // (level 0 charges the construction site instead; the maximum level has no next recipe at all).
-  const nextBaseLevel=MAIN_BASE_LEVELS[state.baseLevel]||null;
+  const nextBaseLevel=state.baseLevel===MAIN_BASE.maxLevel?null:MAIN_BASE_LEVELS[state.baseLevel];
+  invariant(state.baseLevel===MAIN_BASE.maxLevel||nextBaseLevel,"missing authored base level "+(state.baseLevel+1));
   for(const kind of RESOURCE_KINDS){
     invariant(Number.isFinite(state.baseDelivered[kind])&&state.baseDelivered[kind]>=0,"illegal base delivery "+kind);
     invariant(state.baseDelivered[kind]<=(nextBaseLevel?.cost[kind]||0),"the base banked more "+kind+" than its next authored level costs");
@@ -1787,8 +1788,15 @@ function mainBaseStanding(){return state.baseLevel>0;}
 /** The unfinished site, or null. There is at most one (validateSimulationInvariants). */
 function mainBaseSite(){return buildings.find(building=>building.type==="mainBase"&&!building.complete)||null;}
 /** The authored recipe the base is CURRENTLY charging — MAIN_BASE_LEVELS[state.baseLevel] — or null
- *  at the maximum level, where there is no next recipe and every deposit is simply storage. */
-function mainBaseNextLevel(){return MAIN_BASE_LEVELS[state.baseLevel]||null;}
+ *  at level 30. A corrupt level above the authored maximum is a programmer bug, never another
+ *  spelling of "maxed": assert here so every status, delivery, and completion path crashes on it. */
+function mainBaseNextLevel(){
+  invariant(Number.isInteger(state.baseLevel)&&state.baseLevel>=0&&state.baseLevel<=MAIN_BASE.maxLevel,"illegal base level "+state.baseLevel);
+  if(state.baseLevel===MAIN_BASE.maxLevel)return null;
+  const next=MAIN_BASE_LEVELS[state.baseLevel];
+  invariant(next&&next.level===state.baseLevel+1,"missing authored base level "+(state.baseLevel+1));
+  return next;
+}
 /** Progress on that recipe, from whichever record owns it: the construction site while the base is
  *  still being raised, state.baseDelivered once it stands. See state.baseDelivered's note. */
 function mainBaseDelivered(){return mainBaseSite()?.delivered||state.baseDelivered;}
