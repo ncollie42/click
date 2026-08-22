@@ -85,7 +85,7 @@ function buildCell(card){
   }else if(card.category==="buff"&&card.implemented){
     const badge=document.createElement("span"); badge.className="csStacks"; badge.hidden=true;
     cell.appendChild(badge); stackBadges.set(card.id,badge);
-    cell.title=card.rarity+" · "+card.text+" — apply one stack now (debug stacks ignore the cap)";
+    cell.title=card.rarity+" · "+card.text+" — apply one uncapped debug stack";
     cell.addEventListener("click",()=>{ if(debugApplyBuff(card.id)){ flash(); paintStacks(); } });
   }else{
     cell.classList.add("csOff");

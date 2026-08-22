@@ -290,7 +290,7 @@ try{
           const prereq=cards.cardById[prereqId];
           assert.ok(prereq,`card ${card.id} requires unknown card ${prereqId}`);
           assert.notEqual(prereqId,card.id,`card ${card.id} requires itself`);
-          assert.equal(prereq.category,"buff",`card ${card.id} prerequisite ${prereqId} must be a buff — only buff stacks are owned run state`);
+          assert.equal(prereq.category,"buff",`card ${card.id} prerequisite ${prereqId} must be a buff given by the Card Pull`);
           assert.ok(!card.inPool||prereq.inPool,`card ${card.id} is inPool behind ${prereqId}, which the draft can never deal`);
         }
       }
@@ -433,7 +433,7 @@ try{
     assert.equal(opening.every(entry=>entry.count===1&&entry.charges===null),true,"a seeded card must be an ordinary untouched stack");
     assert.equal(opening.every(entry=>cardCatalog.cardById[entry.id].category==="build"),true);
     assert.equal(cardCatalog.cardById.bpMainBase.inPool,false,"the opening card must never be draftable");
-    assert.equal(sim.draftEligible(["build"]).some(card=>card.id==="bpMainBase"),false,"the opening card reached the draft pool");
+    assert.equal(sim.cardPullStatus().possible.includes("bpMainBase"),false,"the opening card reached the Card Pull");
     assert.equal(sim.initializeRunMode("normal"),undefined);
     assert.deepEqual(sim.hand().map(entry=>entry.id),opening.map(entry=>entry.id),"re-initializing a run must not deal the opening kit twice");
     // The empty initial world, and the untimed pre-wave state it sits in.
@@ -497,17 +497,16 @@ try{
     sim.state.workers.length=0;
     assert.deepEqual([sim.state.clock.phase,sim.state.clock.remaining,sim.state.clock.completedNights],["day",data.DAY_DURATION,0],"finishing the base must start day 1 with the full day");
     // ── authored base levels, and the draft each one pays ──
-    // Since XP was deleted (2026-08-22) a base level is the run's only build source, so a "base"
-    // offer mixes builds and buffs while "dawn" stays buff-only. A taken reward is a REAL permanent
-    // change to the run this file keeps measuring, so each one is scrubbed straight back off.
+    // Since XP was deleted (2026-08-22), base levels are the run's only build source. Base offers
+    // stay build-only while dawn owns permanent buffs.
     const zero=()=>Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0]));
-    const REWARD_CATEGORIES={base:["build","buff"],dawn:["buff"]};
+    const REWARD_CATEGORIES={base:["build"],dawn:["buff"]};
     const takeRewardOffer=kind=>{
       assert.equal(sim.draftKind(),kind,"a "+kind+" reward was expected");
       const offer=sim.draftPending(),allowed=REWARD_CATEGORIES[kind];
       assert.equal(offer.length,3);assert.equal(new Set(offer).size,3,"the "+kind+" offer repeated a card");
       assert.equal(offer.every(id=>allowed.includes(cardCatalog.cardById[id].category)&&cardCatalog.cardById[id].inPool),true,"a "+kind+" reward dealt outside its pool");
-      // Prefer a buff so the scrub below can undo the pick; a build-only offer is cleared out of the hand.
+      // Dawn buffs are scrubbed back off; base builds are cleared out of the hand.
       const index=Math.max(0,offer.findIndex(id=>cardCatalog.cardById[id].category==="buff"));
       const id=offer[index],isBuff=cardCatalog.cardById[id].category==="buff",stacks=sim.buffStacks(id),held=sim.hand().length;
       const capacity=sim.state.capacity,baseMax=sim.state.baseMax,baseHp=sim.state.baseHp;
@@ -572,13 +571,14 @@ try{
     sim.DBG.freeCosts=true;sim.debugSweepFreeCosts();sim.DBG.freeCosts=false;
     assert.equal(sim.state.baseLevel,3);assert.equal(sim.draftPending(),null,"the free-cost sweep duplicated a base reward");
     for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;
-    // Queue priority when several rewards are banked at once: base levels, then dawn, then
-    // consumables. The queues are written straight into the ledger and the pump is one debug
-    // queue call — this is about the DEALER's order alone.
-    Object.assign(sim.state.draft,{dawnQueue:1,consumableQueue:1});
+    // Queue priority when several rewards are banked behind one live offer: base levels, then dawn,
+    // then consumables. Start with a consumable on screen, then bank the other three kinds.
+    assert.equal(sim.debugQueueDraft("consumable"),true);
+    assert.equal(sim.debugQueueDraft("consumable"),true);
+    assert.equal(sim.debugQueueDraft("dawn"),true);
     assert.equal(sim.debugQueueDraft("base"),true);
     const dealt=[];while(sim.draftPending()){dealt.push(sim.draftKind());if(sim.draftKind()==="consumable")assert.equal(sim.chooseDraft(0),true);else takeRewardOffer(sim.draftKind());}
-    assert.deepEqual(dealt,["base","dawn","consumable"],"the reward queue changed its priority");
+    assert.deepEqual(dealt,["consumable","base","dawn","consumable"],"the reward queue changed its priority");
     sim.debugClearHand();
     assert.deepEqual({...sim.state.carried},Object.fromEntries(data.RESOURCE_KINDS.map(kind=>[kind,0])));
     // Day/night pacing past the opening is untouched: the ordinary flip still runs, and dawn still
@@ -729,12 +729,12 @@ try{
         assert.equal(sim.resourceDrops.filter(d=>d.kind==="wood").length,1,"crit damage must not invent yield without the crit-yield card");
         assert.equal(b.hp,3,"a chained combat hit must deal full crit damage");
         assert.equal(c.hp,5,"a two-jump chain must not reach the third target");
-        // At the 4-stack cap the same swing runs the full chain: tree, B, C, D.
+        // At four debug stacks the same swing runs the full chain: tree, B, C, D.
         for(const id of ["chainLightning","chainLightning"])assert.equal(sim.debugApplyBuff(id),true);
         a.hp=b.hp=c.hp=d.hp=5;tree.hp=3;tree.stump=0;
         let arcsBefore=sim.lightningArcs.length;swing();
         assert.equal(sim.lightningArcs.length-arcsBefore,4,"four stacks must yield exactly four jumps");
-        assert.equal(b.hp,3);assert.equal(c.hp,3);assert.equal(d.hp,3,"the capped chain must reach the fourth jump");
+        assert.equal(b.hp,3);assert.equal(c.hp,3);assert.equal(d.hp,3,"the debug-stacked chain must reach the fourth jump");
         // One stack: a single jump into the tree, nothing further.
         a.hp=b.hp=c.hp=d.hp=5;tree.hp=3;tree.stump=0;sim.state.draft.buffs.chainLightning=1;
         arcsBefore=sim.lightningArcs.length;swing();
@@ -785,7 +785,7 @@ try{
       // dawn reward can freeze the world in the middle of a worker measurement.
       // A pending draft offer freezes the whole world, so any scenario that crosses a real dawn
       // clears the reward it just earned before it measures anything else.
-      const clearDraft=()=>{sim.state.draft.baseQueue=0;sim.state.draft.dawnQueue=0;sim.state.draft.consumableQueue=0;sim.state.draft.offer=null;sim.state.draft.offerKind=null;sim.state.draftPaused=false;};
+      const clearDraft=()=>sim.debugClearDraft();
       const reset=()=>{sim.buildings.length=sim.resourceDrops.length=sim.chests.length=sim.state.workers.length=sim.state.enemies.length=sim.trees.length=sim.rocks.length=sim.diamonds.length=0;for(const kind of data.RESOURCE_KINDS)sim.state.stored[kind]=0;sim.state.clock.phase="day";sim.state.clock.remaining=data.DAY_DURATION;sim.state.paused=sim.state.gameOver=false;sim.state.coinTimer=99999;clearDraft();Object.assign(sim.state.nightWave,{activePlan:null,threatBudget:0,spawnedThreat:0,totalSpawns:0,remainingSpawns:0,elapsed:0,nextSpawnAt:0,activeNightNumber:null});sim.DBG.groundSourcing=sim.DBG.builderSelfSupply=true;sim.DBG.instantWorkers=false;sim.TUNE.builderSourceRadius=300;sim.TUNE.freeSearchRadius=200;sim.TUNE.fleeHpThreshold=1;};
       // Night without a wave: a positive spawn budget that is never due keeps the clearance check
       // from auto-dawning the moment the phase flips, so night behavior can be measured on its own.
@@ -1709,7 +1709,7 @@ try{
       import {cardById} from "./src/game/cards.js";
       const counts=()=>Object.fromEntries(RESOURCE_KINDS.map(kind=>[kind,0]));
       const worker=(load)=>({x:BASE.x,y:BASE.y,postX:BASE.x,postY:BASE.y,spawnSource:null,job:"haul",jobTarget:BASE,autonomous:false,taskTarget:null,selfSupply:null,returning:true,starved:false,carried:{...counts(),...load},hp:5,attackCooldown:0,hitCooldown:.5,step:0,combatTarget:null,retaliationTarget:null,returnAfterCombat:false,fleeing:false,fleeSafeTime:0});
-      const CATEGORIES={base:["build","buff"],dawn:["buff"],consumable:["consumable"]};
+      const CATEGORIES={base:["build"],dawn:["buff"],consumable:["consumable"]};
       // Draining must not disturb the wave checks below, so the two schedule-bending cards are avoided.
       const skip=new Set(["calmNight","longDay"]);
       const drain=()=>{let taken=0;while(sim.draftPending()){const offer=sim.draftPending(),kind=sim.draftKind(),allowed=CATEGORIES[kind];assert.ok(offer.length>0&&offer.length<=3);assert.equal(new Set(offer).size,offer.length,"draft offered a duplicate card");assert.equal(offer.every(id=>cardById[id].inPool&&cardById[id].implemented),true,"draft offered a card that is not in the pool");assert.equal(offer.every(id=>allowed.includes(cardById[id].category)),true,"draft dealt outside its kind's pool");assert.equal(sim.chooseDraft(Math.max(0,offer.findIndex(id=>!skip.has(id)))),true);taken++;}return taken;};
@@ -1721,11 +1721,11 @@ try{
       sim.state.carried.wood=5;sim.setPointerWorld(BASE.x,BASE.y);sim.secondaryRelease();assert.equal(sim.state.carried.wood,0);assert.equal(sim.state.stored.wood,5);assert.equal(sim.draftPending(),null,"a base deposit dealt a draft");
       const hauler=worker({diamond:1});sim.state.workers.push(hauler);sim.update(1/60);assert.equal(hauler.carried.diamond,0);assert.equal(sim.state.stored.diamond,1);assert.equal(sim.draftPending(),null,"a hauler deposit dealt a draft");
       sim.state.workers.length=0;
-      // A base level deals ONE mixed build+buff offer; a second queued reward waits behind it.
+      // A base level deals ONE build-only offer; a second queued reward waits behind it.
       assert.equal(sim.debugQueueDraft("base"),true);assert.equal(sim.debugQueueDraft("base"),true);
       assert.equal(sim.draftKind(),"base");
       const firstOffer=sim.draftPending();assert.equal(firstOffer.length,3);assert.equal(new Set(firstOffer).size,3);
-      assert.equal(firstOffer.every(id=>cardById[id].inPool&&CATEGORIES.base.includes(cardById[id].category)),true,"a base level offered something outside the build+buff pool");
+      assert.equal(firstOffer.every(id=>cardById[id].inPool&&CATEGORIES.base.includes(cardById[id].category)),true,"a base level offered something outside the build pool");
       assert.equal(sim.chooseDraft(3),false);assert.equal(sim.chooseDraft(-1),false);assert.equal(sim.draftPending(),firstOffer,"a rejected pick must not consume the offer");
       // The world is frozen while an offer pends, and only the queue drain lets time move again.
       const frozen=sim.state.clock.elapsed;for(let i=0;i<60;i++)sim.update(1/60);assert.equal(sim.state.clock.elapsed,frozen,"the world advanced under a pending draft");
@@ -1851,7 +1851,7 @@ try{
         sim.togglePause();sim.update(1);assert.equal(sim.state.clock.phase,"night","pause transitioned to dawn");sim.togglePause();
         sim.update(1/60);assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.completedNights,1);assert.equal(wave.activeNightNumber,null);assert.equal(sim.state.enemies.includes(manual),true,"manual enemy blocked or disappeared at dawn");
         assert.equal(sim.draftKind(),"dawn");const reward=sim.draftPending(),handBefore=sim.hand().length;assert.ok(reward);sim.update(10);assert.equal(sim.state.clock.completedNights,1);assert.equal(sim.draftPending(),reward,"clearance duplicated the dawn reward");
-        sim.chooseDraft(0);assert.equal(sim.draftPending(),null,"wave buff did not end the reward sequence");assert.equal(sim.state.draft.consumableQueue,0,"wave clearance queued a consumable");assert.equal(sim.hand().length,handBefore,"wave clearance put a consumable in the hand");
+        sim.chooseDraft(0);assert.equal(sim.draftPending(),null,"wave buff did not end the reward sequence");assert.equal(sim.cardPullStatus().pending.consumable,0,"wave clearance queued a consumable");assert.equal(sim.hand().length,handBefore,"wave clearance put a consumable in the hand");
         sim.validateSimulationInvariants();
         console.log(JSON.stringify({night,elapsed:wave.elapsed,spawns:scheduled,rewards:1,manualSurvived:sim.state.enemies.includes(manual)}));
       }finally{Math.random=old;}
@@ -1904,18 +1904,18 @@ try{
         const queueDawn=()=>{if(sim.state.clock.phase==="day")sim.transitionPhase();sim.transitionPhase();};
         const discardConsumable=()=>{if(sim.draftKind()==="consumable")sim.chooseDraft(0);};
         let guard=0;
-        while(sim.buffStacks("clickSpeed")<2&&guard++<600){
+        while(sim.buffStacks("clickSpeed")<1&&guard++<600){
           if(!sim.draftPending())queueDawn();
           const offer=sim.draftPending();if(!offer)continue;assert.equal(sim.draftKind(),"dawn");
           const at=offer.indexOf("clickSpeed");sim.chooseDraft(at>=0?at:Math.max(0,offer.findIndex(id=>id!=="clickSpeed")));discardConsumable();
         }
-        assert.equal(sim.buffStacks("clickSpeed"),2,"clickSpeed never appeared twice in a draft");
-        // The queued offers must not sneak in a third stack, or the measurement below would drift.
+        assert.equal(sim.buffStacks("clickSpeed"),1,"clickSpeed never appeared in the finite Card Pull");
+        // The queued offers must not return the given card, or the measurement below would drift.
         while(sim.draftPending()){const offer=sim.draftPending();sim.chooseDraft(Math.max(0,offer.findIndex(id=>!["calmNight","longDay","clickSpeed"].includes(id))));}
-        assert.equal(sim.buffStacks("clickSpeed"),2);
+        assert.equal(sim.buffStacks("clickSpeed"),1);
         const after=fill();
-        const expectedRate=sim.TUNE.chopTime/Math.max(CARD_BUFFS.clickSpeedMinimumSeconds,sim.TUNE.chopTime-CARD_BUFFS.clickSpeedSeconds*2);
-        assert.ok(Math.abs(after/before-expectedRate)<1e-9,"two clickSpeed stacks must remove 0.4 seconds from swing time");
+        const expectedRate=sim.TUNE.chopTime/Math.max(CARD_BUFFS.clickSpeedMinimumSeconds,sim.TUNE.chopTime-CARD_BUFFS.clickSpeedSeconds);
+        assert.ok(Math.abs(after/before-expectedRate)<1e-9,"clickSpeed must remove 0.2 seconds from swing time");
         assert.equal(sim.vacuumRadius(),baseRadius+CARD_BUFFS.vacuumRadius*sim.buffStacks("vacuumRadius"));
         assert.equal(sim.TUNE.vacuumRadius,45,"a card must never write the authored tuning value");
         while(sim.buffStacks("critClicks")<1&&guard++<1200){
@@ -1942,7 +1942,7 @@ try{
       }finally{Math.random=old;}
     `
   }).trim());
-  assert.ok(Math.abs(buffResult.ratio-5/3)<1e-9);
+  assert.ok(Math.abs(buffResult.ratio-5/4)<1e-9);
   // ── the hand ──
   // Drafting, dawn rewards, playing, targeting, partial kits and build placements, all measured in
   // one clean process: a card is only ever an effect once the player plays it.
@@ -1981,14 +1981,12 @@ try{
         assert.equal(sim.draftKind(),null);
         assert.equal(sim.playCard(0),false,"an empty hand plays nothing");assert.equal(sim.playCard(-1),false);assert.equal(sim.playCard(.5),false);
 
-        // 1 · a base-level reward can be a BUILD, and a drafted build enters the hand. The pool is
-        // mixed (build+buff) since XP died, so the offer is redrawn until it shows one — the pool is
-        // majority builds, so this terminates immediately in practice.
+        // 1 · a base-level reward is a BUILD, and a drafted build enters the hand.
         let buildOffer=null,buildIndex=-1;
         for(let attempt=0;attempt<40&&buildIndex<0;attempt++){
           assert.equal(sim.debugQueueDraft("base"),true);
           buildOffer=sim.draftPending();assert.ok(buildOffer);assert.equal(sim.draftKind(),"base");
-          assert.equal(buildOffer.every(id=>["build","buff"].includes(cardById[id].category)),true,"a base level offered loot outside the build+buff pool");
+          assert.equal(buildOffer.every(id=>cardById[id].category==="build"),true,"a base level offered loot outside the build pool");
           buildIndex=buildOffer.findIndex(id=>cardById[id].category==="build");
           if(buildIndex<0)assert.equal(sim.chooseDraft(0),true);
         }
@@ -2011,7 +2009,7 @@ try{
         const dawnCard=dawnOffer[0],eventsBeforeDawn=handEvents,stacksBefore=sim.buffStacks(dawnCard);
         assert.equal(sim.chooseDraft(0),true);assert.equal(sim.buffStacks(dawnCard),stacksBefore+1);
         assert.equal(handEvents,eventsBeforeDawn,"a dawn buff should not enter the hand");
-        assert.equal(sim.draftKind(),null);assert.equal(sim.state.draft.consumableQueue,0);assert.equal(sim.state.draftPaused,false);assert.equal(sim.hand().some(entry=>cardById[entry.id].category==="consumable"),false,"dawn granted a hand-bound consumable");
+        assert.equal(sim.draftKind(),null);assert.equal(sim.cardPullStatus().pending.consumable,0);assert.equal(sim.state.draftPaused,false);assert.equal(sim.hand().some(entry=>cardById[entry.id].category==="consumable"),false,"dawn granted a hand-bound consumable");
 
         // 3 · an untargeted consumable applies on play and leaves the hand
         assert.equal(sim.debugDealCard("woodBundle"),true);
@@ -2133,23 +2131,22 @@ try{
         assert.notEqual(secondObelisk,obelisk,"the second obelisk card placed nothing");
         assert.equal(secondObelisk.complete,false,"a repeated build must still be paid for");
 
-        // 7b · a build stays in the POOL after it is taken, so later offers may deal it again
+        // 7b · a chosen build leaves the finite Card Pull and never appears again
         {
-          const before=sim.hand().length;
-          let repeats=0,guardPool=0,seen=null;
-          while(repeats<2&&guardPool++<900){
-            if(!sim.draftPending())sim.debugQueueDraft("base");
-            const offer=sim.draftPending();if(!offer)continue;
-            assert.equal(sim.draftKind(),"base","builds must come from base-level rewards");
-            const at=seen===null?offer.findIndex(id=>cardById[id].category==="build"):offer.indexOf(seen);
-            if(at<0){sim.chooseDraft(0);continue;}
-            if(seen===null)seen=offer[at];
-            sim.chooseDraft(at);repeats++;
+          if(!sim.draftPending())sim.debugQueueDraft("base");
+          const seen=sim.draftPending()[0],before=held(seen)?.count??0;
+          assert.equal(sim.chooseDraft(0),true);
+          assert.equal(held(seen)?.count,before+1,"the chosen build did not reach the hand");
+          assert.equal(sim.cardPullStatus().given.includes(seen),true,"chosen build was not recorded as given");
+          let guardPool=0;
+          while(sim.cardPullStatus().eligible.base.length&&guardPool++<100){
+            sim.debugQueueDraft("base");
+            assert.equal(sim.draftPending().includes(seen),false,"a given build returned to a later offer");
+            sim.chooseDraft(0);
           }
-          assert.equal(repeats,2,"a taken build never came back in a later offer");
-          assert.ok(seen&&cardById[seen].category==="build");
-          assert.equal(sim.hand().find(entry=>entry.id===seen).count>=2||sim.hand().length>before,true,"the second copy never reached the hand");
-          drain();
+          assert.ok(guardPool<100,"building Card Pull did not exhaust");
+          sim.debugQueueDraft("base");assert.equal(sim.draftPending(),null,"an exhausted building Card Pull refilled");
+          assert.equal(held(seen)?.count,before+1,"a given build reached the hand twice");
         }
 
         // 7c · the house card charges the ESCALATED price, exactly as the dock's house button did
@@ -2258,7 +2255,7 @@ try{
       let dawnPick=null,dawnStacksBefore=0;
       if(kind==="dawn"){dawnRewards++;assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="buff"),true,"a dawn offer dealt something other than a permanent buff");dawnPick=sim.draftPending()[0];dawnStacksBefore=sim.buffStacks(dawnPick);}
       else if(kind==="consumable")assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="consumable"),true,"a consumable offer dealt something from another pool");
-      else assert.equal(sim.draftPending().every(id=>["build","buff"].includes(cardCatalog.cardById[id].category)),true,"a base offer dealt something outside the build+buff pool");
+      else assert.equal(sim.draftPending().every(id=>cardCatalog.cardById[id].category==="build"),true,"a base offer dealt something outside the build pool");
       assert.equal(sim.chooseDraft(0),true);
       if(dawnPick){assert.equal(sim.buffStacks(dawnPick),dawnStacksBefore+1,"dawn choice did not add a permanent buff stack");earnedDawnBuffStacks++;}
     }
@@ -2300,8 +2297,8 @@ try{
         const authoredEnemies=sim.state.enemies.map(enemy=>({enemy,x:enemy.x,y:enemy.y}));for(let i=0;i<4;i++)assert.equal(sim.spawnEnemy("raider"),undefined,"showcase spawn command changed its return contract");assert.equal(sim.spawnEnemy("brute"),undefined);assert.equal(sim.state.enemies.length,authoredEnemies.length,"showcase debugger spawn added a production enemy");assert.equal(sim.state.enemies.every((enemy,index)=>enemy===authoredEnemies[index].enemy&&enemy.x===authoredEnemies[index].x&&enemy.y===authoredEnemies[index].y),true,"showcase spawn command changed authored enemy identity or position");check();
         // The sandbox is never dealt cards: every reward queue refuses outside a normal run, and a
         // rebuild leaves the draft ledger exactly as empty as it found it.
-        const emptyLedger={baseQueue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null};
-        const ledger=()=>({baseQueue:sim.state.draft.baseQueue,dawnQueue:sim.state.draft.dawnQueue,consumableQueue:sim.state.draft.consumableQueue,offer:sim.state.draft.offer,offerKind:sim.state.draft.offerKind});
+        const emptyLedger={pending:{base:0,dawn:0,consumable:0},offer:null,given:[]};
+        const ledger=()=>({pending:{...sim.cardPullStatus().pending},offer:sim.draftPending(),given:[...sim.cardPullStatus().given]});
         for(const kind of ["base","dawn","consumable"])assert.equal(sim.debugQueueDraft(kind),false,"the showcase sandbox accepted a "+kind+" reward");
         assert.deepEqual(ledger(),emptyLedger);assert.equal(sim.rebuildShowcase(),true);assert.deepEqual(ledger(),emptyLedger);check();
         const firstRevision=sim.showcaseLabels().revision;

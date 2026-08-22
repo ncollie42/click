@@ -115,15 +115,13 @@ export const DAMAGE_TARGET_TYPE=Object.freeze({
 });
 
 // ── draft card numbers ──────────────────────────────────────────────────────
-// Per-stack buff magnitudes and consumable payouts for the catalog in cards.js, which owns the
-// ids, rarities, texts and stack limits but none of the arithmetic. Read only by simulation.js;
-// no runtime path may assign into these tables — a taken card tallies a stack in run state and
-// the accessors layer these numbers over the authored values at read time.
+// Buff magnitudes and consumable payouts for the catalog in cards.js. Normal play gives each buff
+// once; debug tools may stack effects to probe the arithmetic. No runtime path may assign here.
 export const CARD_BUFFS={clickSpeedSeconds:.2,clickSpeedMinimumSeconds:.1,critChance:.1,critMultiplier:2,critYield:1,freeHitChance:.15,handCarry:2,vacuumRadius:15,workerSpeed:1.25,workerResourceDamage:1,workerCombatDamage:1,workerCarry:1,buildCapacity:1,towerDamage:1,towerSpeed:1.25,towerRange:50,towerHp:5,baseHp:25,clickDamage:1,
   deathTreeChance:.25,deathExplosionDamage:3,deathExplosionRadius:64,deathExplosionTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY,
-  // Chain lightning scales BOTH dials per stack: stack N procs a completed player swing at
+  // Debug stacking scales both chain-lightning dials: stack N procs a completed player swing at
   // chainChance+(N-1)*chainChanceStack and throws chainJumps+(N-1) jumps — 20%/1, 30%/2, 40%/3,
-  // 50%/4 at the card's 4-stack cap. A jump is a full ordinary swing (its own crit roll) on the
+  // 50%/4 at four debug stacks. A jump is a full ordinary swing (its own crit roll) on the
   // nearest unstruck enemy OR resource within chainRange of the previous strike.
   chainChance:.2,chainChanceStack:.1,chainJumps:1,chainRange:120};
 export const CARD_CONSUMABLES={woodBundle:20,stoneBundle:15,dustBundle:3,longDay:20,calmNightFactor:.75};

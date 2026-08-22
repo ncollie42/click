@@ -43,33 +43,18 @@ sim.initializeRunMode("normal");
   assert.equal(site.complete,true);assert.equal(sim.state.baseLevel,1);
   assert.equal(sim.state.clock.phase,"day");assert.equal(sim.state.clock.remaining,data.DAY_DURATION,"day 1 must get the full day");
   assert.equal(sim.state.clock.completedNights,0);
-  // Every completed authored base level pays ONE pick from the MIXED build+buff pool (XP and its
-  // build-only level draft were deleted 2026-08-22, so these three levels are the run's only build
-  // source). A drafted buff applies on the spot through applyBuff(); a drafted build enters the hand.
-  // Each stack is a real, permanent change to a run the rest of this file then measures against
-  // authored numbers, so it is scrubbed straight back off — the same tidy-up the tower-range cap
-  // does below (`delete sim.state.draft.buffs.towerRange`). The two buffs that also write run state
-  // (handCarry, baseHp) are restored with it.
+  // Every completed authored base level pays ONE pick from the build-only pool. XP and its old
+  // level draft are gone, so these three levels are the run's only building-card source.
   const takeBaseReward=()=>{
     assert.equal(sim.draftKind(),"base","a completed base level must deal its own reward kind, not dawn's");
     const offer=sim.draftPending();
     assert.equal(offer.length,3);assert.equal(new Set(offer).size,3,"the base offer repeated a card");
-    assert.equal(offer.every(id=>["build","buff"].includes(cardById[id].category)&&cardById[id].inPool),true,"a base reward may only deal builds or permanent buffs");
-    // Prefer a buff when the mixed offer holds one, so the scrub below can undo it; a build-only
-    // offer is taken into the hand and cleared instead.
-    const index=Math.max(0,offer.findIndex(id=>cardById[id].category==="buff"));
-    const id=offer[index],isBuff=cardById[id].category==="buff",stacks=sim.buffStacks(id),held=sim.hand().length;
-    const capacity=sim.state.capacity,baseMax=sim.state.baseMax,baseHp=sim.state.baseHp;
-    assert.equal(sim.chooseDraft(index),true);
-    if(isBuff){
-      assert.equal(sim.buffStacks(id),stacks+1,"a drafted buff must land through applyBuff");
-      assert.equal(sim.hand().length,held,"a drafted buff must never enter the hand");
-      if(stacks)sim.state.draft.buffs[id]=stacks;else delete sim.state.draft.buffs[id];
-    }else{
-      assert.equal(sim.hand().length,held+1,"a drafted build must land in the hand");
-      sim.debugClearHand();
-    }
-    sim.state.capacity=capacity;sim.state.baseMax=baseMax;sim.state.baseHp=baseHp;
+    assert.equal(offer.every(id=>cardById[id].category==="build"&&cardById[id].inPool),true,"a base reward may only deal buildings");
+    const id=offer[0],held=sim.hand().length;
+    assert.equal(sim.chooseDraft(0),true);
+    assert.equal(sim.hand().length,held+1,"a drafted build must land in the hand");
+    assert.ok(sim.hand().some(entry=>entry.id===id));
+    sim.debugClearHand();
   };
   takeBaseReward();
   assert.equal(sim.draftPending(),null,"the base level owes exactly one pick");
@@ -113,7 +98,7 @@ const takeOfferScrubbed=(index=0)=>{
 
 // Consumable Forge integration: force its rare build card into a base-level offer, construct
 // it, then exercise manual dust batching through the shared consumable queue.
-const forgePool=sim.draftEligible(["build","buff"]),forgePoolIndex=forgePool.findIndex(card=>card.id==="bpConsumableForge"),forgeWeight=forgePool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),forgeWeightBefore=forgePool.slice(0,forgePoolIndex).reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0);
+const forgePool=sim.cardPullStatus().eligible.base.map(id=>cardById[id]),forgePoolIndex=forgePool.findIndex(card=>card.id==="bpConsumableForge"),forgeWeight=forgePool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),forgeWeightBefore=forgePool.slice(0,forgePoolIndex).reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0);
 assert.ok(forgePoolIndex>=0,"bpConsumableForge is absent from the live build pool");
 Math.random=()=>(forgeWeightBefore+RARITY_WEIGHTS.rare/2)/forgeWeight;
 assert.equal(sim.debugQueueDraft("base"),true);const forgeOffer=sim.draftPending();assert.equal(sim.draftKind(),"base");assert.equal(forgeOffer.length,3);assert.ok(forgeOffer.includes("bpConsumableForge"));
@@ -124,24 +109,23 @@ sim.setPointerWorld(forge.x,forge.y);sim.secondaryRelease();assert.equal(forge.c
 sim.state.carried.wood=1;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,0);assert.equal(sim.state.carried.wood,0);assert.equal(sim.resourceDrops.filter(item=>item.kind==="wood").length,1,"non-dust did not use the ground-drop fallback");sim.resourceDrops.length=0;
 sim.state.carried.dust=2;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,2);assert.equal(sim.draftPending(),null,"partial dust queued a draft");
 assert.equal(sim.debugQueueDraft("base"),true);const priorityOffer=sim.draftPending();assert.equal(sim.draftKind(),"base");
-sim.state.carried.dust=5;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,2);assert.equal(sim.draftPending(),priorityOffer,"forge reward displaced the active base offer");assert.equal(sim.state.draft.consumableQueue,1);assert.equal(sim.state.draftPaused,true);
+sim.state.carried.dust=5;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,2);assert.equal(sim.draftPending(),priorityOffer,"forge reward displaced the active base offer");assert.equal(sim.cardPullStatus().pending.consumable,1);assert.equal(sim.state.draftPaused,true);
 takeOfferScrubbed(0);assert.equal(sim.draftKind(),"consumable","forge reward did not follow the higher-priority base offer");
 let forgeDrafts=0;
 const chooseForgeReward=()=>{const offer=sim.draftPending();assert.equal(sim.draftKind(),"consumable");assert.equal(offer.length,3);assert.equal(new Set(offer).size,3);assert.equal(offer.every(id=>cardById[id].category==="consumable"),true);const chosen=offer[0],before=sim.hand().find(entry=>entry.id===chosen)?.count??0;assert.equal(sim.chooseDraft(0),true);assert.equal(sim.hand().find(entry=>entry.id===chosen)?.count,before+1,"chosen forge consumable did not enter the hand");forgeDrafts++;};
 chooseForgeReward();
 sim.state.carried.dust=6;sim.setPointerWorld(forge.x,forge.y);sim.secondaryRelease();assert.equal(forge.consumableForge.dust,3,"deposit over five lost its remainder");
-sim.state.carried.dust=17;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,0,"multi-batch delivery lost or invented excess dust");assert.equal(sim.state.draft.consumableQueue,4,"multi-batch delivery queued the wrong number behind the live offer");
+sim.state.carried.dust=17;sim.secondaryRelease();assert.equal(forge.consumableForge.dust,0,"multi-batch delivery lost or invented excess dust");assert.equal(sim.cardPullStatus().pending.consumable,4,"multi-batch delivery queued the wrong number behind the live offer");
 while(sim.draftPending())chooseForgeReward();assert.equal(forgeDrafts,6);assert.equal(sim.state.draftPaused,false);const forgeResumeAt=sim.state.clock.elapsed;sim.update(.01);assert.ok(sim.state.clock.elapsed>forgeResumeAt,"world stayed paused after forge drafts drained");assert.equal(sim.buildings.includes(forge),true,"forge was consumed by a payout");
 forge.consumableForge.dust=5;assert.throws(()=>sim.validateSimulationInvariants(),/illegal consumable-forge state/);forge.consumableForge.dust=1.5;assert.throws(()=>sim.validateSimulationInvariants(),/illegal consumable-forge state/);forge.consumableForge.dust=0;sim.validateSimulationInvariants();
 sim.buildings.splice(sim.buildings.indexOf(forge),1);sim.debugClearHand();
 
-// Tower Range applies to both ranged and area towers, then leaves the draft after five stacks.
+// Debug stacking still exercises the effective-stat math, although normal play gives the buff once.
 const towerRangeCard=cardById.towerRange,basicRadius=sim.indicatorRadius("tower"),pulse={type:"tower",tower:{variant:"pulse"}};
-assert.equal(towerRangeCard.stacks,5);assert.equal(towerRangeCard.inPool,true);assert.equal(towerRangeCard.implemented,true);
-for(let i=0;i<towerRangeCard.stacks;i++)assert.equal(sim.debugApplyBuff("towerRange"),true);
-const stackedRange=data.CARD_BUFFS.towerRange*towerRangeCard.stacks;
+const debugStacks=5;assert.equal(towerRangeCard.inPool,true);assert.equal(towerRangeCard.implemented,true);
+for(let i=0;i<debugStacks;i++)assert.equal(sim.debugApplyBuff("towerRange"),true);
+const stackedRange=data.CARD_BUFFS.towerRange*debugStacks;
 assert.equal(sim.indicatorRadius("tower"),basicRadius+stackedRange);assert.equal(sim.towerRadius(pulse),data.TOWER_VARIANTS.pulse.effectRadius+stackedRange);
-assert.equal(sim.draftEligible(["buff"]).some(card=>card.id==="towerRange"),false,"capped tower range remained in the draft pool");
 delete sim.state.draft.buffs.towerRange;
 
 // Houses reserve a centered 3x3 yard. One completed 1x1 beacon reaches towers on both sides.
@@ -220,20 +204,16 @@ const defender=sim.friendlyBrutes[0];sim.resourceDrops.length=0;sim.spawnEnemy("
 enemy.x=defender.x+bossDef.stompRadius-5;enemy.y=defender.y;enemy.wob=(.5-.01)/.12;sim.DBG.invulnBase=true;const stompTree={x:enemy.x,y:enemy.y,hp:3,max:3,stump:0,shake:0,variant:0,footprint:data.RESOURCE_FOOTPRINT};sim.trees.push(stompTree);const beforeStomp=defender.hp;sim.update(.02);assert.equal(defender.hp,beforeStomp-bossDef.stompDamage,"walking boss contact did not damage nearby player units");assert.equal(stompTree.stump,1,"player-resources stomp did not damage a tree");sim.trees.splice(sim.trees.indexOf(stompTree),1);
 enemy.x=defender.x+20;enemy.y=defender.y;enemy.attackCooldown=0;const defenderHp=defender.hp;sim.update(.01);assert.ok(defender.hp<defenderHp,"hostile did not target nearer friendly Brute");for(let i=0;i<20&&sim.friendlyBrutes.includes(defender);i++)sim.update(.2);assert.equal(sim.friendlyBrutes.includes(defender),false,"friendly Brute could not die");sim.state.enemies.length=0;circle.summoning.remaining=.01;sim.update(.02);assert.equal(sim.buildings.includes(circle),false,"used circle survived its lifetime");
 
-// Prerequisite gating is deterministic run state, not luck: a `requires` card is locked out of every
-// eligible pool until each listed buff is owned, and unlocking never edits the authored catalog.
+// Prerequisite gating belongs to the Card Pull: a `requires` card stays unavailable until its buff
+// card is given. The focused Reward Draft test covers the unlocking transition itself.
 const gated=cardById.bpCaptureYard;
 assert.deepEqual(gated.requires,["enemyPickup"]);
 assert.equal(sim.buffStacks("enemyPickup"),0,"test order broke: enemyPickup owned before the gating checks");
-assert.equal(sim.cardPrerequisitesMet(gated),false,"prerequisite reported met before its buff was owned");
-assert.equal(sim.draftEligible().some(card=>!sim.cardPrerequisitesMet(card)),false,"eligible pool leaked a locked card");
-assert.equal(sim.draftEligible(["build"]).some(card=>card.id===gated.id),false,"locked build card entered the level pool");
+assert.equal(sim.cardPullStatus().eligible.base.includes(gated.id),false,"locked build card entered the Card Pull");
 
 // Workers retain right-click priority over overlapping light enemies. Held scheduled enemies count
 // toward clearance, preserve status, restore on cancel, reject water, and heavy enemies remain fixed.
 sim.debugApplyBuff("enemyPickup");
-assert.equal(sim.cardPrerequisitesMet(gated),true,"owning the buff did not satisfy the prerequisite");
-assert.equal(sim.draftEligible(["build"]).some(card=>card.id===gated.id),gated.inPool,"unlocked eligibility must track the authored inPool flag alone");
 assert.equal(gated.implemented||!gated.inPool,true,"bpCaptureYard may not enter the pool before its loop is implemented");const overlapWorker=worker(circleAnchor.x+200,circleAnchor.y);sim.state.workers.push(overlapWorker);sim.spawnEnemy("raider");enemy=sim.state.enemies.at(-1);enemy.x=overlapWorker.x;enemy.y=overlapWorker.y;sim.setPointerWorld(enemy.x,enemy.y);sim.secondaryPress();assert.equal(sim.heldWorker(),overlapWorker);sim.pointerCancelled();sim.state.workers.length=0;
 if(sim.state.clock.phase==="day")sim.transitionPhase();enemy.waveNightNumber=sim.state.nightWave.activeNightNumber;enemy.status.slow={duration:2,multiplier:.5};enemy.attackCooldown=.7;const identity={status:enemy.status,hp:enemy.hp,cooldown:enemy.attackCooldown,x:enemy.x,y:enemy.y};
 sim.setPointerWorld(enemy.x,enemy.y);sim.secondaryPress();assert.equal(sim.heldEnemy(),enemy);assert.equal(sim.livingActiveWaveEnemies(),1);sim.pointerCancelled();assert.equal(sim.state.enemies.includes(enemy),true);assert.equal(enemy.status,identity.status);assert.equal(enemy.hp,identity.hp);assert.equal(enemy.attackCooldown,identity.cooldown);

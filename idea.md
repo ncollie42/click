@@ -116,7 +116,7 @@ Longer rationale, kept for reference: villagers dig it up, wall it in with their
 
 > **RETIRED 2026-08-22 — XP no longer exists.** `state.xp`, `state.level`, `LEVEL_CURVE` and
 > `RESOURCE_XP` were deleted from the game. Progression is now the three authored `MAIN_BASE_LEVELS`
-> (each pays one build-or-buff draft) plus one buff per night survived, and wave pools widen with
+> (each pays one building draft) plus one buff per night survived, and wave pools widen with
 > nights survived rather than anything the player feeds. Everything in this section — including the
 > "Decided (2026-08-21)" line and the Machine Hunger sub-idea below — is kept as unbuilt design: the
 > greed dial it argues for would have to be rebuilt on a number that still exists (deposits, base
@@ -409,7 +409,7 @@ Related open question: with free workers gathering and hauling on their own, doe
 
 Implement later:
 
-- Keep a compact bottom-of-screen ledger showing every upgrade/card received this run, including stacks or remaining charges where relevant.
+- Keep a compact bottom-of-screen ledger showing every card received this run and remaining charges where relevant.
 - Keep a persistent counter window for live DPS and resource production/collection.
 - Derive the ledger from run-owned card/upgrade state; do not maintain duplicate UI state.
 - Derive DPS from actual damage events over a rolling window, not theoretical tower stats.

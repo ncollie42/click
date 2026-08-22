@@ -22,22 +22,21 @@ export const MODELED_WAVE_CLEAR_SECONDS=45;
 
 export function levelCost(level){return LEVEL_CURVE.base*Math.pow(LEVEL_CURVE.growth,level);}
 
-// The scripted drafter: every Nth level takes the next income buff from the
-// policy cycle that still has stacks left; other picks don't move the model.
+// The scripted drafter: every Nth level takes the next not-yet-given income buff from the policy
+// cycle. The live Card Pull also contains every card ID once.
 function makeDrafter(){
-  const stacksLeft=Object.fromEntries(DRAFT_POLICY.cycle.map(id=>[id,cardById[id].stacks??1]));
+  const remaining=new Set(DRAFT_POLICY.cycle);
   let cursor=0;
   return function draft(level,mults){
     if(level%DRAFT_POLICY.incomeBuffEveryNLevels!==0) return null;
     for(let hop=0;hop<DRAFT_POLICY.cycle.length;hop++){
       const id=DRAFT_POLICY.cycle[cursor%DRAFT_POLICY.cycle.length];cursor++;
-      if(stacksLeft[id]<=0) continue;
-      stacksLeft[id]--;
+      if(!remaining.delete(id)) continue;
       const {target,mult}=cardById[id].model;
       mults[target]*=mult;
       return id;
     }
-    return null; // every stack of every income buff is spent
+    return null; // every modeled income buff was given
   };
 }
 

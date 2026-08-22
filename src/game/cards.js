@@ -1,11 +1,11 @@
-// Card registry — the single source of truth for the pick-3 draft pool.
+// Card registry — the immutable source for the run's finite Card Pull.
 //
 // One entry per card. This file is the design catalog AND the feature tracker:
 //   implemented — the effect exists in game code (may still be test-only)
 //   inPool      — the draft can actually offer it
 // Workflow: add an entry here (implemented:false), point Claude at it, it gets
 // built, the flag flips.
-// Reward pools: level-ups offer BUILDS; cleared waves offer a permanent BUFF; opened chests and
+// Card Pull kinds: level-ups offer BUILDS; cleared waves offer a permanent BUFF; opened chests and
 // completed Consumable Forge dust batches offer a CONSUMABLE. A chosen buff applies immediately.
 // Chosen builds and consumables enter the HAND (simulation.js) and only become effects when played.
 // docs/cards.html renders this file as a browsable
@@ -14,12 +14,11 @@
 //
 // Fields:
 //   id         unique slug
-//   category   "buff" (permanent, stackable) | "consumable" (free, expendable)
+//   category   "buff" (permanent) | "consumable" (free, expendable)
 //              | "aura" (free, temporary buff tower) | "build" (drops one construction
-//              site; it stays in the pool and may be offered again)
+//              site; every in-pool card ID can be given once per run)
 //   rarity     "common" | "rare" | "epic" | "legendary"
 //   text       player-facing effect line
-//   stacks     max times a buff can be drafted (buffs only)
 //   ref        what it unlocks/casts, checked against authored tables:
 //              "building:<id>" | "tower:<id>" | "upgrade:<id>" | "concept:<slug>"
 //   model      expected income effect PER STACK for the pacing model, or null.
@@ -33,7 +32,7 @@
 //   tags       optional mechanic facets beyond the card's category
 //   features   larger game systems touched by the card; values come from CARD_FEATURES
 //   produces   output of a generator build that has no authored game table yet
-//   requires   optional list of BUFF card ids the run must own (>=1 stack each) before the draft
+//   requires   optional list of BUFF card ids the Card Pull must have given before the draft
 //              may offer this card; ownership never expires, so a once-eligible card stays eligible
 
 export const RARITIES=["common","rare","epic","legendary"];
@@ -46,102 +45,101 @@ export const RARITY_WEIGHTS={common:60,rare:27,epic:10,legendary:3};
 export const CARDS=[
   // ── A · buffs — click ─────────────────────────────────────────────────────
   {id:"clickDamage",  category:"buff", rarity:"common", text:"clicks deal +1 damage to resources and enemies",
-   stacks:5, ref:"concept:clickCombat", model:null,
+   ref:"concept:clickCombat", model:null,
    implemented:true, inPool:true, notes:"flat damage applied to both branches of the player-click pipeline"},
   {id:"clickSpeed",   category:"buff", rarity:"common", text:"clicks land 0.2 seconds sooner",
-   stacks:2, ref:"concept:chopTime", model:{target:"hand",mult:1.4},
-   implemented:true, inPool:true, notes:"subtracts 0.2 seconds per stack from the 0.7-second base: 0.5 seconds, then 0.3; steady hand multiplies the resulting fill rate"},
+   ref:"concept:chopTime", model:{target:"hand",mult:1.4},
+   implemented:true, inPool:true, notes:"subtracts 0.2 seconds from the 0.7-second base; steady hand multiplies the resulting fill rate"},
   {id:"chopYield",    category:"buff", rarity:"rare",   text:"+1 drop per completed chop",
-   features:["resources"], stacks:2, ref:"concept:chopYield", model:{target:"hand",mult:1.35},
+   features:["resources"], ref:"concept:chopYield", model:{target:"hand",mult:1.35},
    implemented:false, inPool:false, notes:"TUNE.chopYield exists as debug knob; huge early — rare on purpose"},
-  {id:"critClicks",   category:"buff", rarity:"rare",   text:"+10% crit chance per stack; critical clicks deal ×2 damage",
-   stacks:3, ref:"concept:crit", model:{target:"hand",mult:1.2},
+  {id:"critClicks",   category:"buff", rarity:"rare",   text:"+10% crit chance; critical clicks deal ×2 damage",
+   ref:"concept:crit", model:{target:"hand",mult:1.2},
    implemented:true, inPool:true, notes:"the same flat multiplier applies to resource HP and combat HP"},
-  {id:"critYield", category:"buff", rarity:"rare", text:"critical clicks yield +1 resource per stack",
-   features:["resources"], stacks:2, ref:"concept:critYield", model:{target:"hand",mult:1.08},
+  {id:"critYield", category:"buff", rarity:"rare", text:"critical clicks yield +1 resource",
+   features:["resources"], ref:"concept:critYield", model:{target:"hand",mult:1.08},
    implemented:true, inPool:true, notes:"adds physical drops only after a resource click rolls critical; does not change damage"},
-  {id:"chainLightning", category:"buff", rarity:"epic", text:"20% chance to arc to 1 nearby target; each stack adds 10% chance and 1 jump",
-   tags:["chain","lightning"], stacks:4, ref:"concept:chainLightning", model:null,
-   implemented:true, inPool:true, notes:"stack N procs at 20%+10%(N-1) and throws N jumps — 20%/1 to 50%/4 at cap; jumps are full clicks (own crit roll) crossing freely between enemies and resources (CARD_BUFFS.chain* in data.js)"},
-  {id:"freeHit", category:"buff", rarity:"rare", text:"each click has +15% chance per stack to strike again for free",
-   tags:["click","free hit"], stacks:3, ref:"concept:freeHit", model:null,
+  {id:"chainLightning", category:"buff", rarity:"epic", text:"20% chance to arc to 1 nearby target",
+   tags:["chain","lightning"], ref:"concept:chainLightning", model:null,
+   implemented:true, inPool:true, notes:"jumps are full clicks with their own crit roll and may cross between enemies and resources"},
+  {id:"freeHit", category:"buff", rarity:"rare", text:"each click has a 15% chance to strike again for free",
+   tags:["click","free hit"], ref:"concept:freeHit", model:null,
    implemented:true, inPool:true, notes:"the bonus strike is a full click hit with crit and future click effects; it cannot recursively trigger itself"},
   {id:"enemyPickup", category:"buff", rarity:"epic", text:"pick up light enemies",
-   tags:["enemy pickup","light enemy"], features:["physical space"], stacks:1, ref:"concept:enemyPickup", model:null,
+   tags:["enemy pickup","light enemy"], features:["physical space"], ref:"concept:enemyPickup", model:null,
    implemented:true, inPool:true, notes:"enemy definitions own weightTag; held scheduled enemies still count toward wave clearance"},
   {id:"loadedDrop", category:"buff", rarity:"epic", text:"dropping carried resources deals 1 area damage per resource",
-   tags:["aoe","hand"], features:["resources","physical space"], stacks:1, ref:"concept:loadedDrop", model:null,
+   tags:["aoe","hand"], features:["resources","physical space"], ref:"concept:loadedDrop", model:null,
    implemented:false, inPool:false, notes:"uses hand count before the drop; prevent repeated pickup/drop from dealing free infinite damage"},
   {id:"enemySlam", category:"buff", rarity:"legendary", text:"pick up light enemies; dropping one deals area damage on impact",
-   tags:["aoe","enemy pickup","light enemy"], features:["physical space"], stacks:1, ref:"concept:enemySlam", model:null,
+   tags:["aoe","enemy pickup","light enemy"], features:["physical space"], ref:"concept:enemySlam", model:null,
    implemented:false, inPool:false, notes:"follow-up to enemy pickup; weight limit, impact damage, and radius TBD"},
   {id:"deathTree", category:"buff", rarity:"rare", text:"enemy deaths have a 25% chance to grow a tree",
-   features:["resources","physical space"], stacks:1, ref:"concept:deathTree", model:null,
+   features:["resources","physical space"], ref:"concept:deathTree", model:null,
    implemented:true, inPool:true, notes:"the tree uses the nearest free revealed cell when the death cell is blocked"},
   {id:"deathExplosion", category:"buff", rarity:"epic", text:"enemy deaths explode for 3 damage to nearby enemies",
-   tags:["aoe"], features:["physical space"], stacks:1, ref:"concept:deathExplosion", model:null,
+   tags:["aoe"], features:["physical space"], ref:"concept:deathExplosion", model:null,
    implemented:true, inPool:true, notes:"64px radius; explosion kills also explode, allowing finite chain reactions"},
   {id:"handCarry",    category:"buff", rarity:"common", text:"carry 2 more resources by hand",
-   features:["resources"], stacks:4, ref:"upgrade:hands", model:{target:"hand",mult:1.05},
+   features:["resources"], ref:"upgrade:hands", model:{target:"hand",mult:1.05},
    implemented:true, inPool:true, notes:"raises state.capacity, the same run field a completed resource building raises"},
   {id:"vacuumRadius", category:"buff", rarity:"common", text:"+15 loose-resource pickup radius",
-   features:["resources","physical space"], stacks:3, ref:"upgrade:magnet", model:{target:"hand",mult:1.08},
-   implemented:true, inPool:true, notes:"+15px per stack layered over TUNE.vacuumRadius; the drawn ring reads the effective vacuumRadius accessor"},
+   features:["resources","physical space"], ref:"upgrade:magnet", model:{target:"hand",mult:1.08},
+   implemented:true, inPool:true, notes:"adds 15px over TUNE.vacuumRadius; the drawn ring reads the effective vacuumRadius accessor"},
   {id:"steadyHand",   category:"buff", rarity:"rare",   text:"gathering and attacking take 45% less time",
-   features:["resources"], stacks:1, ref:"upgrade:autoClick", model:{target:"hand",mult:1.45},
+   features:["resources"], ref:"upgrade:autoClick", model:{target:"hand",mult:1.45},
    implemented:true, inPool:false, notes:"STEADY_HAND_RATE — the one upgrade with a real effect today"},
 
   // ── A · buffs — workers ───────────────────────────────────────────────────
   {id:"workerSpeed",  category:"buff", rarity:"common", text:"workers walk 25% faster",
-   features:["workers"], stacks:2, ref:"concept:workerSpeed", model:{target:"worker",mult:1.25},
+   features:["workers"], ref:"concept:workerSpeed", model:{target:"worker",mult:1.25},
    implemented:true, inPool:true, notes:""},
   {id:"workerResourceDamage", category:"buff", rarity:"common", text:"workers deal +1 damage to resources",
-   features:["workers","resources"], stacks:3, ref:"concept:workerResourceDamage", model:{target:"worker",mult:1.15},
+   features:["workers","resources"], ref:"concept:workerResourceDamage", model:{target:"worker",mult:1.15},
    implemented:true, inPool:true, notes:"speeds node clearing without adding drops"},
   {id:"workerCombatDamage", category:"buff", rarity:"common", text:"workers deal +1 combat damage",
-   features:["workers"], stacks:3, ref:"concept:workerCombatDamage", model:null,
+   features:["workers"], ref:"concept:workerCombatDamage", model:null,
    implemented:true, inPool:true, notes:"applies to ordinary workers and fortified garrison guards"},
   {id:"workerCarry",  category:"buff", rarity:"rare",   text:"workers carry 1 more resource",
-   features:["workers"], stacks:3, ref:"concept:workerCarry", model:{target:"worker",mult:1.25},
-   implemented:true, inPool:true, notes:"WORKER_CARRY is 3 today, so each stack is big"},
+   features:["workers"], ref:"concept:workerCarry", model:{target:"worker",mult:1.25},
+   implemented:true, inPool:true, notes:"adds one over the authored WORKER_CARRY of 3"},
   {id:"buildCapacity", category:"buff", rarity:"rare", text:"every construction site supports +1 builder",
-   features:["workers"], stacks:2, ref:"concept:buildCapacity", model:{target:"worker",mult:1.08},
+   features:["workers"], ref:"concept:buildCapacity", model:{target:"worker",mult:1.08},
    implemented:true, inPool:true, notes:"adds one to each building type's authored buildSlots while it is under construction"},
   {id:"workerSlot",   category:"buff", rarity:"epic",   text:"every house hosts +1 worker",
-   features:["workers","physical space"], stacks:2, ref:"concept:houseSlots", model:{target:"worker",mult:1.2},
+   features:["workers","physical space"], ref:"concept:houseSlots", model:{target:"worker",mult:1.2},
    implemented:false, inPool:false, notes:"HOUSE_SLOTS lever; retroactive on built houses"},
   {id:"workerHp",     category:"buff", rarity:"common", text:"workers +2 hp",
-   features:["workers","hp"], stacks:3, ref:"concept:workerHp", model:null,
+   features:["workers","hp"], ref:"concept:workerHp", model:null,
    implemented:false, inPool:false, notes:"survival, not income"},
   {id:"dawnHeal",     category:"buff", rarity:"rare",   text:"workers fully heal at dawn",
-   features:["day/night","workers","hp"], stacks:1, ref:"concept:dawnHeal", model:null,
+   features:["day/night","workers","hp"], ref:"concept:dawnHeal", model:null,
    implemented:false, inPool:false, notes:""},
 
   // ── A · buffs — towers & base ─────────────────────────────────────────────
   {id:"towerDamage",  category:"buff", rarity:"common", text:"all towers deal +1 damage",
-   stacks:5, ref:"concept:towerDamage", model:null,
+   ref:"concept:towerDamage", model:null,
    implemented:true, inPool:true, notes:"flat bonus per direct shot; burn ticks keep their authored damage"},
   {id:"towerSpeed",   category:"buff", rarity:"common", text:"all towers fire 25% faster",
-   stacks:5, ref:"concept:towerSpeed", model:null,
+   ref:"concept:towerSpeed", model:null,
    implemented:true, inPool:true, notes:"divides every tower cooldown, manual pulses included"},
   {id:"towerRange",   category:"buff", rarity:"rare",   text:"all towers gain 50 range",
-   features:["physical space"], stacks:5, ref:"concept:towerRange", model:null,
-   implemented:true, inPool:true, notes:"adds 50px per stack to single-target range and area-tower effect radius; capped at five drafts"},
+   features:["physical space"], ref:"concept:towerRange", model:null,
+   implemented:true, inPool:true, notes:"adds 50px to single-target range and area-tower effect radius"},
   {id:"towerHp", category:"buff", rarity:"common", text:"all towers gain 5 max hp and heal 5",
-   features:["hp"], stacks:4, ref:"concept:towerHp", model:null,
+   features:["hp"], ref:"concept:towerHp", model:null,
    implemented:true, inPool:true, notes:"applies to existing towers immediately and is included when future towers finish"},
   {id:"dawnRepair",   category:"buff", rarity:"epic",   text:"towers self-repair at dawn",
-   features:["day/night","hp"], stacks:1, ref:"concept:dawnRepair", model:null,
+   features:["day/night","hp"], ref:"concept:dawnRepair", model:null,
    implemented:false, inPool:false, notes:""},
   {id:"baseHp",       category:"buff", rarity:"common", text:"the base gains 25 max hp and heals 25",
-   features:["hp"], stacks:4, ref:"concept:baseHp", model:null,
+   features:["hp"], ref:"concept:baseHp", model:null,
    implemented:true, inPool:true, notes:"heals the same 25 hp it adds"},
   {id:"retaliation", category:"buff", rarity:"epic", text:"attackers take damage proportional to the damage they deal",
-   tags:["retaliation","reflected damage"], features:["hp","physical space"], stacks:1,
-   ref:"concept:retaliation", model:null, implemented:false, inPool:false,
+   tags:["retaliation","reflected damage"], features:["hp","physical space"],    ref:"concept:retaliation", model:null, implemented:false, inPool:false,
    notes:"scope—main base only or every damageable building—and reflected percentage TBD"},
   {id:"nightOwl",     category:"buff", rarity:"rare",   text:"gathering is 15% faster at night",
-   features:["day/night","resources"], stacks:2, ref:"concept:nightGather", model:{target:"global",mult:1.06},
+   features:["day/night","resources"], ref:"concept:nightGather", model:{target:"global",mult:1.06},
    implemented:false, inPool:false, notes:"raises ARC.nightIncomeFactor in effect"},
   // xpAppetite ("completed buildings grant 15% more XP") was DELETED 2026-08-22 with the XP system:
   // there is no XP for a card to multiply. Progression is MAIN_BASE_LEVELS + dawn buffs now.
@@ -232,14 +230,13 @@ export const CARDS=[
   {id:"bpMainBase", category:"build", rarity:"common", text:"raise the main base",
    tags:["main base"], features:["day/night","physical space"], charges:1, ref:"building:mainBase", model:null,
    implemented:true, inPool:false,
-   notes:"one site at the authored BASE anchor, charging the level-1 recipe MAIN_BASE_LEVELS[0] (10 wood) through the ordinary delivery path; completion sets state.baseLevel=1, starts day 1 and deals one 'base' draft (mixed build+buff). Levels 2-3 (10 stone, then 10 wood + 10 stone) are released at the standing base and each deal another base draft — since XP was deleted 2026-08-22 these three are the run's ONLY build-card source"},
+   notes:"one site at the authored BASE anchor, charging the level-1 recipe MAIN_BASE_LEVELS[0] (10 wood) through the ordinary delivery path; completion sets state.baseLevel=1, starts day 1 and deals one build-only 'base' draft. Levels 2-3 (10 stone, then 10 wood + 10 stone) are released at the standing base and each deal another base draft — since XP was deleted 2026-08-22 these three are the run's ONLY build-card source"},
 
   // ── D · builds — the base kit ─────────────────────────────────────────
   // The build shop is gone: these ARE the ordinary economy/defense menu, dealt as cards. Each
   // one drops a single ordinary CONSTRUCTION SITE at the building's own authored cost — the card
   // buys the plan, never the materials — and the house site charges nextHouseCost(), the same
-  // escalating price every later house pays. They are common and they stay in the pool, so a run
-  // can keep drawing houses and camps as it grows.
+  // escalating price every later house pays. Each plan can be given once from the finite Card Pull.
   {id:"bpHouse",     category:"build", rarity:"common", text:"start building a house",     features:["workers","physical space"], charges:1, ref:"building:house",     model:null, implemented:true, inPool:true, notes:"one centered house on a 3x3 yard at the ESCALATED house cost — the same price the nth house has always cost"},
   {id:"bpRangeBeacon",category:"build",rarity:"rare", text:"start building a range beacon; nearby towers gain 50 range", tags:["aoe"], features:["physical space"], charges:1, ref:"building:rangeBeacon", model:null, implemented:true, inPool:true, notes:"persistent 1x1 support building; complete towers within 128px gain 50 attack/effect radius"},
   {id:"bpWarShrine",category:"build",rarity:"rare", text:"start building a war shrine; nearby towers gain 1 damage", tags:["aoe","tower damage"], features:["physical space"], charges:1, ref:"building:warShrine", model:null, implemented:true, inPool:true, notes:"persistent 1x1 support building; complete towers within 128px gain 1 direct damage; multiple shrines do not stack"},
@@ -256,8 +253,8 @@ export const CARDS=[
   // ── D · builds — the tower table is the pool ──────────────────────────
   // Every card below refs a real authored table row, so all of them are in the pool. Drafting one
   // puts the card in the HAND; playing it arms the ordinary build placement flow and the click drops
-  // a normal CONSTRUCTION SITE, one per card. A build card does NOT leave the pool — sites are not
-  // unlocks, so a run may draw the same plan again and stand three of the thing. The card is
+  // a normal CONSTRUCTION SITE, one per card. Choosing one removes that card ID from the Card Pull.
+  // The card is
   // access to the plan, never free materials: one site displays and accepts the combined basic
   // chassis + variant cost, then completes directly as the named tower. No second build phase.
   {id:"bpTurret",   category:"build", rarity:"common", text:"start building a turret", tags:["single target"], features:["physical space"], charges:1, ref:"tower:turret", model:null, implemented:true, inPool:true, notes:"one site on the tower footprint; one combined build charges basic chassis + turret materials"},
@@ -286,14 +283,14 @@ export const CARDS=[
   // ── D · builds — the garrison ─────────────────────────────────────────
   // A defensive post, not a producer: it creates no workers and has no attack of its own. It holds
   // ordinary workers, who keep working in peace and fight from it when danger comes. Common and it
-  // stays in the pool like the rest of the build menu, but it is NOT part of the opening hand.
+  // lives in the building Card Pull, but it is NOT part of the opening hand.
   {id:"bpGarrison", category:"build", rarity:"common", text:"start building a garrison; workers muster here to defend",
    tags:["guard"], features:["workers","physical space"], charges:1, ref:"building:garrison", model:null,
    implemented:true, inPool:true,
    notes:"one garrison site at its authored cost; GARRISON in data.js owns the guard slots, muster/threat/guard radii, demobilize delay and arrived-guard stats"},
 
   // A reusable dust sink. The completed building keeps partial dust and queues one ordinary
-  // consumable draft for every full batch; it is repeatable like every other build plan.
+  // consumable draft for every full batch. The forge plan itself can be given once.
   {id:"bpConsumableForge", category:"build", rarity:"rare", text:"start building a consumable forge; every 5 delivered dust drafts a consumable",
    features:["resources","physical space"], charges:1, ref:"building:consumableForge", model:null,
    implemented:true, inPool:true,

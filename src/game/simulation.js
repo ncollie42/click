@@ -26,9 +26,9 @@ import {
 } from "./authored-map.js";
 // Authored showcase coordinates are immutable input; all live fixture objects remain owned here.
 import {SHOWCASE_MANIFEST} from "./showcase-data.js";
-// The authored card catalog: the draft reads it and NEVER writes it — a taken card tallies a
-// stack in state.draft, and cards.js keeps its implemented/inPool flags as authored.
+// The authored card catalog stays immutable; RewardDraft owns the run's finite Card Pull.
 import {CARDS,RARITY_WEIGHTS,cardById} from "./cards.js";
+import {createRewardDraft} from "./reward-draft.js";
 
 // ── runtime-tunable gameplay constants ──────────────────────────────────────
 // The view debugger REASSIGNS these while the game runs. An imported binding is
@@ -158,11 +158,9 @@ const state = {
   runMode:"normal",
   mouse:{x:W/2,y:H/2,inside:false},
   carried:{wood:0,stone:0,dust:0,coin:0,diamond:0}, stored:{wood:0,stone:0,dust:0,coin:0,diamond:0}, workers:[], enemies:[],
-  // The draft's whole run ledger: queued base-level, dawn/buff, and
-  // chest-or-forge consumable rewards; the live 3-card offer and kind; buff stacks; and two banked
-  // consumable effects. Blueprints keep no ledger at all — a plan is not an unlock, so the pool may
-  // offer the same one again. Authored tables stay untouched.
-  draft:{baseQueue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0},
+  // Applied card effects stay with the gameplay state they mutate. RewardDraft separately owns the
+  // Card Pull, reward backlog, and live offer, so selection rules cannot leak into effect state.
+  draft:{buffs:{},calmNight:false,dayBonus:0},
   // ── the hand ──
   // Every card the player is HOLDING, oldest first. One entry per id: {id, count, charges} where
   // count is how many copies are held and charges is the partially-spent kit's remaining placements
@@ -204,6 +202,8 @@ const state = {
   // shot went. Purely runtime — every NUMBER behind it is MAIN_BASE's.
   baseAttack:{cooldown:0,flash:0,targetX:BASE.x,targetY:BASE.y}
 };
+
+const rewardDraft=createRewardDraft({cards:CARDS,rarityWeights:RARITY_WEIGHTS,rerollCost:DRAFT_REROLL.coinCost});
 
 const rand = (a,b) => a + Math.random()*(b-a);
 // ── presentation randomness (juice only) ────────────────────────────────────
@@ -453,7 +453,7 @@ function buildShowcaseFixtures(){
 }
 // First initialization selects a closed run mode. Repeating the same mode is idempotent for normal
 // and rebuilds authored fixtures for showcase; switching an installed simulation is rejected.
-function resetShowcaseEconomy(){state.draft={baseQueue:0,dawnQueue:0,consumableQueue:0,offer:null,offerKind:null,buffs:{},calmNight:false,dayBonus:0};state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.baseLevelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();}
+function resetShowcaseEconomy(){state.draft={buffs:{},calmNight:false,dayBonus:0};rewardDraft.reset();state.draftPaused=false;state.hand.length=0;state.cardTargeting=null;effects.baseLevelChanged();effects.draftChanged();effects.handChanged();effects.phaseHudChanged();}
 // ── the opening hand ────────────────────────────────────────────────────────
 // ONE card. The run opens with nothing on the map and no clock pressure: the player gathers 10 wood
 // by hand, plays this card to raise the base site, and delivers the wood to it. Completing it ends
@@ -523,13 +523,7 @@ export function validateSimulationInvariants(){
     invariant(state.baseDelivered[kind]<=(nextBaseLevel?.cost[kind]||0),"the base banked more "+kind+" than its next authored level costs");
   }
   if(state.baseLevel===0)invariant(RESOURCE_KINDS.every(kind=>state.baseDelivered[kind]===0),"the level-1 recipe is charged on the construction site, never on state.baseDelivered");
-  const offer=state.draft.offer;
-  for(const key of ["baseQueue","dawnQueue","consumableQueue"])invariant(Number.isInteger(state.draft[key])&&state.draft[key]>=0,"illegal draft queue: "+key);
-  invariant(offer===null||(Array.isArray(offer)&&offer.length>0&&offer.length<=3&&new Set(offer).size===offer.length&&offer.every(id=>cardById[id]?.inPool)),"illegal draft offer");
-  invariant(offer===null?state.draft.offerKind===null:DRAFT_KINDS.includes(state.draft.offerKind),"draft offer kind disagrees with the pending offer");
-  invariant(offer===null||offer.every(id=>DRAFT_CATEGORIES[state.draft.offerKind].includes(cardById[id].category)),"draft offer category disagrees with its kind");
-  invariant(offer===null||offer.every(id=>cardPrerequisitesMet(cardById[id])),"draft offered a card whose prerequisites are not owned");
-  invariant(state.draftPaused===!!offer,"draft pause flag disagrees with the pending offer");
+  invariant(state.draftPaused===!!rewardDraft.current(),"draft pause flag disagrees with the pending offer");
   // The hand: one stack per id, every id authored, every count real, partial kits mid-spend only.
   invariant(new Set(state.hand.map(entry=>entry.id)).size===state.hand.length,"the hand holds two stacks of one card");
   for(const entry of state.hand){
@@ -1601,72 +1595,33 @@ function storeAtBase(counts,particleFromX,particleFromY){
 }
 
 // ── the draft ───────────────────────────────────────────────────────────────
-// Three reward sources share this machinery: a completed authored BASE level offers BUILDS AND
-// BUFFS mixed; DAWN (a night survived) offers one permanent buff; CHESTS and CONSUMABLE FORGES
-// offer a consumable. Each offer contains up to three DISTINCT eligible cards drawn by rarity
-// weight. Exactly one offer is live at a time, the rest wait in their queues, and the world is
-// halted while one pends via state.draftPaused. The choice arrives through chooseDraft(); nothing
-// else may write state.draft. What a taken card DOES is routed by takeCard() below, not the dealer.
-//
-// WHY "base" MIXES BUILD AND BUFF (Aug 22): builds used to be dealt by the deleted XP level-up
-// draft, which was the run's ONLY source of bpHouse / bpTower / bpStockpile after the opening
-// hand. Folding builds into the base-level reward keeps the village expandable at all; it also
-// caps builds at MAIN_BASE.maxLevel picks per run, which is an owner tuning question, not a law.
-const DRAFT_KINDS=["base","dawn","consumable"];
-const DRAFT_CATEGORIES=Object.freeze({base:Object.freeze(["build","buff"]),dawn:Object.freeze(["buff"]),consumable:Object.freeze(["consumable"])});
 function buffStacks(id){return state.draft.buffs[id]||0;}
-// Consumables and builds carry no `stacks`, so the same test lets them repeat forever and caps
-// only buffs. A build card is deliberately RE-OFFERABLE: what it deals is a construction site, not
-// an unlock, so a run that keeps drawing bpSniper is a run that gets to stand three snipers.
-// `requires` gates a card behind owned buff stacks: every listed buff must have been drafted at
-// least once this run. Buff stacks never leave state.draft.buffs, so eligibility never regresses.
-function cardPrerequisitesMet(card){return (card.requires??[]).every(id=>buffStacks(id)>0);}
-function draftEligible(categories=null){return CARDS.filter(card=>card.inPool&&(!categories||categories.includes(card.category))&&buffStacks(card.id)<(card.stacks??Infinity)&&cardPrerequisitesMet(card));}
-function drawDraftOffer(categories=null,exclude=null){
-  const pool=draftEligible(categories).filter(card=>!exclude||!exclude.has(card.id)),picks=[];
-  while(picks.length<3&&pool.length){
-    let roll=Math.random()*pool.reduce((sum,card)=>sum+RARITY_WEIGHTS[card.rarity],0),index=0;
-    while(index<pool.length-1&&(roll-=RARITY_WEIGHTS[pool[index].rarity])>=0)index++;
-    picks.push(pool.splice(index,1)[0].id);   // splice keeps the three distinct
-  }
-  return picks.length?picks:null;
-}
-// An empty pool consumes its queued reward silently, so a run with nothing left to offer never
-// stalls. QUEUE PRIORITY, when several are banked at once: base levels, then dawn buffs, then chest
-// or forge consumables. Priority only orders the BACKLOG — whichever reward was queued while no
-// offer was live is the one already on screen.
-function refillDraft(){
-  const draft=state.draft;
-  while(!draft.offer&&(draft.baseQueue>0||draft.dawnQueue>0||draft.consumableQueue>0)){
-    const kind=draft.baseQueue>0?"base":draft.dawnQueue>0?"dawn":"consumable";
-    if(kind==="base")draft.baseQueue--;else if(kind==="dawn")draft.dawnQueue--;else draft.consumableQueue--;
-    draft.offer=drawDraftOffer(DRAFT_CATEGORIES[kind]);
-    draft.offerKind=draft.offer?kind:null;
-  }
-  state.draftPaused=!!draft.offer;
+// RewardDraft owns the finite Card Pull and every selection rule. This adapter owns the gameplay
+// consequences of its read-only view: pausing input and notifying presentation.
+function syncRewardDraft(){
+  state.draftPaused=!!rewardDraft.current();
   if(state.draftPaused){stopGameplayInput();closeUpgradeMenu();}
   effects.draftChanged();
 }
 /** Chest or forge rewards. Showcase fixtures never enter production progression. */
 function queueConsumableRewards(count=1){
   if(state.runMode!=="normal")return;
-  invariant(Number.isInteger(count)&&count>0,"invalid consumable reward count");
-  state.draft.consumableQueue+=count;refillDraft();
+  rewardDraft.earn("consumable",count);syncRewardDraft();
 }
 /**
- * One completed authored base level deals ONE pick of three from the mixed build+buff pool (see
- * DRAFT_CATEGORIES): a buff applies on the spot, a build lands in the hand. THE only caller is
+ * One completed authored base level deals ONE pick of up to three from the Card Pull's building
+ * cards, and the chosen build lands in the hand. THE only caller is
  * completeMainBaseLevel(), which fires exactly once per level, so no free-cost sweep, repeated
  * release or oversized deposit can pay this twice.
  */
 function queueBaseLevelReward(){
   if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
-  state.draft.baseQueue++;refillDraft();
+  rewardDraft.earn("base");syncRewardDraft();
 }
 /** Wave clearance grants one permanent buff. */
 function queueWaveClearReward(){
   if(state.runMode!=="normal")return;                 // the showcase sandbox is never dealt cards
-  state.draft.dawnQueue++;refillDraft();
+  rewardDraft.earn("dawn");syncRewardDraft();
 }
 // Screen spells snapshot the renderer's actual active-camera frustum answer before damage starts;
 // kills and chain movement during iteration cannot change membership or ordering.
@@ -1694,7 +1649,7 @@ const CARD_EFFECTS={
   resourceRecall(){recallResources();},
   touchOfDeath(){for(const target of onScreenCombatTargets())damageCombatTarget(target,999,"#493052",12,null,{announce:true});sound(90,.35);}
 };
-/** A drafted BUFF, applied on the spot: one more stack, and its (usually empty) effect. */
+/** A drafted BUFF, applied on the spot. Normal play gives each card ID once; debug may stack it. */
 function applyBuff(id){
   const card=cardById[id],effect=CARD_EFFECTS[id];
   if(!card||!effect)return false;
@@ -1704,8 +1659,8 @@ function applyBuff(id){
 }
 /**
  * THE routing rule for a taken card, shared by every offer kind. A buff lands immediately; a
- * consumable or build lands in the HAND and does nothing at all until it is played. Nothing
- * leaves the pool: a build card can be offered again, and a second copy simply thickens its stack.
+ * consumable or build lands in the HAND and does nothing at all until it is played. RewardDraft
+ * has already removed the chosen ID from the finite Card Pull before this function runs.
  */
 function takeCard(id){
   const card=cardById[id];
@@ -1814,9 +1769,9 @@ function fireballImpact(x,y){
 // ── the main base ───────────────────────────────────────────────────────────
 // The player's base is BUILT, and this is the whole of its runtime lifecycle:
 //   LEVEL 1  bpMainBase (the opening card) → raiseMainBaseSite() → ordinary blueprint delivery →
-//            completeBuilding() → completeMainBaseLevel() → baseLevel 1, day 1, one buff draft.
+//            completeBuilding() → completeMainBaseLevel() → baseLevel 1, day 1, one build draft.
 //   LEVEL 2+ carry the next authored recipe to the STANDING base and release →
-//            deliverToMainBaseRecipe() → completeMainBaseLevel() → one buff draft.
+//            deliverToMainBaseRecipe() → completeMainBaseLevel() → one build draft.
 // Where it stands is authored (BASE in data.js) and never chosen, so this card does not aim: there
 // is exactly one legal anchor and canPlace() has always reserved it. What it costs is authored too
 // (MAIN_BASE_LEVELS, level 1 via the BUILDING_TYPES.mainBase row), delivered by hand or by builders
@@ -1866,7 +1821,7 @@ function mainBaseStatus(){
  * that still needs something.
  *
  * `free` follows completeBuilding's rule verbatim: a completion that spent nothing earns nothing,
- * so the free-costs toggle and the debug opening skip stand a base without paying out a buff.
+ * so the free-costs toggle and the debug opening skip stand a base without paying out a build.
  */
 function completeMainBaseLevel({free=false}={}){
   const next=mainBaseNextLevel();
@@ -3473,6 +3428,8 @@ function debugQueueDraft(kind="base"){
   else return false;
   return true;
 }
+/** Drop live and queued rewards without changing which cards the Card Pull has already given. */
+function debugClearDraft(){rewardDraft.discardRewards();syncRewardDraft();}
 /** Deal one card straight into the hand, skipping the offer entirely. Run state only: the catalog,
  *  its pool flags and every authored table are untouched, and the dealt card behaves exactly like a
  *  drafted one — it goes through addToHand(), and a kit carries its authored charges. */
@@ -3481,9 +3438,8 @@ function debugDealCard(id){
   if(!card||!["consumable","build"].includes(card.category))return false;
   addToHand(id);return true;
 }
-/** Apply one stack of an implemented buff, exactly as drafting it would (same applyBuff() path:
- *  stack tally + effect + toast). DEBUG ONLY: repeated calls stack past the authored `stacks` cap —
- *  the card dealer is a test bench, not a draft. */
+/** Apply one stack of an implemented buff through the same effect path drafting uses. DEBUG ONLY:
+ * repeated calls may stack even though the finite Card Pull gives each buff once. */
 function debugApplyBuff(id){
   const card=cardById[id];
   if(!card||card.category!=="buff")return false;
@@ -3690,10 +3646,13 @@ export function simulationEntityDiagnostics(){
   return {total,workers:state.workers.length,enemies:state.enemies.length,friendlies:friendlyBrutes.length,controlled:controlledEnemies.length,buildings:buildings.length,
     resourceNodes,drops:resourceDrops.length,transients};
 }
-/** The live offer as three card ids, or null when no draft is pending. Never mutate the array. */
-export function draftPending(){return state.draft.offer;}
+/** The live offer as one to three card ids, or null when no draft is pending. Never mutate it. */
+export function draftPending(){return rewardDraft.current()?.cardIds||null;}
 /** Pending pool — "base", "dawn", or "consumable" — or null. Same offer, same pick. */
-export function draftKind(){return state.draft.offer?state.draft.offerKind:null;}
+export function draftKind(){return rewardDraft.current()?.kind||null;}
+/** Read-only Card Pull ledger. `remaining` includes cards still locked by prerequisites; `eligible`
+ * names what each reward kind could deal now. */
+export function cardPullStatus(){return rewardDraft.pull();}
 /**
  * Take card `index` (0-2) of the pending offer. Routes the card through takeCard() — a buff applies,
  * a consumable or build goes to the hand — consumes the offer and, if more rewards are queued,
@@ -3701,9 +3660,10 @@ export function draftKind(){return state.draft.offer?state.draft.offerKind:null;
  * silent, so a UI may call this on any click without pre-checking.
  */
 export function chooseDraft(index){
-  const offer=state.draft.offer;
-  if(!offer||!Number.isInteger(index)||index<0||index>=offer.length)return false;
-  const id=offer[index];state.draft.offer=null;state.draft.offerKind=null;takeCard(id);refillDraft();
+  const id=rewardDraft.choose(index);
+  if(!id)return false;
+  invariant(takeCard(id),"Reward Draft chose an unfulfillable card: "+id);
+  syncRewardDraft();
   return true;
 }
 /** What the reroll button reads: the flat coin price and every coin the run can reach (banked
@@ -3716,18 +3676,19 @@ function spendCoins(amount){
   return true;
 }
 /**
- * Replace the live offer with a fresh draw from the same pool for DRAFT_REROLL.coinCost gold.
- * The three shown cards are excluded from the redraw, so a paid reroll always changes the offer;
- * when the pool holds nothing else, the reroll is refused before any coin is spent.
+ * Replace the live offer for DRAFT_REROLL.coinCost gold. RewardDraft draws alternatives first and
+ * reuses rejected cards only to fill a short batch. No alternative means refusal before payment.
  */
 export function rerollDraft(){
-  const offer=state.draft.offer,kind=state.draft.offerKind;
-  if(!offer||!kind||state.runMode!=="normal")return false;
-  const redealt=drawDraftOffer(DRAFT_CATEGORIES[kind],new Set(offer));
-  if(!redealt){toast("nothing else to offer");return false;}
-  if(!spendCoins(DRAFT_REROLL.coinCost)){toast("reroll needs "+DRAFT_REROLL.coinCost+" gold coin");return false;}
-  state.draft.offer=redealt;
-  sound(880,.09);effects.draftChanged();
+  if(state.runMode!=="normal")return false;
+  const result=rewardDraft.reroll(state.stored.coin+state.carried.coin);
+  if(!result.changed){
+    if(result.reason==="no-alternative")toast("nothing else to offer");
+    else if(result.reason==="insufficient-coins")toast("reroll needs "+DRAFT_REROLL.coinCost+" gold coin");
+    return false;
+  }
+  invariant(spendCoins(result.cost),"Reward Draft accepted a reroll the run could not pay for");
+  sound(880,.09);syncRewardDraft();
   return true;
 }
 /**
@@ -3792,8 +3753,6 @@ export {
   // read-only effective health for presentation; every mutation of it stays inside this module
   workerMaxHp,
   waveTier, waveThreatBudget, livingActiveWaveEnemies, buffStacks,
-  // draft eligibility projections — read-only views over the authored catalog and this run's stacks
-  draftEligible, cardPrerequisitesMet,
   // the effective vacuum reach, buffs included — the drawn ring should read this, not TUNE alone
   vacuumRadius,
   // shared numeric helpers (defined here, so nothing restates them)
@@ -3805,7 +3764,7 @@ export {
   // authored-progression view the overlay and the draft copy project
   mainBaseStanding, mainBaseStatus,
   // debug commands (view panel > gameplay)
-  debugGrant, debugQueueDraft, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase, setWaveThreatCurve,
+  debugGrant, debugQueueDraft, debugClearDraft, debugSweepFreeCosts, debugGoToPhase, debugAdvancePhase, setWaveThreatCurve,
   debugStartWave, debugClearEnemies, debugHealAll, debugDealCard, debugApplyBuff, debugClearHand,
   debugRaiseMainBase,
 };

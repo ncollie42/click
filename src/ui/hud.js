@@ -151,7 +151,7 @@ function updatePrompt(){
 // ── audio ───────────────────────────────────────────────────────────────────
 // The one non-DOM sink in this file, kept beside the toast because they are two halves of the same
 // player-facing feedback record: the simulation raises `sound` exactly where it raises `toast`.
-let audio=null,muted=false;
+let audio=null,muted=true;
 // View-only mute: the sim keeps raising `sound` effects and this sink drops them, so muting
 // never touches gameplay state. The legend row is the indicator (it reads "unmute" while muted).
 export function toggleMute(){

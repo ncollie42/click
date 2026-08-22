@@ -1,9 +1,9 @@
-// Owns the base-progress bar in the top HUD and the pick-3 overlay — the main-base level payout,
+// Owns the base-progress bar in the top HUD and the pick-up-to-3 overlay — the main-base payout,
 // the end-of-night dawn payout and chest/forge consumables. Owns no gameplay state.
 // ═══════════════════════════════════════════════════════════════════════════
 // DRAFT ADAPTER
 //
-// One overlay, three reward kinds. "base" deals the mixed build+buff pick a completed authored
+// One overlay, three reward kinds. "base" deals the build-only pick a completed authored
 // main-base level earns; "dawn" applies the wave-clear permanent buff; "consumable" deals a chest
 // or Consumable Forge reward into the hand. The simulation owns those pools; this adapter only
 // presents the offer. (The XP "level" draft was deleted Aug 22 along with the XP track itself.)
@@ -30,8 +30,7 @@ import {draftPending, draftKind, chooseDraft, rerollDraft, rerollState, mainBase
 import {cardFace, cardBox, expectArrival, playArrival} from "./hand.js";
 import {syncModalUi} from "./hud.js";
 
-// "base" and "dawn" deal the same permanent-buff pool; only the copy tells them apart, so the
-// player always knows which thing they did earned the pick.
+// Each reward kind has its own pool, and this copy tells the player what earned the pick.
 const TITLE = {base:"the main base rises",dawn:"choose a permanent upgrade",consumable:"choose a consumable"};
 const goesToHand = category => category!=="buff";
 
@@ -97,7 +96,7 @@ function setFrameInert(on){
 function subtitle(kind){
   if(kind==="base"){
     const base=mainBaseStatus();
-    return "the main base stands at level "+base.level+" of "+base.maxLevel+". choose one build or upgrade.";
+    return "the main base stands at level "+base.level+" of "+base.maxLevel+". choose one building.";
   }
   if(kind==="dawn")return "the village held. choose one permanent upgrade.";
   return "choose one card to keep until played.";

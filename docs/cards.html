@@ -112,7 +112,7 @@
 <header>
   <p class="eyebrow">card catalog · the thing in the ground</p>
   <h1>Card Catalog</h1>
-  <p>Every card in the pick-3 pool, rendered live from <span class="mono">src/game/cards.js</span> —
+  <p>Every card in the finite Card Pull, rendered live from <span class="mono">src/game/cards.js</span> —
   this page is the <strong>design catalog and the feature tracker</strong> in one. Add an entry to the
   file (implemented off), and it shows up here as a request; when the effect lands in game code the
   flag flips. The pacing model in <a href="progression.html">the progression bench</a> reads the same
@@ -231,8 +231,7 @@ for(const cat of CARD_CATEGORIES){
       stat.append(key,val);stats.appendChild(stat);
     }
     const meta=document.createElement("div");meta.className="meta";
-    meta.textContent=[c.ref,(c.stacks??1)>1?`stacks ×${c.stacks}`:null,
-      c.model?`model ${c.model.target} ×${c.model.mult}`:null].filter(Boolean).join(" · ");
+    meta.textContent=[c.ref,c.model?`model ${c.model.target} ×${c.model.mult}`:null].filter(Boolean).join(" · ");
     const chips=document.createElement("div");chips.className="chips";
     for(const [label,on] of [["implemented",c.implemented],["in pool",c.inPool]]){
       const ch=document.createElement("span");ch.className="chip "+(on?"on":"off");

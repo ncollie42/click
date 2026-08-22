@@ -326,7 +326,7 @@ function buildCardDealer(){
       else if(category==="buff"&&card.implemented){
         const paint=()=>{const stacks=buffStacks(card.id);chip.textContent=stacks>0?card.id+" ×"+stacks:card.id;};
         paint();
-        chip.title=card.rarity+" · "+card.text+" · applies one stack now (debug stacks ignore the cap)";
+        chip.title=card.rarity+" · "+card.text+" · applies one uncapped debug stack";
         chip.addEventListener("click",()=>{if(debugApplyBuff(card.id))paint();});
       }
       else{chip.disabled=true;chip.title=card.rarity+" · "+card.text+(category==="buff"?" · not implemented yet":" · not holdable (applies on draft)");}

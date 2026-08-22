@@ -16,7 +16,7 @@
 //
 // Direction (decided 2026-08-14, retired 2026-08-22): Vampire-Survivors-style leveling. XP from
 // feeding the thing fills an exponential level curve; every level-up deals a
-// pick-3 draft from src/game/cards.js. The draft IS the dopamine drip, so the
+// pick-up-to-3 draft from src/game/cards.js. The draft IS the dopamine drip, so the
 // beat schedule below only carries STRUCTURAL moments — the drip is emergent
 // and charted by the model instead of authored minute-by-minute.
 //
@@ -39,8 +39,8 @@ export const LEVEL_CURVE = Object.freeze({base:6, growth:1.19});
 
 // ── draft policy — what the modeled player picks ─────────────────────────────
 // Deterministic stand-in for a real player: every `incomeBuffEveryNLevels`-th
-// level they take the next income-affecting buff from `cycle` (skipping cards
-// whose `stacks` are spent); other levels go to blueprints/consumables, which
+// level they take the next not-yet-given income-affecting buff from `cycle`;
+// other levels go to blueprints/consumables, which
 // don't move the income model. Ids must exist in src/game/cards.js and carry a
 // `model`. The headless bot replaces this with real play later.
 export const DRAFT_POLICY = {

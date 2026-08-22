@@ -124,7 +124,7 @@ toast(requestedMode==="showcase"?"showcase ready — towers use production comba
 // Console and screenshot staging over the REAL simulation — every helper below is a debug COMMAND
 // the simulation already exports, so a staged hand is dealt, played and spent through exactly the
 // paths a run uses. Nothing here fabricates a card, an offer or a level.
-//   window.__draftDemo.deal(n)       queue n real base-level offers (mixed build + buff)
+//   window.__draftDemo.deal(n)       queue n real base-level building offers
 //   window.__draftDemo.dawn()        run a night to its end, so the real dawn reward is queued
 //   window.__draftDemo.hand([...])   deal a list of card ids into the hand ("id" or [id, copies])
 //   window.__draftDemo.add(id,n)     deal one card in, the way a draft does

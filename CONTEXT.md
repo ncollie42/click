@@ -109,7 +109,13 @@ The run's **only** progression number: `state.baseLevel`, 0 before the Main Base
 
 ### Reward Draft
 
-A pick-one-of-three offer, in one of three closed kinds. `base` is paid by each completed Base Level and draws the **mixed** build + buff pool — it is the only source of build cards after the opening hand. `dawn` is paid by surviving a night and draws permanent buffs only. `consumable` is paid by a chest or a Consumable Forge batch and draws consumables. Backlog priority is base → dawn → consumable; exactly one offer is live at a time and the world is frozen while it pends.
+A pick-one-of-up-to-three offer drawn from the Card Pull, in one of three closed kinds. `base` is paid by each completed Base Level and draws buildings only — it is the only source of build cards after the opening hand. `dawn` is paid by surviving a night and draws permanent buffs only. `consumable` is paid by a chest or a Consumable Forge batch and draws consumables. Backlog priority is base → dawn → consumable; exactly one offer is live at a time and the world is frozen while it pends.
+
+### Card Pull
+
+The run's finite deck of draftable cards, containing each card ID once and recording which remain and which were given. Only the chosen card is removed for the rest of the run; rejected and rerolled cards remain, newly eligible cards join immediately, and a reward earned from an empty category is discarded.
+
+A Reward Draft may contain fewer than three cards near exhaustion. Rarity still weights selection among remaining cards; rerolls avoid the rejected batch when alternatives exist, but are refused without charge when no card can change.
 
 ### Wave Tier
 
