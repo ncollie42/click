@@ -445,6 +445,13 @@ const ACTION_ICONS = {
     ctx.fillStyle=ICON_WOOD;
     roundPath(-1.5,4.0,3.0,4.0,1.4); ctx.fill();                                 // grip
   },
+  hammer(){                                     // damaged towers
+    ctx.lineJoin="round";
+    ctx.fillStyle=ICON_WOOD;
+    roundPath(-1.6,-2.2,3.2,11.2,1.4);ctx.fill();                                // handle
+    ctx.fillStyle=ICON_STEEL;
+    roundPath(-7.2,-8.0,14.4,6.2,1.4);ctx.fill();                                // head
+  },
 };
 
 /**

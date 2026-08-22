@@ -99,7 +99,13 @@ Pre-Wave is entered once, at world load, and left exactly once, when the Main Ba
 
 ### Base Standing
 
-Whether a base exists at all, answered by `state.baseLevel > 0` (`mainBaseStanding()`) and by nothing else — not by the presence of a building record. Every base behavior reads it: Base Level Delivery Work, the health target, enemy target selection, the hover action, the map centre's attack, and the rendered structure. While no base stands the map centre is bare reserved ground; an enemy with no other valid target idles rather than attacking an absent base. The showcase fixture world starts standing (level 1) with no construction record behind it.
+Whether a base exists at all, answered by `state.baseLevel > 0` (`mainBaseStanding()`) and by nothing else — not by the presence of a building record. Every base behavior reads it: Base Level Delivery Work, the health target, enemy target selection, player repair, the hover action, the map centre's attack, and the rendered structure. While no base stands the map centre is bare reserved ground; an enemy with no other valid target idles rather than attacking an absent base. The showcase fixture world starts standing (level 1) with no construction record behind it.
+
+## Structure Repair
+
+### Repair Swing
+
+The player's free maintenance action for a damaged completed tower or standing Main Base. A completed held left-click restores one HP using mining's cadence and target lock; full-health and absent structures offer no Repair Swing.
 
 ## Run Progression
 

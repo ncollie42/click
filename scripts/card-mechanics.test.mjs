@@ -7,6 +7,7 @@ import * as data from "../src/game/data.js";
 import {cardById,RARITY_WEIGHTS} from "../src/game/cards.js";
 import {buildingFootprint,cellToWorld,footprintCells,worldToCell} from "../src/game/grid.js";
 const zeroCounts=kinds=>Object.fromEntries(kinds.map(kind=>[kind,0]));
+const originalRandom=Math.random;Math.random=()=>0;
 
 // ── the opening: three cards, an untimed pre-wave, and the base that starts day 1 ──
 // Also the setup every check below depends on: the rest of this file assumes an ordinary day.
@@ -95,7 +96,6 @@ const play=id=>{assert.equal(sim.debugDealCard(id),true);return sim.playCard(sim
 const findAnchor=(type=sim.state.buildMode,exclude=null)=>{for(let y=96;y<data.H-96;y+=data.CELL)for(let x=96;x<data.W-96;x+=data.CELL){const cell=worldToCell(x,y),fogFree=footprintCells(cell.cx,cell.cy,buildingFootprint(type)).every(candidate=>{const point=cellToWorld(candidate.cx,candidate.cy);return !sim.fogAtPoint(point.x,point.y);});if(fogFree&&(!exclude||x!==exclude.x||y!==exclude.y)&&sim.canPlace(x,y,type))return {x,y};}assert.fail("no placement anchor for "+type);};
 const place=id=>{assert.equal(play(id),"targeting");const anchor=findAnchor();sim.setPointerWorld(anchor.x,anchor.y);sim.primaryPress();sim.primaryRelease();return anchor;};
 const findWater=()=>{for(let y=96;y<data.H-96;y+=data.CELL)for(let x=96;x<data.W-96;x+=data.CELL)if(sim.terrainAtWorldPoint(x,y)==="water")return {x,y};assert.fail("no water cell");};
-const originalRandom=Math.random;Math.random=()=>0;
 let visible=new Set(),baseLevelEvents=0;sim.connect({isCombatTargetOnScreen(target){return visible.has(target);},baseLevelChanged(){baseLevelEvents++;}});
 // Taking an offer inside this suite must not permanently change the run the rest of the file
 // measures against authored numbers: a drafted buff is scrubbed back off (its stack plus the two
@@ -217,7 +217,7 @@ sim.resourceDrops.length=0;sim.state.carried.dust=5;sim.setPointerWorld(circle.x
 sim.state.carried.dust=8;sim.setPointerWorld(circle.x,circle.y);sim.secondaryRelease();assert.equal(sim.friendlyBrutes.length,3,"one funded delivery did not summon several Brutes");assert.equal(circle.summoning.dust,0);assert.equal(sim.buildings.includes(circle),true);
 const defender=sim.friendlyBrutes[0];sim.resourceDrops.length=0;sim.spawnEnemy("bruteBoss");enemy=sim.state.enemies.at(-1);const bossDef=data.ENEMY_TYPES.bruteBoss;
 enemy.x=defender.x+bossDef.stompRadius-5;enemy.y=defender.y;enemy.wob=(.5-.01)/.12;sim.DBG.invulnBase=true;const stompTree={x:enemy.x,y:enemy.y,hp:3,max:3,stump:0,shake:0,variant:0,footprint:data.RESOURCE_FOOTPRINT};sim.trees.push(stompTree);const beforeStomp=defender.hp;sim.update(.02);assert.equal(defender.hp,beforeStomp-bossDef.stompDamage,"walking boss contact did not damage nearby player units");assert.equal(stompTree.stump,1,"player-resources stomp did not damage a tree");sim.trees.splice(sim.trees.indexOf(stompTree),1);
-enemy.x=defender.x+20;enemy.y=defender.y;enemy.attackCooldown=0;const defenderHp=defender.hp;sim.update(.01);assert.ok(defender.hp<defenderHp,"hostile did not target nearer friendly Brute");for(let i=0;i<20&&sim.friendlyBrutes.includes(defender);i++)sim.update(.2);assert.equal(sim.friendlyBrutes.includes(defender),false,"friendly Brute could not die");sim.state.enemies.length=0;circle.summoning.remaining=.01;sim.update(.02);assert.equal(sim.buildings.includes(circle),false,"used circle survived its lifetime");
+enemy.x=defender.x+20;enemy.y=defender.y;enemy.attackCooldown=0;const defenderHp=defender.hp;sim.update(.01);assert.equal(defender.hp,defenderHp-bossDef.damage,"boss melee did not deal its separate targeted damage");for(let i=0;i<60&&sim.friendlyBrutes.includes(defender);i++)sim.update(.2);assert.equal(sim.friendlyBrutes.includes(defender),false,"friendly Brute could not die");sim.state.enemies.length=0;circle.summoning.remaining=.01;sim.update(.02);assert.equal(sim.buildings.includes(circle),false,"used circle survived its lifetime");
 
 // Prerequisite gating belongs to the Card Pull: a `requires` card stays unavailable until its buff
 // card is given. The focused Reward Draft test covers the unlocking transition itself.

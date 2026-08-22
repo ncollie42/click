@@ -8,7 +8,7 @@ import {
   RESOURCE_KINDS,RESOURCE_NODE_HP,FOG,CHEST,CARD_BUFFS,CARD_CONSUMABLES,
   HOUSE_SLOTS,STARTING_HOUSE_COST,HOUSE_COST,HOUSE_COST_ESCALATION,WORKER_SPAWN_TIME,RESOURCE_NODE_JOB_SLOTS,
   WORKER_LEASH,WORKER_MELEE,WORKER_SPEED,WORKER_HP,WORKER_DAMAGE,WORKER_ATTACK_RATE,WORKER_HIT_COOLDOWN,WORKER_CARRY,STAFF_GATHER,
-  BUILDING_TYPES,MAIN_BASE,MAIN_BASE_LEVELS,UPGRADES,TOWER_VARIANTS,
+  BUILDING_TYPES,MAIN_BASE,MAIN_BASE_LEVELS,UPGRADES,TOWER_VARIANTS,STRUCTURE_REPAIR_AMOUNT,
   ENEMY_TYPES,ENEMY_SPAWN_RADIUS,
   ENEMY_POOL,
   NIGHT_WAVE_WINDOW,NIGHT_ENEMY_CAP,NIGHT_WAVE_RECIPES,WAVE_THREAT_CURVE,WAVE_BOSS_SPAWNS,WIN_WAVE,
@@ -1136,6 +1136,22 @@ function playerResourceAt(x,y){
   return target?{target,kind}:null;
 }
 
+// Shared with plain building hover below. A tower's 3x3 footprint is 96px wide, so this reaches
+// its visible edge without claiming an adjacent cell centre.
+const BUILDING_POINTER_RANGE=48;
+function repairableTowerAt(x,y){
+  let target=null,best=BUILDING_POINTER_RANGE;
+  for(const building of buildings){
+    if(!building.complete||building.type!=="tower"||!building.tower||building.tower.hp<=0||building.tower.hp>=building.tower.maxHp)continue;
+    const d=distance(x,y,building.x,building.y);
+    if(d<best){target=building;best=d;}
+  }
+  return target;
+}
+function repairableBaseAt(x,y){
+  return mainBaseStanding()&&state.baseHp>0&&state.baseHp<state.baseMax&&distance(x,y,BASE.x,BASE.y)<BASE.r+16?BASE:null;
+}
+
 // ── primary-action resolver ──────────────────────────────────────────────────
 // Presentation identity per resolved thing: what the swing IS and what tool draws it.
 // Resource keys match hitResource()'s kind argument, so the resolver can carry both
@@ -1147,7 +1163,9 @@ const PRIMARY_ACTIONS={
   chest:  {kind:"break-chest",icon:"axe"},
   grass:  {kind:"cut-grass",icon:"axe"},
   enemy:  {kind:"attack", icon:"sword"},
-  fog:    {kind:"mine-fog",icon:"pickaxe"}
+  fog:    {kind:"mine-fog",icon:"pickaxe"},
+  tower:  {kind:"repair-tower",icon:"hammer"},
+  base:   {kind:"repair-base",icon:"hammer"}
 };
 /**
  * THE authority for direct timed left-click work at a world point.
@@ -1160,10 +1178,10 @@ const PRIMARY_ACTIONS={
  * disagree, and a future icon preview needs no parallel selection logic.
  *
  * Pure: reads the world lists, mutates nothing, returns a fresh descriptor.
- * Priority is enemies, unopened chests, real resources, then one-hit grass.
+ * Priority is enemies, fog, damaged structures, unopened chests, real resources, then one-hit grass.
  * Felled/depleted/removed targets never resolve.
  *
- * @returns {null|{target:object,kind:"chop"|"mine"|"break-chest"|"cut-grass"|"attack",resource:null|"wood"|"stone"|"diamond",icon:"axe"|"pickaxe"|"sword"}}
+ * @returns {null|{target:object,kind:"chop"|"mine"|"break-chest"|"cut-grass"|"attack"|"repair-tower"|"repair-base",resource:null|"wood"|"stone"|"diamond",icon:"axe"|"pickaxe"|"sword"|"hammer"}}
  */
 function resolvePrimaryAction(x,y){
   const enemy=enemyAt(x,y);
@@ -1174,6 +1192,10 @@ function resolvePrimaryAction(x,y){
   // A fog block owns its whole cell: while one stands, nothing beneath or beside it resolves.
   const fogCell=fogAtPoint(x,y);
   if(fogCell)return {target:fogCell,kind:PRIMARY_ACTIONS.fog.kind,resource:null,icon:PRIMARY_ACTIONS.fog.icon};
+  const base=repairableBaseAt(x,y);
+  if(base)return {target:base,kind:PRIMARY_ACTIONS.base.kind,resource:null,icon:PRIMARY_ACTIONS.base.icon};
+  const tower=repairableTowerAt(x,y);
+  if(tower)return {target:tower,kind:PRIMARY_ACTIONS.tower.kind,resource:null,icon:PRIMARY_ACTIONS.tower.icon};
   const chest=chestAt(x,y);
   if(chest)return {target:chest,kind:PRIMARY_ACTIONS.chest.kind,resource:null,icon:PRIMARY_ACTIONS.chest.icon};
   const node=playerResourceAt(x,y);   // already skips stumps and depleted nodes
@@ -1194,6 +1216,8 @@ function primaryActionAlive(action){
   const target=action.target;
   if(action.kind==="attack")return target.hp>0&&(assertCombatKind(target)==="damage-dummy"?damageDummies.includes(target):state.enemies.includes(target)&&!(state.runMode==="normal"&&fogAtPoint(target.x,target.y)));
   if(action.kind==="mine-fog")return fogByCell.get(fogCellKey(target.cx,target.cy))===target;
+  if(action.kind==="repair-tower")return buildings.includes(target)&&target.complete&&target.type==="tower"&&target.tower?.hp>0&&target.tower.hp<target.tower.maxHp;
+  if(action.kind==="repair-base")return target===BASE&&mainBaseStanding()&&state.baseHp>0&&state.baseHp<state.baseMax;
   if(action.kind==="break-chest")return chests.includes(target)&&target.hp>0;
   if(action.kind==="cut-grass")return grass.includes(target);
   return resourceIsActive(target,action.resource);
@@ -1225,6 +1249,8 @@ function updatePrimaryClick(dt){
   chopState.t=0;
   const quiet=primary.audioCooldown>0;
   if(hit.kind==="attack")hitCombatTarget(hit.target,quiet);
+  else if(hit.kind==="repair-tower")repairTower(hit.target,quiet);
+  else if(hit.kind==="repair-base")repairBase(quiet);
   else if(hit.kind==="break-chest")hitChest(hit.target,quiet);
   else if(hit.kind==="cut-grass")hitGrass(hit.target,quiet);
   else if(hit.kind==="mine-fog")hitFog(hit.target,quiet);
@@ -1243,8 +1269,8 @@ function leftClick(){
   // exactly what was previewed. Resolved once up front; it is pure, and every
   // branch between here and the harvest fall-through returns before using it.
   const action=resolvePrimaryAction(m.x,m.y);
-  // Attacking and chest breaking outrank placement; the press only arms their shared hold bar.
-  if(action&&(action.kind==="attack"||action.kind==="break-chest")){beginChop(action);return;}
+  // Combat, chest breaking, and structure repair outrank building buttons; the press only arms their shared hold bar.
+  if(action&&["attack","break-chest","repair-tower","repair-base"].includes(action.kind)){beginChop(action);return;}
   // No dock branch below this line: state.buildMode is now only ever armed by a played card, and
   // the guard above already routed that click into placeCardCharge(). A buildMode with no
   // cardTargeting cannot exist, and the invariant check on state.cardTargeting enforces the pair.
@@ -1256,8 +1282,8 @@ function leftClick(){
   if(obelisk){openUpgradeMenu(obelisk,"obelisk");return;}
   const pile=buildings.find(building=>building.complete&&building.type==="stockpile"&&distance(m.x,m.y,building.x,building.y)<38);
   if(pile){unloadStockpile(pile,m.x);return;}
-  if(!action){toast("left click a chest, resource, or enemy");return;}
-  // Harvesting/chest breaking no longer resolves on the press; updatePrimaryClick() fills the timer.
+  if(!action){toast("left click a chest, resource, enemy, or damaged structure");return;}
+  // Timed actions resolve in updatePrimaryClick(), never on the press.
   beginChop(action);
 }
 
@@ -3077,6 +3103,19 @@ function destroyTower(building){
   for(const worker of state.workers)if(worker.jobTarget===building)releaseWorkerToFree(worker);
   if(state.upgradeMenu.building===building)closeUpgradeMenu();burst(building.x,building.y,"#8f5141",22);toast(towerVariant(building).name+" destroyed");sound(70,.35);
 }
+function repairTower(building,quiet=false){
+  const tower=building?.tower;
+  if(!buildings.includes(building)||!building.complete||building.type!=="tower"||!tower||tower.hp<=0||tower.hp>=tower.maxHp)return false;
+  tower.hp=Math.min(tower.maxHp,tower.hp+STRUCTURE_REPAIR_AMOUNT);building.pulse=1;
+  burst(building.x,building.y-6,"#bdb7ab",5);if(!quiet)sound(470,.055);
+  return true;
+}
+function repairBase(quiet=false){
+  if(!mainBaseStanding()||state.baseHp<=0||state.baseHp>=state.baseMax)return false;
+  state.baseHp=Math.min(state.baseMax,state.baseHp+STRUCTURE_REPAIR_AMOUNT);state.basePulse=1;
+  burst(BASE.x,BASE.y-6,"#bdb7ab",5);if(!quiet)sound(470,.055);
+  return true;
+}
 function damageTower(building,damage){const tower=building.tower;if(!buildings.includes(building)||tower.hp<=0)return;addDamageNumber(building,damage,{tone:"received"});tower.hp=Math.max(0,tower.hp-damage);tower.hitFlash=.22;building.pulse=1;if(tower.hp<=0)destroyTower(building);}
 function updateCamera(dt){
   const keys=state.keys,camera=state.camera;
@@ -3366,9 +3405,6 @@ function indicatorRadius(type, building=null){
   return def?.serviceRadius || def?.effectRadius || null;
 }
 
-// How close the cursor must be to a completed building with no button of its own before it counts as
-// hovered. Same number the plain hover rings used before the segmented mark replaced them.
-const HOVER_BUILDING_RANGE = 48;
 /**
  * The ONE completed building the cursor is currently acting on, or null. Single authority for the
  * hover mark: drawZones() calls it once a frame and draws exactly what it returns, so two neighbouring
@@ -3408,7 +3444,7 @@ function hoveredBuilding(){
   // ── plain proximity, for everything with no button and no delivery role ──
   // NEAREST wins, not first-in-array: deployables may sit in touching cells (see canPlace), so their
   // hover circles overlap and picking the closest is what keeps the answer single.
-  let near = null, best = HOVER_BUILDING_RANGE;
+  let near = null, best = BUILDING_POINTER_RANGE;
   for(const b of buildings){
     if(!b.complete) continue;
     const d = distance(m.x,m.y,b.x,b.y);

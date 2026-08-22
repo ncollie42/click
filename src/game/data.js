@@ -336,6 +336,8 @@ const towerVariantRows={
 };
 // Every tower damage path is hostile-only, including direct, line, chain, splash, and radial modes.
 export const TOWER_VARIANTS=Object.freeze(Object.fromEntries(Object.entries(towerVariantRows).map(([id,row])=>[id,Object.freeze({...row,damageTargetType:DAMAGE_TARGET_TYPE.ENEMIES_ONLY})])));
+// One completed held-left-click swing restores this much health to a damaged structure.
+export const STRUCTURE_REPAIR_AMOUNT=1;
 
 // ── enemies and the night schedule ──────────────────────────────────────────
 // Variants are authored fixed-stat enemies, never runtime stat multipliers. Every archetype has the
@@ -373,9 +375,9 @@ for(const [archetype,base] of Object.entries(ENEMY_ARCHETYPES))for(const band of
 // stats. It is not a weighted variant; WAVE_BOSS_SPAWNS authors every scheduled appearance.
 enemyVariants.bruteBoss=Object.freeze({...ENEMY_ARCHETYPES.brute,name:"brute boss",archetype:"brute",boss:true,variantTier:1,minWave:5,
   // The 4× model's visible ground ring reaches about 200 simulation pixels. Every walking contact
-  // uses that same radius. Owner nerf Aug 20: hp halved 500→250, melee swing 60→10 — the boss is
-  // pressure and presence, not an instant base-delete.
-  hp:250,damage:10,stompDamage:10,stompRadius:200,stompDamageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
+  // uses that same radius. Owner nerf Aug 22: hp halved 250→125; melee and walking stomp 10→5.
+  // The boss is pressure and presence, not an instant base-delete.
+  hp:125,damage:5,stompDamage:5,stompRadius:200,stompDamageTargetType:DAMAGE_TARGET_TYPE.PLAYER_RESOURCES,size:ENEMY_ARCHETYPES.brute.size*4,modelScale:4,threatCost:20,spawnWeight:1});
 export const ENEMY_TYPES=Object.freeze(enemyVariants);
 // Each wave owns an ordered forced-boss list. Wave 10 is the current finale: three bosses close it.
 export const WAVE_BOSS_SPAWNS=Object.freeze({

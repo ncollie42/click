@@ -2434,6 +2434,13 @@ function cursorMark(){
   // 1. Something to swing at. badgeAction() owns every suppression this needs.
   const action = badgeAction();
   if(action){
+    if(action.kind==="repair-tower"||action.kind==="repair-base"){
+      const c=worldToCell(action.target.x,action.target.y);
+      const type=action.kind==="repair-base"?"mainBase":action.target.type;
+      return {rect:footprintWorldRect(c.cx,c.cy,buildingFootprint(type)),
+              color:css(PAL.ok),opacity:indicatorCornerOpacity(),pulse:IND_PULSE_ACTION,
+              building:null};
+    }
     // Nodes sit exactly on cell centers (see the seeder), so theirs snaps to the lattice; enemies move
     // continuously, so theirs is centred on the enemy at the same one-cell size instead of hopping.
     const p = action.target;

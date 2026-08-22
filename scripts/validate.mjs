@@ -50,7 +50,7 @@ try{
   // section below, which is where the swatch law is enforced).
   assert.equal(Object.values(data.ENEMY_TYPES).every(enemy=>enemy.variantColor===undefined),true);
   assert.equal(JSON.stringify(data.ENEMY_TYPES).match(/#[0-9a-fA-F]{3,8}\b/g),null,"ENEMY_TYPES must not author colour — see palette.js ENEMY_VARIANT_TINT");
-  {const boss=data.ENEMY_TYPES.bruteBoss;assert.equal(boss.archetype,"brute");assert.equal(boss.boss,true);assert.equal(boss.minWave,5);assert.equal(boss.modelScale,4);assert.equal(boss.size,data.ENEMY_TYPES.brute.size*4);assert.equal(boss.hp,250);assert.equal(boss.damage,10);assert.equal(boss.stompDamage,10);assert.equal(boss.stompRadius,200);assert.equal(boss.threatCost,20);}assert.deepEqual(data.WAVE_BOSS_SPAWNS,{5:["bruteBoss"],10:["bruteBoss","bruteBoss","bruteBoss"]});
+  {const boss=data.ENEMY_TYPES.bruteBoss;assert.equal(boss.archetype,"brute");assert.equal(boss.boss,true);assert.equal(boss.minWave,5);assert.equal(boss.modelScale,4);assert.equal(boss.size,data.ENEMY_TYPES.brute.size*4);assert.equal(boss.hp,125);assert.equal(boss.damage,5);assert.equal(boss.stompDamage,5);assert.equal(boss.stompRadius,200);assert.equal(boss.threatCost,20);}assert.deepEqual(data.WAVE_BOSS_SPAWNS,{5:["bruteBoss"],10:["bruteBoss","bruteBoss","bruteBoss"]});
   assert.equal(Object.isFrozen(data.ENEMY_POOL),true);assert.equal(Object.isFrozen(data.NIGHT_WAVE_RECIPES),true);assert.equal(data.NIGHT_WAVE_RECIPES.every(recipe=>Object.isFrozen(recipe)&&Object.isFrozen(recipe.pool)&&recipe.pool.every(type=>data.ENEMY_TYPES[type])),true);
   assert.deepEqual(Object.values(data.DAMAGE_TARGET_TYPE),["enemies-only","resources-only","enemies-resources","player-resources","all"]);assert.equal(data.DAMAGE_ORBS.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);
   assert.equal(data.FIREBALL.damage,5);assert.equal(data.FIREBALL.fallTime,.65);assert.equal(data.FIREBALL.radius,68,"fireball radius halved Aug 20");assert.equal(data.FIREBALL.rockHp,3,"fireball leaves a small rock");assert.equal(data.BUILDING_TYPES.fireballTarget.effectRadius,data.FIREBALL.radius,"the fireball aiming ghost must show the damage radius");assert.equal(data.FOG.blockHp,4,"fog cost is flat 4 across the board");assert.equal(Object.isFrozen(data.FIREBALL),true);assert.equal(data.FIREBALL.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);assert.equal(data.METEOR.damageTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_RESOURCES);assert.equal(data.CARD_BUFFS.deathExplosionTargetType,data.DAMAGE_TARGET_TYPE.ENEMIES_ONLY);
@@ -670,6 +670,41 @@ try{
     console.log(JSON.stringify({water:[water.cx,water.cy],shore:[shore.cx,shore.cy]}));
   `}).trim());
   assert.equal(terrainPlacementResult.water.length,2);
+
+  const structureRepairResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
+    cwd:root,encoding:"utf8",input:`
+      import assert from "node:assert/strict";
+      import * as sim from "./src/game/simulation.js";
+      import {BASE,STRUCTURE_REPAIR_AMOUNT} from "./src/game/data.js";
+      sim.initializeRunMode("showcase");sim.TUNE.chopTime=.01;
+      const standingLevel=sim.state.baseLevel;sim.state.baseLevel=0;sim.state.baseHp=sim.state.baseMax-1;
+      assert.notEqual(sim.resolvePrimaryAction(BASE.x,BASE.y)?.kind,"repair-base","an absent base must not accept repair");
+      sim.state.baseLevel=standingLevel;sim.state.baseHp=sim.state.baseMax;
+      const tower=sim.buildings.find(building=>building.type==="tower"&&building.tower.variant==="basic");
+      assert.ok(tower);tower.tower.hp=tower.tower.maxHp-2;
+      const action=sim.resolvePrimaryAction(tower.x,tower.y);
+      assert.equal(action.target,tower);assert.equal(action.kind,"repair-tower");assert.equal(action.icon,"hammer");
+      sim.setPointerWorld(tower.x,tower.y);sim.primaryPress();sim.update(.02);sim.primaryRelease();
+      assert.equal(tower.tower.hp,tower.tower.maxHp-1,"one repair swing must restore one tower HP");
+      sim.primaryPress();sim.update(.02);sim.update(.02);sim.primaryRelease();
+      assert.equal(tower.tower.hp,tower.tower.maxHp,"repair must clamp at the tower's effective maximum");
+      assert.notEqual(sim.resolvePrimaryAction(tower.x,tower.y)?.kind,"repair-tower","a full tower must stop advertising repair");
+      tower.tower.hp=tower.tower.maxHp-1;sim.setPointerWorld(tower.x,tower.y);sim.primaryPress();
+      sim.setPointerWorld(tower.x+sim.TUNE.snapRadius-1,tower.y);sim.update(.02);sim.primaryRelease();
+      assert.equal(tower.tower.hp,tower.tower.maxHp,"repair must retain mining's held-target snap lock");
+      sim.state.baseHp=sim.state.baseMax-2;
+      const baseAction=sim.resolvePrimaryAction(BASE.x,BASE.y);
+      assert.equal(baseAction.target,BASE);assert.equal(baseAction.kind,"repair-base");assert.equal(baseAction.icon,"hammer");
+      sim.setPointerWorld(BASE.x,BASE.y);sim.primaryPress();sim.update(.02);sim.primaryRelease();
+      assert.equal(sim.state.baseHp,sim.state.baseMax-1,"one repair swing must restore one Main Base HP");
+      sim.primaryPress();sim.update(.02);sim.update(.02);sim.primaryRelease();
+      assert.equal(sim.state.baseHp,sim.state.baseMax,"Main Base repair must clamp at its effective maximum");
+      assert.notEqual(sim.resolvePrimaryAction(BASE.x,BASE.y)?.kind,"repair-base","a full Main Base must stop advertising repair");
+      assert.equal(STRUCTURE_REPAIR_AMOUNT,1);sim.validateSimulationInvariants();
+      console.log(JSON.stringify({amount:STRUCTURE_REPAIR_AMOUNT,icon:action.icon,towerHp:tower.tower.hp,baseHp:sim.state.baseHp}));
+    `
+  }).trim());
+  assert.deepEqual(structureRepairResult,{amount:1,icon:"hammer",towerHp:10,baseHp:100});
 
 
   const chestResult=JSON.parse(execFileSync(process.execPath,["--input-type=module","-"],{
